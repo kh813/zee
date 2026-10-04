@@ -1783,7 +1783,7 @@ impl Dialog {
                     )
             }
             DialogType::PluginManager => {
-                let plugins = workspace.plugin_manager.plugins.iter().map(|p| p.manifest.clone()).collect::<Vec<_>>();
+                let plugins = workspace.plugin_manager.all_manifests();
                 let accent = led_color_to_gpui(theme.syntax.keyword.unwrap_or(theme.ui.menu_item_active_fg));
                 let chip_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
                 let chip_border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);

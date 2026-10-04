@@ -209,6 +209,8 @@ impl WasmPlugin {
 
 pub struct PluginManager {
     pub plugins: Vec<WasmPlugin>,
+    pub component_plugins: Vec<(PluginManifest, crate::component_plugin::ComponentPluginInstance)>,
+    component_engine: Option<crate::component_plugin::ComponentEngine>,
 }
 
 impl Default for PluginManager {
@@ -221,6 +223,8 @@ impl PluginManager {
     pub fn new() -> Self {
         let mut manager = Self {
             plugins: Vec::new(),
+            component_plugins: Vec::new(),
+            component_engine: None,
         };
         manager.load_installed_plugins();
         manager
@@ -228,6 +232,28 @@ impl PluginManager {
 
     pub fn plugins_dir() -> Option<PathBuf> {
         crate::config::Config::config_dir().map(|d| d.join("plugins"))
+    }
+
+    fn get_or_init_engine(&mut self) -> Result<crate::component_plugin::ComponentEngine> {
+        if let Some(engine) = &self.component_engine {
+            Ok(engine.clone())
+        } else {
+            let engine = crate::component_plugin::ComponentEngine::new()?;
+            self.component_engine = Some(engine.clone());
+            Ok(engine)
+        }
+    }
+
+    pub fn all_manifests(&self) -> Vec<PluginManifest> {
+        let mut list: Vec<PluginManifest> = self.plugins.iter().map(|p| p.manifest.clone()).collect();
+        for (m, _) in &self.component_plugins {
+            list.push(m.clone());
+        }
+        list
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.plugins.is_empty() && self.component_plugins.is_empty()
     }
 
     pub fn load_installed_plugins(&mut self) {
@@ -277,6 +303,13 @@ impl PluginManager {
         };
 
         let wasm_bytes = fs::read(&wasm_path)?;
+        if let Ok(engine) = self.get_or_init_engine() {
+            if let Ok(comp) = crate::component_plugin::ComponentPluginInstance::from_bytes(engine, &wasm_bytes, None) {
+                self.component_plugins.push((manifest, comp));
+                return Ok(());
+            }
+        }
+
         let plugin = WasmPlugin::load_from_bytes(manifest, &wasm_bytes)?;
         self.plugins.push(plugin);
         Ok(())
@@ -301,6 +334,13 @@ impl PluginManager {
         };
 
         let wasm_bytes = fs::read(path)?;
+        if let Ok(engine) = self.get_or_init_engine() {
+            if let Ok(comp) = crate::component_plugin::ComponentPluginInstance::from_bytes(engine, &wasm_bytes, None) {
+                self.component_plugins.push((manifest, comp));
+                return Ok(());
+            }
+        }
+
         let plugin = WasmPlugin::load_from_bytes(manifest, &wasm_bytes)?;
         self.plugins.push(plugin);
         Ok(())
@@ -308,6 +348,22 @@ impl PluginManager {
 
     pub fn parse_outline(&mut self, lang_or_ext: &str, content: &str) -> Option<Vec<OutlineNode>> {
         let lang = lang_or_ext.to_lowercase();
+        for (manifest, comp) in &self.component_plugins {
+            if manifest.capabilities.outline_provider
+                && (manifest.languages.is_empty()
+                    || manifest
+                        .languages
+                        .iter()
+                        .any(|l| l.to_lowercase() == lang))
+            {
+                if let Ok(nodes) = comp.get_outline(content.to_string(), None) {
+                    if !nodes.is_empty() {
+                        return Some(nodes);
+                    }
+                }
+            }
+        }
+
         for plugin in &mut self.plugins {
             if plugin.manifest.capabilities.outline_provider
                 && (plugin.manifest.languages.is_empty()
@@ -328,6 +384,14 @@ impl PluginManager {
     }
 
     pub fn execute_command(&mut self, command: &str, args: &str) -> Option<String> {
+        for (manifest, comp) in &self.component_plugins {
+            if manifest.capabilities.commands.iter().any(|c| c == command) {
+                if let Ok((res, _edits)) = comp.execute_command(command, args.to_string(), None) {
+                    return Some(res);
+                }
+            }
+        }
+
         for plugin in &mut self.plugins {
             if plugin.manifest.capabilities.commands.iter().any(|c| c == command) {
                 if let Ok(res) = plugin.execute_command(command, args) {
@@ -339,6 +403,14 @@ impl PluginManager {
     }
 
     pub fn transform_text(&mut self, command: &str, text: &str) -> Option<String> {
+        for (manifest, comp) in &self.component_plugins {
+            if manifest.capabilities.commands.iter().any(|c| c == command) {
+                if let Ok((res, _edits)) = comp.execute_command(command, text.to_string(), None) {
+                    return Some(res);
+                }
+            }
+        }
+
         for plugin in &mut self.plugins {
             if plugin.manifest.capabilities.commands.iter().any(|c| c == command) {
                 if let Ok(res) = plugin.transform_text(command, text) {

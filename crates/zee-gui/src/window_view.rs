@@ -1443,7 +1443,7 @@ impl WindowView {
 
     fn render_plugins_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
-        let plugins = &workspace.plugin_manager.plugins;
+        let plugins = workspace.plugin_manager.all_manifests();
         let mut menu = div()
             .flex()
             .flex_col();
@@ -1451,13 +1451,13 @@ impl WindowView {
         if plugins.is_empty() {
             menu = menu.child(self.render_menu_item(self.i18n.get("menu.plugins.no_plugins").to_string(), None, false, NoOp {}, fg, hover_bg, muted_fg, cx));
         } else {
-            for plugin in plugins {
-                if plugin.manifest.capabilities.commands.is_empty() {
-                    menu = menu.child(self.render_menu_item(format!("✓ {}", plugin.manifest.name), None, false, NoOp {}, fg, hover_bg, muted_fg, cx));
+            for manifest in plugins {
+                if manifest.capabilities.commands.is_empty() {
+                    menu = menu.child(self.render_menu_item(format!("✓ {}", manifest.name), None, false, NoOp {}, fg, hover_bg, muted_fg, cx));
                 } else {
-                    for cmd in &plugin.manifest.capabilities.commands {
+                    for cmd in &manifest.capabilities.commands {
                         menu = menu.child(self.render_menu_item(
-                            format!("{}: {}", plugin.manifest.name, cmd),
+                            format!("{}: {}", manifest.name, cmd),
                             None,
                             false,
                             ExecutePluginCommand { command: cmd.clone() },

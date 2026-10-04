@@ -618,22 +618,23 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
         let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
     }
 
-    if plugin_manager.plugins.is_empty() {
+    let manifests = plugin_manager.all_manifests();
+    if manifests.is_empty() {
         plugin_menu_items.push(MenuItem::action(i18n.get("menu.plugins.no_plugins"), NoOp {}));
     } else {
-        for plugin in &plugin_manager.plugins {
-            if plugin.manifest.capabilities.commands.is_empty() {
-                plugin_menu_items.push(MenuItem::action(format!("✓ {}", plugin.manifest.name), NoOp {}));
+        for manifest in manifests {
+            if manifest.capabilities.commands.is_empty() {
+                plugin_menu_items.push(MenuItem::action(format!("✓ {}", manifest.name), NoOp {}));
             } else {
                 let mut cmd_items = Vec::new();
-                for cmd in &plugin.manifest.capabilities.commands {
+                for cmd in &manifest.capabilities.commands {
                     cmd_items.push(MenuItem::action(
                         cmd.clone(),
                         ExecutePluginCommand { command: cmd.clone() },
                     ));
                 }
                 plugin_menu_items.push(MenuItem::submenu(Menu {
-                    name: plugin.manifest.name.clone().into(),
+                    name: manifest.name.clone().into(),
                     items: cmd_items,
                     disabled: false,
                 }));

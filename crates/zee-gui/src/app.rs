@@ -9,7 +9,8 @@ use futures::StreamExt;
 use url::Url;
 
 pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Vec<String>>) {
-    let config = Config::load();
+    let mut config = Config::load();
+    config.vi_mode = false;
     let i18n = I18n::load(&config.language);
 
     // Global key bindings - must be bound before setup_menu so NSMenu keyEquivalents are properly set

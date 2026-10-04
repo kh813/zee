@@ -125,3 +125,4 @@ pub enum ViMode {
 
 pub use config::Config;
 pub use i18n::I18n;
+pub use buffer::{normalize_vi_char, normalize_vi_key};

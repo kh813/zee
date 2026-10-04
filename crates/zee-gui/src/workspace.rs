@@ -21,6 +21,7 @@ pub struct Workspace {
     pub file_tree: FileTree,
     pub outline_nodes: Vec<OutlineNode>,
     pub plugin_manager: zee_core::plugin::PluginManager,
+    pub vi_cmd: Option<String>,
 }
 
 impl Workspace {
@@ -39,8 +40,11 @@ impl Workspace {
             let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
         }
 
+        let mut initial_editor = Editor::new();
+        initial_editor.vi_mode = if config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+
         Self {
-            editors: vec![Editor::new()],
+            editors: vec![initial_editor],
             active_editor_index: 0,
             theme: Theme::default(),
             config,
@@ -49,6 +53,7 @@ impl Workspace {
             file_tree,
             outline_nodes: Vec::new(),
             plugin_manager,
+            vi_cmd: None,
         }
     }
 
@@ -137,11 +142,14 @@ impl Workspace {
     }
 
     pub fn new_tab(&mut self) {
-        self.editors.push(Editor::new());
+        let mut editor = Editor::new();
+        editor.vi_mode = if self.config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+        self.editors.push(editor);
         self.active_editor_index = self.editors.len() - 1;
     }
 
-    pub fn add_editor(&mut self, editor: Editor) {
+    pub fn add_editor(&mut self, mut editor: Editor) {
+        editor.vi_mode = if self.config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
         if let Some(path) = &editor.path {
             if let Some(idx) = self.editors.iter().position(|e| e.path.as_ref() == Some(path)) {
                 self.active_editor_index = idx;
@@ -287,5 +295,19 @@ mod tests {
         // Calling close_active_editor on empty workspace should be a safe no-op
         workspace.close_active_editor();
         assert_eq!(workspace.editors.len(), 0);
+    }
+
+    #[test]
+    fn test_workspace_vi_mode_defaults_off() {
+        let config = Config::default();
+        assert!(!config.vi_mode);
+        let mut workspace = Workspace::new(config);
+        assert_eq!(workspace.editors[0].vi_mode, zee_core::ViMode::Insert);
+
+        workspace.new_tab();
+        assert_eq!(workspace.editors[1].vi_mode, zee_core::ViMode::Insert);
+
+        workspace.add_editor(Editor::new());
+        assert_eq!(workspace.editors[2].vi_mode, zee_core::ViMode::Insert);
     }
 }

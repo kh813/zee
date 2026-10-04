@@ -617,7 +617,6 @@ impl WindowView {
     fn handle_toggle_vi_mode(&mut self, _: &ToggleViMode, _window: &mut Window, cx: &mut Context<Self>) {
         self.config.vi_mode = !self.config.vi_mode;
         let vi_mode = self.config.vi_mode;
-        let _ = Config::write_key("vi_mode", &vi_mode.to_string());
         self.workspace.update(cx, |w, cx| {
             w.config.vi_mode = vi_mode;
             for editor in w.editors.iter_mut() {

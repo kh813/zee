@@ -1,6 +1,6 @@
 [package]
 name = "zee-core"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 
 [dependencies]
@@ -11,6 +11,7 @@ toml-span     = { workspace = true }
 regex         = { workspace = true }
 aho-corasick  = { workspace = true }
 unicode-width = { workspace = true }
+unicode-linebreak = { workspace = true }
 encoding_rs   = { workspace = true }
 ropey         = { workspace = true }
 rayon         = { workspace = true }

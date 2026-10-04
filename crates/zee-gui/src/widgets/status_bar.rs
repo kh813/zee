@@ -120,6 +120,17 @@ impl Render for StatusBar {
                     } else {
                         None
                     })
+                    .children(workspace.vi_cmd.as_ref().map(|cmd| {
+                        div()
+                            .px_1p5()
+                            .py(px(1.0))
+                            .rounded_sm()
+                            .text_size(px(11.0))
+                            .bg(gpui::rgb(0x1565c0))
+                            .text_color(gpui::rgb(0xffffff))
+                            .font_family(crate::widgets::mono_font_family())
+                            .child(cmd.clone())
+                    }))
             )
             .child(
                 div()

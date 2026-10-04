@@ -17,6 +17,13 @@ pub struct EditorView {
     pending_c: bool,
     pending_g: bool,
     pending_r: bool,
+    pending_f: bool,
+    pending_capital_f: bool,
+    pending_t: bool,
+    pending_capital_t: bool,
+    pending_indent: bool,
+    pending_unindent: bool,
+    ignore_next_text_input: bool,
     pub last_wrap_cols: usize,
     pub last_wrap_width_px: f32,
     pub ascii_width_px: f32,
@@ -47,6 +54,13 @@ impl EditorView {
             pending_c: false,
             pending_g: false,
             pending_r: false,
+            pending_f: false,
+            pending_capital_f: false,
+            pending_t: false,
+            pending_capital_t: false,
+            pending_indent: false,
+            pending_unindent: false,
+            ignore_next_text_input: false,
             last_wrap_cols: 80,
             last_wrap_width_px: 800.0,
             ascii_width_px: ascii_width,
@@ -73,16 +87,111 @@ impl EditorView {
     }
 
     fn handle_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        let key = &event.keystroke.key;
+        let raw_key = &event.keystroke.key;
         let shift = event.keystroke.modifiers.shift;
         let control = event.keystroke.modifiers.control;
         let cmd = event.keystroke.modifiers.platform;
         let _alt = event.keystroke.modifiers.alt;
 
+        self.ignore_next_text_input = false;
+
         let vi_mode_enabled = self.workspace.read(cx).config.vi_mode;
         let current_vi_mode = self.workspace.read(cx).active_editor().map(|e| e.vi_mode);
 
+        let normalized_key = if vi_mode_enabled && current_vi_mode != Some(zee_core::ViMode::Insert) {
+            zee_core::normalize_vi_key(raw_key)
+        } else {
+            raw_key.to_string()
+        };
+        let key = &normalized_key;
+
         if vi_mode_enabled {
+            if self.workspace.read(cx).vi_cmd.is_some() {
+                match key.as_str() {
+                    "escape" => {
+                        self.workspace.update(cx, |w, cx| {
+                            w.vi_cmd = None;
+                            cx.notify();
+                        });
+                        return;
+                    }
+                    "enter" => {
+                        let cmd_opt = self.workspace.read(cx).vi_cmd.clone();
+                        if let Some(cmd_raw) = cmd_opt {
+                            let cmd_normalized: String = cmd_raw.chars().map(zee_core::normalize_vi_char).collect();
+                            let cmd = cmd_normalized.trim();
+                            let inner = cmd.strip_prefix(':').unwrap_or(cmd).trim();
+                            if let Ok(line_num) = inner.parse::<usize>() {
+                                self.workspace.update(cx, |w, cx| {
+                                    if let Some(editor) = w.active_editor_mut() {
+                                        let max_line = editor.line_count().saturating_sub(1);
+                                        let target_line = line_num.saturating_sub(1).min(max_line);
+                                        editor.cursor = editor.line_col_to_char(target_line, 0);
+                                        editor.selection = None;
+                                        editor.selection_anchor = None;
+                                    }
+                                    cx.notify();
+                                });
+                            } else {
+                                match cmd {
+                                    ":w" => {
+                                        cx.dispatch_action(&crate::app::Save {});
+                                    }
+                                    ":q" => {
+                                        cx.dispatch_action(&crate::app::CloseTab {});
+                                    }
+                                    ":wq" | ":x" => {
+                                        cx.dispatch_action(&crate::app::Save {});
+                                        cx.dispatch_action(&crate::app::CloseTab {});
+                                    }
+                                    ":q!" => {
+                                        cx.dispatch_action(&crate::app::CloseTab {});
+                                    }
+                                    ":qa" => {
+                                        cx.dispatch_action(&crate::app::Quit {});
+                                    }
+                                    ":wqa" => {
+                                        cx.dispatch_action(&crate::app::Save {});
+                                        cx.dispatch_action(&crate::app::Quit {});
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        self.workspace.update(cx, |w, cx| {
+                            w.vi_cmd = None;
+                            cx.notify();
+                        });
+                        return;
+                    }
+                    "backspace" => {
+                        self.workspace.update(cx, |w, cx| {
+                            if let Some(cmd) = &mut w.vi_cmd {
+                                if cmd.len() > 1 {
+                                    cmd.pop();
+                                } else {
+                                    w.vi_cmd = None;
+                                }
+                            }
+                            cx.notify();
+                        });
+                        return;
+                    }
+                    _ => {
+                        if key.chars().count() == 1 && !control && !cmd {
+                            self.workspace.update(cx, |w, cx| {
+                                if let Some(cmd) = &mut w.vi_cmd {
+                                    cmd.push_str(key);
+                                }
+                                cx.notify();
+                            });
+                            return;
+                        }
+                        return;
+                    }
+                }
+            }
+
             // Handle Ctrl+V / Cmd+V in Normal/Visual mode for Visual Block
             if (control || cmd) && key.as_str() == "v" {
                 if let Some(vi_mode) = current_vi_mode {
@@ -101,6 +210,111 @@ impl EditorView {
                             cx.notify();
                         });
                         return;
+                    }
+                }
+            }
+
+            // Vi mode Ctrl shortcuts: Ctrl+r (Redo), Ctrl+d, Ctrl+u, Ctrl+f, Ctrl+b
+            if control && !cmd {
+                if let Some(vi_mode) = current_vi_mode {
+                    if vi_mode != zee_core::ViMode::Insert {
+                        let is_visual = vi_mode != zee_core::ViMode::Normal;
+                        match key.as_str() {
+                            "r" => {
+                                self.workspace.update(cx, |w, cx| {
+                                    if let Some(editor) = w.active_editor_mut() {
+                                        editor.redo();
+                                    }
+                                    cx.notify();
+                                });
+                                return;
+                            }
+                            "d" => {
+                                let max_w = self.last_wrap_width_px;
+                                let ascii_w = self.ascii_width_px;
+                                let cjk_w = self.cjk_width_px;
+                                self.workspace.update(cx, |w, cx| {
+                                    let word_wrap = w.config.word_wrap;
+                                    let tab_size = w.config.tab_size;
+                                    if let Some(editor) = w.active_editor_mut() {
+                                        for _ in 0..10 {
+                                            if word_wrap {
+                                                editor.move_cursor_vdown_px(max_w, ascii_w, cjk_w, tab_size, is_visual);
+                                            } else {
+                                                editor.move_cursor_down(is_visual);
+                                            }
+                                        }
+                                        editor.ensure_cursor_visible(30, 80, word_wrap);
+                                    }
+                                    cx.notify();
+                                });
+                                return;
+                            }
+                            "u" => {
+                                let max_w = self.last_wrap_width_px;
+                                let ascii_w = self.ascii_width_px;
+                                let cjk_w = self.cjk_width_px;
+                                self.workspace.update(cx, |w, cx| {
+                                    let word_wrap = w.config.word_wrap;
+                                    let tab_size = w.config.tab_size;
+                                    if let Some(editor) = w.active_editor_mut() {
+                                        for _ in 0..10 {
+                                            if word_wrap {
+                                                editor.move_cursor_vup_px(max_w, ascii_w, cjk_w, tab_size, is_visual);
+                                            } else {
+                                                editor.move_cursor_up(is_visual);
+                                            }
+                                        }
+                                        editor.ensure_cursor_visible(30, 80, word_wrap);
+                                    }
+                                    cx.notify();
+                                });
+                                return;
+                            }
+                            "f" => {
+                                let max_w = self.last_wrap_width_px;
+                                let ascii_w = self.ascii_width_px;
+                                let cjk_w = self.cjk_width_px;
+                                self.workspace.update(cx, |w, cx| {
+                                    let word_wrap = w.config.word_wrap;
+                                    let tab_size = w.config.tab_size;
+                                    if let Some(editor) = w.active_editor_mut() {
+                                        for _ in 0..20 {
+                                            if word_wrap {
+                                                editor.move_cursor_vdown_px(max_w, ascii_w, cjk_w, tab_size, is_visual);
+                                            } else {
+                                                editor.move_cursor_down(is_visual);
+                                            }
+                                        }
+                                        editor.ensure_cursor_visible(30, 80, word_wrap);
+                                    }
+                                    cx.notify();
+                                });
+                                return;
+                            }
+                            "b" => {
+                                let max_w = self.last_wrap_width_px;
+                                let ascii_w = self.ascii_width_px;
+                                let cjk_w = self.cjk_width_px;
+                                self.workspace.update(cx, |w, cx| {
+                                    let word_wrap = w.config.word_wrap;
+                                    let tab_size = w.config.tab_size;
+                                    if let Some(editor) = w.active_editor_mut() {
+                                        for _ in 0..20 {
+                                            if word_wrap {
+                                                editor.move_cursor_vup_px(max_w, ascii_w, cjk_w, tab_size, is_visual);
+                                            } else {
+                                                editor.move_cursor_up(is_visual);
+                                            }
+                                        }
+                                        editor.ensure_cursor_visible(30, 80, word_wrap);
+                                    }
+                                    cx.notify();
+                                });
+                                return;
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -133,7 +347,7 @@ impl EditorView {
                         return;
                     }
                     zee_core::ViMode::Insert => {
-                        if key.as_str() == "escape" {
+                        if (control && !cmd && key.as_str() == "[") || key.as_str() == "escape" {
                             self.workspace.update(cx, |w, cx| {
                                 if let Some(editor) = w.active_editor_mut() {
                                     editor.vi_mode = zee_core::ViMode::Normal;
@@ -142,6 +356,8 @@ impl EditorView {
                                 }
                                 cx.notify();
                             });
+                            self.preedit_text = None;
+                            self.preedit_range = None;
                             return;
                         }
                     }
@@ -260,6 +476,61 @@ impl EditorView {
             }
             self.pending_r = false;
             return;
+        }
+
+        if self.pending_f || self.pending_capital_f || self.pending_t || self.pending_capital_t {
+            let forward = self.pending_f || self.pending_t;
+            let till = self.pending_t || self.pending_capital_t;
+            self.pending_f = false;
+            self.pending_capital_f = false;
+            self.pending_t = false;
+            self.pending_capital_t = false;
+
+            if key != "escape" && key.chars().count() == 1 {
+                let target_ch = key.chars().next().unwrap();
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(pos) = editor.find_inline_char(editor.cursor, target_ch, forward, till) {
+                            editor.cursor = pos;
+                            editor.selection = None;
+                            editor.selection_anchor = None;
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            return;
+        }
+
+        if self.pending_indent {
+            self.pending_indent = false;
+            if key == ">" {
+                self.workspace.update(cx, |w, cx| {
+                    let expand_tab = w.config.expand_tab;
+                    let tab_size = w.config.tab_size;
+                    if let Some(editor) = w.active_editor_mut() {
+                        let (line, _) = editor.char_to_line_col(editor.cursor);
+                        editor.indent_line(line, expand_tab, tab_size);
+                    }
+                    cx.notify();
+                });
+                return;
+            }
+        }
+
+        if self.pending_unindent {
+            self.pending_unindent = false;
+            if key == "<" {
+                self.workspace.update(cx, |w, cx| {
+                    let tab_size = w.config.tab_size;
+                    if let Some(editor) = w.active_editor_mut() {
+                        let (line, _) = editor.char_to_line_col(editor.cursor);
+                        editor.unindent_line(line, tab_size);
+                    }
+                    cx.notify();
+                });
+                return;
+            }
         }
 
         if self.pending_d {
@@ -415,6 +686,7 @@ impl EditorView {
             }
             self.pending_c = false;
             if handled {
+                self.ignore_next_text_input = true;
                 return;
             }
         }
@@ -496,6 +768,7 @@ impl EditorView {
 
         match key {
             "i" => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         editor.vi_mode = zee_core::ViMode::Insert;
@@ -504,6 +777,7 @@ impl EditorView {
                 });
             }
             "I" => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         let line = editor.rope.char_to_line(editor.cursor);
@@ -516,6 +790,7 @@ impl EditorView {
                 });
             }
             "a" => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         editor.move_cursor_right(false);
@@ -525,6 +800,7 @@ impl EditorView {
                 });
             }
             "A" => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         let (line, _) = editor.char_to_line_col(editor.cursor);
@@ -535,6 +811,7 @@ impl EditorView {
                 });
             }
             "o" => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         editor.move_cursor_end(false);
@@ -545,6 +822,7 @@ impl EditorView {
                 });
             }
             "O" => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         editor.move_cursor_home(false);
@@ -695,10 +973,105 @@ impl EditorView {
                     cx.notify();
                 });
             }
+            "X" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if editor.cursor > 0 {
+                            let (_line, col) = editor.char_to_line_col(editor.cursor);
+                            if col > 0 {
+                                editor.delete(editor.cursor - 1..editor.cursor);
+                            }
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "~" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.toggle_case_at_cursor();
+                    }
+                    cx.notify();
+                });
+            }
+            "%" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(pos) = editor.find_matching_bracket(editor.cursor) {
+                            editor.cursor = pos;
+                            editor.selection = None;
+                            editor.selection_anchor = None;
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "f" => {
+                self.pending_f = true;
+            }
+            "F" => {
+                self.pending_capital_f = true;
+            }
+            "t" => {
+                self.pending_t = true;
+            }
+            "T" => {
+                self.pending_capital_t = true;
+            }
+            ">" => {
+                self.pending_indent = true;
+            }
+            "<" => {
+                self.pending_unindent = true;
+            }
+            ":" => {
+                self.ignore_next_text_input = true;
+                self.workspace.update(cx, |w, cx| {
+                    w.vi_cmd = Some(":".into());
+                    cx.notify();
+                });
+            }
+            "/" | "?" => {
+                self.ignore_next_text_input = true;
+                cx.dispatch_action(&crate::app::Find {});
+            }
+            "n" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.find_next_match();
+                    }
+                    cx.notify();
+                });
+            }
+            "N" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.find_prev_match();
+                    }
+                    cx.notify();
+                });
+            }
+            "*" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.search_word_at_cursor(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "#" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.search_word_at_cursor(false);
+                    }
+                    cx.notify();
+                });
+            }
             "r" => {
                 self.pending_r = true;
             }
             "s" => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         if editor.cursor < editor.rope.len_chars() {
@@ -710,6 +1083,7 @@ impl EditorView {
                 });
             }
             "S" => {
+                self.ignore_next_text_input = true;
                 let mut text_to_copy = None;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
@@ -731,6 +1105,7 @@ impl EditorView {
                 }
             }
             "C" => {
+                self.ignore_next_text_input = true;
                 let mut text_to_copy = None;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
@@ -903,13 +1278,72 @@ impl EditorView {
                         editor.selection = None;
                         editor.selection_anchor = None;
                     }
+                    w.vi_cmd = None;
                     cx.notify();
                 });
+                self.preedit_text = None;
+                self.preedit_range = None;
                 self.pending_d = false;
                 self.pending_y = false;
                 self.pending_c = false;
                 self.pending_g = false;
                 self.pending_r = false;
+                self.pending_f = false;
+                self.pending_capital_f = false;
+                self.pending_t = false;
+                self.pending_capital_t = false;
+                self.pending_indent = false;
+                self.pending_unindent = false;
+            }
+            "enter" => {
+                self.preedit_text = None;
+                self.preedit_range = None;
+                self.workspace.update(cx, |w, cx| {
+                    let word_wrap = w.config.word_wrap;
+                    if let Some(editor) = w.active_editor_mut() {
+                        let line = editor.rope.char_to_line(editor.cursor);
+                        if line + 1 < editor.rope.len_lines() {
+                            let next_line = line + 1;
+                            let line_str = editor.rope.line(next_line).to_string();
+                            let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                            editor.cursor = editor.line_col_to_char(next_line, indent);
+                            editor.selection = None;
+                            editor.selection_anchor = None;
+                            editor.ensure_cursor_visible(30, 80, word_wrap);
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "dd" => {
+                let mut text_to_copy = None;
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let (line, _) = editor.char_to_line_col(editor.cursor);
+                        let line_start = editor.rope.line_to_char(line);
+                        let next_line_start = if line + 1 < editor.rope.len_lines() {
+                            editor.rope.line_to_char(line + 1)
+                        } else {
+                            editor.rope.len_chars()
+                        };
+                        let range = line_start..next_line_start;
+                        if !range.is_empty() {
+                            text_to_copy = Some(editor.rope.slice(range.clone()).to_string());
+                            editor.delete(range);
+                            editor.cursor = line_start.min(editor.rope.len_chars());
+                            let (new_line, _) = editor.char_to_line_col(editor.cursor);
+                            let max_col = editor.get_line_max_col(new_line);
+                            let col = editor.cursor - editor.rope.line_to_char(new_line);
+                            if col > max_col {
+                                editor.cursor = editor.line_col_to_char(new_line, max_col);
+                            }
+                        }
+                    }
+                    cx.notify();
+                });
+                if let Some(text) = text_to_copy {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
             }
             "up" | "down" | "left" | "right" | "home" | "end" | "pageup" | "pagedown" => {
                 let max_w = self.last_wrap_width_px;
@@ -968,6 +1402,12 @@ impl EditorView {
                 self.pending_c = false;
                 self.pending_g = false;
                 self.pending_r = false;
+                self.pending_f = false;
+                self.pending_capital_f = false;
+                self.pending_t = false;
+                self.pending_capital_t = false;
+                self.pending_indent = false;
+                self.pending_unindent = false;
             }
         }
     }
@@ -1131,6 +1571,7 @@ impl EditorView {
                 }
             }
             "c" | "s" => {
+                self.ignore_next_text_input = true;
                 let mut text_to_copy = None;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
@@ -1196,6 +1637,7 @@ impl EditorView {
                 }
             }
             "I" if is_block => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         if let Some(anchor) = editor.selection_anchor {
@@ -1211,6 +1653,7 @@ impl EditorView {
                 });
             }
             "A" if is_block => {
+                self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         if let Some(anchor) = editor.selection_anchor {
@@ -1222,6 +1665,134 @@ impl EditorView {
                         }
                         editor.vi_mode = zee_core::ViMode::Insert;
                     }
+                    cx.notify();
+                });
+            }
+            ">" => {
+                self.workspace.update(cx, |w, cx| {
+                    let expand_tab = w.config.expand_tab;
+                    let tab_size = w.config.tab_size;
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(range) = editor.selection.clone() {
+                            let start_line = editor.rope.char_to_line(range.start);
+                            let end_line = editor.rope.char_to_line(range.end.saturating_sub(1));
+                            editor.indent_range(start_line, end_line, expand_tab, tab_size);
+                        }
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                        editor.vi_mode = zee_core::ViMode::Normal;
+                    }
+                    cx.notify();
+                });
+            }
+            "<" => {
+                self.workspace.update(cx, |w, cx| {
+                    let tab_size = w.config.tab_size;
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(range) = editor.selection.clone() {
+                            let start_line = editor.rope.char_to_line(range.start);
+                            let end_line = editor.rope.char_to_line(range.end.saturating_sub(1));
+                            editor.unindent_range(start_line, end_line, tab_size);
+                        }
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                        editor.vi_mode = zee_core::ViMode::Normal;
+                    }
+                    cx.notify();
+                });
+            }
+            "~" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(range) = editor.selection.clone() {
+                            editor.change_case_range(range, None);
+                        }
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                        editor.vi_mode = zee_core::ViMode::Normal;
+                    }
+                    cx.notify();
+                });
+            }
+            "u" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(range) = editor.selection.clone() {
+                            editor.change_case_range(range, Some(false));
+                        }
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                        editor.vi_mode = zee_core::ViMode::Normal;
+                    }
+                    cx.notify();
+                });
+            }
+            "U" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(range) = editor.selection.clone() {
+                            editor.change_case_range(range, Some(true));
+                        }
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                        editor.vi_mode = zee_core::ViMode::Normal;
+                    }
+                    cx.notify();
+                });
+            }
+            "%" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(pos) = editor.find_matching_bracket(editor.cursor) {
+                            editor.cursor = pos;
+                            editor.update_selection();
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "^" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let line = editor.rope.char_to_line(editor.cursor);
+                        let line_str = editor.rope.line(line).to_string();
+                        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                        editor.cursor = editor.line_col_to_char(line, indent);
+                        editor.update_selection();
+                    }
+                    cx.notify();
+                });
+            }
+            "g" => {
+                if self.pending_g {
+                    self.workspace.update(cx, |w, cx| {
+                        if let Some(editor) = w.active_editor_mut() {
+                            editor.cursor = 0;
+                            editor.update_selection();
+                        }
+                        cx.notify();
+                    });
+                    self.pending_g = false;
+                } else {
+                    self.pending_g = true;
+                }
+            }
+            "G" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.cursor = editor.rope.len_chars();
+                        let line = editor.line_count().saturating_sub(1);
+                        let col = editor.get_line_max_col(line);
+                        editor.cursor = editor.line_col_to_char(line, col);
+                        editor.update_selection();
+                    }
+                    cx.notify();
+                });
+            }
+            ":" => {
+                self.ignore_next_text_input = true;
+                self.workspace.update(cx, |w, cx| {
+                    w.vi_cmd = Some(":".into());
                     cx.notify();
                 });
             }
@@ -1452,9 +2023,16 @@ impl EntityInputHandler for EditorView {
         Some(editor.rope.slice(range).to_string())
     }
 
-    fn selected_text_range(&mut self, _ignore_disabled_input: bool, _window: &mut Window, cx: &mut Context<Self>) -> Option<UTF16Selection> {
+    fn selected_text_range(&mut self, ignore_disabled_input: bool, _window: &mut Window, cx: &mut Context<Self>) -> Option<UTF16Selection> {
         let workspace = self.workspace.read(cx);
         let editor = workspace.active_editor()?;
+        let vi_mode_enabled = workspace.config.vi_mode;
+        let is_insert = editor.vi_mode == zee_core::ViMode::Insert;
+        let input_enabled = !vi_mode_enabled || is_insert || self.pending_r;
+
+        if !ignore_disabled_input && !input_enabled {
+            return None;
+        }
         
         let range = editor.selection.clone().unwrap_or(editor.cursor..editor.cursor);
         Some(UTF16Selection {
@@ -1473,10 +2051,28 @@ impl EntityInputHandler for EditorView {
         cx.notify();
     }
 
+    fn accepts_text_input(&self, _window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let workspace = self.workspace.read(cx);
+        if !workspace.config.vi_mode {
+            return true;
+        }
+        let is_insert = workspace.active_editor().map(|e| e.vi_mode == zee_core::ViMode::Insert).unwrap_or(true);
+        is_insert || self.pending_r
+    }
+
     fn replace_text_in_range(&mut self, replacement_range: Option<std::ops::Range<usize>>, text: &str, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.ignore_next_text_input {
+            self.ignore_next_text_input = false;
+            return;
+        }
+
         let vi_mode_enabled = self.workspace.read(cx).config.vi_mode;
         let is_normal_or_visual = self.workspace.read(cx).active_editor().map(|e| e.vi_mode != zee_core::ViMode::Insert).unwrap_or(false);
-        if vi_mode_enabled && is_normal_or_visual {
+        let in_vi_cmd = self.workspace.read(cx).vi_cmd.is_some();
+        if vi_mode_enabled && (is_normal_or_visual || in_vi_cmd) && !self.pending_r {
+            self.preedit_text = None;
+            self.preedit_range = None;
+            cx.notify();
             return;
         }
 
@@ -1503,6 +2099,21 @@ impl EntityInputHandler for EditorView {
     }
 
     fn replace_and_mark_text_in_range(&mut self, range_to_replace: Option<std::ops::Range<usize>>, text: &str, _marked_range: Option<std::ops::Range<usize>>, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.ignore_next_text_input {
+            self.ignore_next_text_input = false;
+            return;
+        }
+
+        let vi_mode_enabled = self.workspace.read(cx).config.vi_mode;
+        let is_normal_or_visual = self.workspace.read(cx).active_editor().map(|e| e.vi_mode != zee_core::ViMode::Insert).unwrap_or(false);
+        let in_vi_cmd = self.workspace.read(cx).vi_cmd.is_some();
+        if vi_mode_enabled && (is_normal_or_visual || in_vi_cmd) {
+            self.preedit_text = None;
+            self.preedit_range = None;
+            cx.notify();
+            return;
+        }
+
         if text.is_empty() {
             self.unmark_text(_window, cx);
             return;
@@ -2070,23 +2681,26 @@ impl EditorView {
         let theme = &workspace.theme;
         let line_height = px(workspace.config.line_height);
 
-        if let Some(ref preedit) = self.preedit_text {
-            return Some(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left(px(cursor_x))
-                    .h(line_height)
-                    .flex()
-                    .items_center()
-                    .text_color(gpui::rgb(0xffffff))
-                    .bg(gpui::rgb(0x0000ff))
-                    .border_b_1()
-                    .border_color(gpui::rgb(0xffffff))
-                    .font_family(mono_font_family())
-                    .child(preedit.clone())
-                    .into_any_element(),
-            );
+        let is_insert = !workspace.config.vi_mode || editor.vi_mode == zee_core::ViMode::Insert;
+        if is_insert {
+            if let Some(ref preedit) = self.preedit_text {
+                return Some(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(px(cursor_x))
+                        .h(line_height)
+                        .flex()
+                        .items_center()
+                        .text_color(gpui::rgb(0xffffff))
+                        .bg(gpui::rgb(0x0000ff))
+                        .border_b_1()
+                        .border_color(gpui::rgb(0xffffff))
+                        .font_family(mono_font_family())
+                        .child(preedit.clone())
+                        .into_any_element(),
+                );
+            }
         }
 
         let is_block_cursor = workspace.config.vi_mode && editor.vi_mode != zee_core::ViMode::Insert;

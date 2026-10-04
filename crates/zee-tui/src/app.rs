@@ -1,5 +1,5 @@
 use std::io::{self, Stdout, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use crossterm::{
     cursor,
@@ -85,7 +85,8 @@ impl App {
     pub fn new(paths: Vec<PathBuf>) -> Result<Self> {
         let (width, height) = terminal::size().unwrap_or((80, 24));
         
-        let config = Config::load();
+        let mut config = Config::load();
+        config.vi_mode = false;
         let i18n = I18n::load(&config.language);
 
         let themes = zee_core::theme::Theme::load_all();
@@ -131,6 +132,10 @@ impl App {
 
         if buffers.is_empty() {
             buffers.push(Editor::new());
+        }
+
+        for b in buffers.iter_mut() {
+            b.vi_mode = if config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
         }
 
         let active_buffer = 0;
@@ -412,11 +417,31 @@ impl App {
         self.update_active_outline();
     }
 
+    fn new_editor(&self) -> Editor {
+        let mut editor = Editor::new();
+        editor.vi_mode = if self.config.vi_mode {
+            zee_core::ViMode::Normal
+        } else {
+            zee_core::ViMode::Insert
+        };
+        editor
+    }
+
+    fn editor_from_file(&self, path: impl AsRef<Path>) -> Result<Editor> {
+        let mut editor = Editor::from_file(path)?;
+        editor.vi_mode = if self.config.vi_mode {
+            zee_core::ViMode::Normal
+        } else {
+            zee_core::ViMode::Insert
+        };
+        Ok(editor)
+    }
+
     pub fn open_or_switch_to_file(&mut self, path: PathBuf) {
         if let Some(idx) = self.buffers.iter().position(|b| b.path.as_ref() == Some(&path)) {
             self.active_buffer = idx;
         } else {
-            match Editor::from_file(&path) {
+            match self.editor_from_file(&path) {
                 Ok(mut editor) => {
                     let ext = path.extension().and_then(|e| e.to_str());
                     if let Some(ext) = ext {
@@ -758,6 +783,64 @@ impl App {
                 return;
             }
 
+        if key.modifiers.contains(KeyModifiers::CONTROL) && buffer.vi_mode != zee_core::ViMode::Insert {
+            match key.code {
+                KeyCode::Char('r') => {
+                    self.perform_action(Action::Redo);
+                    return;
+                }
+                KeyCode::Char('d') => {
+                    let is_visual = buffer.vi_mode != zee_core::ViMode::Normal;
+                    for _ in 0..10 {
+                        if self.config.word_wrap {
+                            self.move_cursor_vdown(is_visual);
+                        } else if let Some(b) = self.buffers.get_mut(self.active_buffer) {
+                            b.move_cursor_down(is_visual);
+                        }
+                    }
+                    self.ensure_cursor_visible();
+                    return;
+                }
+                KeyCode::Char('u') => {
+                    let is_visual = buffer.vi_mode != zee_core::ViMode::Normal;
+                    for _ in 0..10 {
+                        if self.config.word_wrap {
+                            self.move_cursor_vup(is_visual);
+                        } else if let Some(b) = self.buffers.get_mut(self.active_buffer) {
+                            b.move_cursor_up(is_visual);
+                        }
+                    }
+                    self.ensure_cursor_visible();
+                    return;
+                }
+                KeyCode::Char('f') => {
+                    let is_visual = buffer.vi_mode != zee_core::ViMode::Normal;
+                    for _ in 0..20 {
+                        if self.config.word_wrap {
+                            self.move_cursor_vdown(is_visual);
+                        } else if let Some(b) = self.buffers.get_mut(self.active_buffer) {
+                            b.move_cursor_down(is_visual);
+                        }
+                    }
+                    self.ensure_cursor_visible();
+                    return;
+                }
+                KeyCode::Char('b') => {
+                    let is_visual = buffer.vi_mode != zee_core::ViMode::Normal;
+                    for _ in 0..20 {
+                        if self.config.word_wrap {
+                            self.move_cursor_vup(is_visual);
+                        } else if let Some(b) = self.buffers.get_mut(self.active_buffer) {
+                            b.move_cursor_up(is_visual);
+                        }
+                    }
+                    self.ensure_cursor_visible();
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         match buffer.vi_mode {
             zee_core::ViMode::Normal => self.handle_vi_normal_key(key),
             zee_core::ViMode::Insert => {
@@ -774,7 +857,26 @@ impl App {
     }
 
     fn handle_vi_normal_key(&mut self, key: KeyEvent) {
-        let code = key.code;
+        let code = match key.code {
+            KeyCode::Char(c) => KeyCode::Char(zee_core::normalize_vi_char(c)),
+            other => other,
+        };
+
+        if matches!(code, KeyCode::Char('っ') | KeyCode::Char('ッ')) {
+            if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                let (line, _) = buffer.char_to_line_col(buffer.cursor);
+                buffer.select_line(line);
+                if let Some(range) = buffer.selection.clone() {
+                    let text = buffer.rope.slice(range.clone()).to_string();
+                    let _ = clipboard::set_clipboard(&text);
+                    buffer.delete(range);
+                    buffer.selection = None;
+                    buffer.selection_anchor = None;
+                }
+            }
+            self.ensure_cursor_visible();
+            return;
+        }
 
         if self.pending_r {
             if let KeyCode::Char(c) = code {
@@ -800,7 +902,7 @@ impl App {
             if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                 let start_pos = buffer.cursor;
                 let target_pos = match code {
-                    KeyCode::Char('d') => {
+                    KeyCode::Char('d') | KeyCode::Char('っ') | KeyCode::Char('ッ') => {
                         let (line, _) = buffer.char_to_line_col(buffer.cursor);
                         buffer.select_line(line);
                         if let Some(range) = buffer.selection.clone() {
@@ -1261,7 +1363,43 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('/') => self.perform_action(Action::Find),
+            KeyCode::Char('/') | KeyCode::Char('?') => self.perform_action(Action::Find),
+            KeyCode::Char('n') => self.find_next(),
+            KeyCode::Char('N') => self.find_prev(),
+            KeyCode::Char('*') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.search_word_at_cursor(true);
+                }
+            }
+            KeyCode::Char('#') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.search_word_at_cursor(false);
+                }
+            }
+            KeyCode::Char('%') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(pos) = buffer.find_matching_bracket(buffer.cursor) {
+                        buffer.cursor = pos;
+                        buffer.selection = None;
+                        buffer.selection_anchor = None;
+                    }
+                }
+            }
+            KeyCode::Char('~') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.toggle_case_at_cursor();
+                }
+            }
+            KeyCode::Char('X') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if buffer.cursor > 0 {
+                        let (_line, col) = buffer.char_to_line_col(buffer.cursor);
+                        if col > 0 {
+                            buffer.delete(buffer.cursor - 1..buffer.cursor);
+                        }
+                    }
+                }
+            }
             KeyCode::Char(':') => {
                 self.is_vi_cmd_mode = true;
                 self.vi_cmd = ":".to_string();
@@ -1300,6 +1438,19 @@ impl App {
                 self.pending_g = false;
                 self.pending_r = false;
             }
+            KeyCode::Enter => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    let line = buffer.rope.char_to_line(buffer.cursor);
+                    if line + 1 < buffer.line_count() {
+                        let next_line = line + 1;
+                        let line_str = buffer.rope.line(next_line).to_string();
+                        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                        buffer.cursor = buffer.line_col_to_char(next_line, indent);
+                        buffer.selection = None;
+                        buffer.selection_anchor = None;
+                    }
+                }
+            }
             _ => {
                 self.pending_d = false;
                 self.pending_y = false;
@@ -1320,7 +1471,10 @@ impl App {
     }
 
     fn handle_vi_visual_key(&mut self, key: KeyEvent) {
-        let code = key.code;
+        let code = match key.code {
+            KeyCode::Char(c) => KeyCode::Char(zee_core::normalize_vi_char(c)),
+            other => other,
+        };
         let is_block = self.buffers.get(self.active_buffer).map(|b| b.vi_mode == zee_core::ViMode::VisualBlock).unwrap_or(false);
         
         match code {
@@ -1510,21 +1664,39 @@ impl App {
                 self.vi_cmd.clear();
             }
             KeyCode::Enter => {
-                let cmd = self.vi_cmd.trim();
-                match cmd {
-                    ":w" => self.perform_action(Action::Save),
-                    ":q" => self.perform_action(Action::Exit), // Simple map for now
-                    ":wq" => {
-                        self.perform_action(Action::Save);
-                        self.perform_action(Action::Exit);
+                let normalized_cmd: String = self.vi_cmd.chars().map(zee_core::normalize_vi_char).collect();
+                let cmd = normalized_cmd.trim();
+                let inner = cmd.strip_prefix(':').unwrap_or(cmd).trim();
+                if let Ok(line_num) = inner.parse::<usize>() {
+                    if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        let max_line = buffer.line_count().saturating_sub(1);
+                        let target_line = line_num.saturating_sub(1).min(max_line);
+                        buffer.cursor = buffer.line_col_to_char(target_line, 0);
+                        buffer.selection = None;
+                        buffer.selection_anchor = None;
                     }
-                    _ => {}
+                } else {
+                    match cmd {
+                        ":w" => self.perform_action(Action::Save),
+                        ":q" => self.perform_action(Action::Exit),
+                        ":wq" | ":x" => {
+                            self.perform_action(Action::Save);
+                            self.perform_action(Action::Exit);
+                        }
+                        ":q!" => self.perform_action(Action::Exit),
+                        ":qa" => self.perform_action(Action::Exit),
+                        ":wqa" => {
+                            self.perform_action(Action::Save);
+                            self.perform_action(Action::Exit);
+                        }
+                        _ => {}
+                    }
                 }
                 self.is_vi_cmd_mode = false;
                 self.vi_cmd.clear();
             }
             KeyCode::Char(c) => {
-                self.vi_cmd.push(c);
+                self.vi_cmd.push(zee_core::normalize_vi_char(c));
             }
             KeyCode::Backspace => {
                 if self.vi_cmd.len() > 1 {
@@ -1710,7 +1882,7 @@ impl App {
                     dialog::Action::ConfirmPath(path) => {
                         match self.pending_op {
                             PendingOp::Open => {
-                                match Editor::from_file(&path) {
+                                match self.editor_from_file(&path) {
                                     Ok(mut buffer) => {
                                         let syntax = self.detect_syntax(&path);
                                         buffer.update_syntax(syntax);
@@ -1787,7 +1959,7 @@ impl App {
                                         } else {
                                             self.buffers.remove(self.active_buffer);
                                             if self.buffers.is_empty() {
-                                                self.buffers.push(Editor::new());
+                                                self.buffers.push(self.new_editor());
                                             }
                                             self.active_buffer = self.active_buffer.min(self.buffers.len() - 1);
                                             self.update_active_outline();
@@ -1816,7 +1988,7 @@ impl App {
                             PendingOp::Exit => {
                                 self.buffers.remove(self.active_buffer);
                                 if self.buffers.is_empty() {
-                                    self.buffers.push(Editor::new());
+                                    self.buffers.push(self.new_editor());
                                 }
                                 self.active_buffer = self.active_buffer.min(self.buffers.len() - 1);
                                 self.perform_action(Action::Exit);
@@ -1824,7 +1996,7 @@ impl App {
                             PendingOp::Close => {
                                 self.buffers.remove(self.active_buffer);
                                 if self.buffers.is_empty() {
-                                    self.buffers.push(Editor::new());
+                                    self.buffers.push(self.new_editor());
                                 }
                                 self.active_buffer = self.active_buffer.min(self.buffers.len() - 1);
                                 self.update_active_outline();
@@ -1835,7 +2007,7 @@ impl App {
                                 if let Some(enc) = self.target_encoding.take() {
                                     if let Some(buffer) = self.buffers.get(self.active_buffer) {
                                         if let Some(path) = buffer.path.clone() {
-                                            if let Ok(new_buffer) = Editor::from_file(&path) {
+                                            if let Ok(new_buffer) = self.editor_from_file(&path) {
                                                 let mut b = new_buffer;
                                                 b.encoding = enc;
                                                 self.buffers[self.active_buffer] = b;
@@ -2283,7 +2455,7 @@ impl App {
     fn perform_action(&mut self, action: Action) {
         match action {
             Action::New => {
-                self.buffers.push(Editor::new());
+                self.buffers.push(self.new_editor());
                 self.active_buffer = self.buffers.len() - 1;
                 self.update_active_outline();
                 self.recompute_layout();
@@ -2344,7 +2516,7 @@ impl App {
                 }
                 self.buffers.remove(self.active_buffer);
                 if self.buffers.is_empty() {
-                    self.buffers.push(Editor::new());
+                    self.buffers.push(self.new_editor());
                 }
                 self.active_buffer = self.active_buffer.min(self.buffers.len() - 1);
                 self.update_active_outline();
@@ -2497,12 +2669,10 @@ impl App {
             }
             Action::ToggleViMode => {
                 self.config.vi_mode = !self.config.vi_mode;
-                let _ = Config::write_key("vi_mode", &self.config.vi_mode.to_string());
                 self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
                 
-                // Reset all buffers to Normal mode when Vi mode is toggled
                 for b in self.buffers.iter_mut() {
-                    b.vi_mode = zee_core::ViMode::Normal;
+                    b.vi_mode = if self.config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
                     b.selection = None;
                     b.selection_anchor = None;
                 }
@@ -2527,7 +2697,7 @@ impl App {
                     } else {
                         // Reload immediately
                         if let Some(path) = buffer.path.clone() {
-                            if let Ok(new_buffer) = Editor::from_file(&path) {
+                            if let Ok(new_buffer) = self.editor_from_file(&path) {
                                 let mut b = new_buffer;
                                 b.encoding = enc;
                                 self.buffers[self.active_buffer] = b;
@@ -4254,6 +4424,71 @@ mod tests {
         };
         app.handle_mouse(mouse_up);
         assert_eq!(app.buffers[0].selection, Some(0..6));
+    }
+
+    #[test]
+    fn test_vi_mode_ime_normalization_normal_mode() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.vi_mode = true;
+        app.buffers[0].vi_mode = zee_core::ViMode::Normal;
+        app.buffers[0].insert(0, "line1\nline2\nline3\n");
+        app.buffers[0].cursor = 0;
+
+        // 1. Full-width 'ｊ' moves cursor down
+        app.handle_key(make_key(KeyCode::Char('ｊ')));
+        assert_eq!(app.buffers[0].char_to_line_col(app.buffers[0].cursor).0, 1);
+
+        // 2. Full-width 'ｋ' moves cursor up
+        app.handle_key(make_key(KeyCode::Char('ｋ')));
+        assert_eq!(app.buffers[0].char_to_line_col(app.buffers[0].cursor).0, 0);
+
+        // 3. Enter moves cursor down to next line
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.buffers[0].char_to_line_col(app.buffers[0].cursor).0, 1);
+
+        // 4. Kana 'い' enters insert mode
+        app.handle_key(make_key(KeyCode::Char('い')));
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert);
+
+        // Return to normal mode
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Normal);
+
+        // 5. Kana 'あ' moves cursor right and enters insert mode
+        let cur_before = app.buffers[0].cursor;
+        app.handle_key(make_key(KeyCode::Char('あ')));
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert);
+        assert_eq!(app.buffers[0].cursor, cur_before + 1);
+
+        // Return to normal mode
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Normal);
+
+        // 6. Japanese sokuon 'っ' deletes line (vi 'dd')
+        let lines_before = app.buffers[0].line_count();
+        app.handle_key(make_key(KeyCode::Char('っ')));
+        assert_eq!(app.buffers[0].line_count(), lines_before - 1);
+
+        // 7. Full-width colon '：' enters vi cmd mode
+        app.handle_key(make_key(KeyCode::Char('：')));
+        assert!(app.is_vi_cmd_mode);
+        assert_eq!(app.vi_cmd, ":");
+
+        // Type full-width 'ｗ' into cmd mode
+        app.handle_key(make_key(KeyCode::Char('ｗ')));
+        assert_eq!(app.vi_cmd, ":w");
+
+        // Cancel cmd mode with Esc
+        app.handle_key(make_key(KeyCode::Esc));
+        assert!(!app.is_vi_cmd_mode);
+    }
+
+    #[test]
+    fn test_app_vi_mode_defaults_off_at_startup() {
+        let app = App::new(vec![]).expect("Failed to init App");
+        assert!(!app.config.vi_mode, "Vi mode config should default to false");
+        assert_eq!(app.buffers.len(), 1);
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert, "Initial buffer should be in Insert mode");
     }
 }
 

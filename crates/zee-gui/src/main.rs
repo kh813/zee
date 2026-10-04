@@ -21,7 +21,8 @@ fn main() {
 
     app.on_reopen(move |cx| {
         if cx.windows().is_empty() {
-            let config = zee_core::config::Config::load();
+            let mut config = zee_core::config::Config::load();
+            config.vi_mode = false;
             let i18n = zee_core::i18n::I18n::load(&config.language);
             crate::app::new_window(config, i18n, cx);
         }

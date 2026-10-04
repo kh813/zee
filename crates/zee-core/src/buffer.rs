@@ -58,7 +58,7 @@ impl Editor {
             encoding: Encoding::Utf8,
             line_ending: LineEnding::Lf,
             read_only: false,
-            vi_mode: crate::ViMode::Normal,
+            vi_mode: crate::ViMode::Insert,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             saved_undo_len: 0,
@@ -105,7 +105,7 @@ impl Editor {
             encoding,
             line_ending,
             read_only: false,
-            vi_mode: crate::ViMode::Normal,
+            vi_mode: crate::ViMode::Insert,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             saved_undo_len: 0,
@@ -226,15 +226,31 @@ impl Editor {
         }
     }
 
+    pub fn compute_line_break_segments(line_str: &str) -> Vec<usize> {
+        if line_str.is_empty() {
+            return vec![0];
+        }
+        let mut byte_to_char = vec![0; line_str.len() + 1];
+        let mut char_count = 0;
+        for (byte_idx, _) in line_str.char_indices() {
+            byte_to_char[byte_idx] = char_count;
+            char_count += 1;
+        }
+        byte_to_char[line_str.len()] = char_count;
+
+        let mut breaks: Vec<usize> = unicode_linebreak::linebreaks(line_str)
+            .map(|(b, _)| byte_to_char[b])
+            .collect();
+        if breaks.last() != Some(&char_count) {
+            breaks.push(char_count);
+        }
+        breaks
+    }
+
     #[allow(clippy::single_range_in_vec_init)]
     pub fn wrap_line(&self, line_idx: usize, width: usize, tab_size: usize) -> Vec<Range<usize>> {
         if width == 0 { return vec![0..self.line(line_idx).len_chars()]; }
         let line = self.line(line_idx);
-        let mut result = Vec::new();
-        let mut start = 0;
-        let mut cur_width = 0;
-
-        use unicode_width::UnicodeWidthChar;
 
         let mut len_without_newline = line.len_chars();
         while len_without_newline > 0 {
@@ -250,23 +266,92 @@ impl Editor {
             return vec![0..0];
         }
 
-        for (i, c) in line.chars().take(len_without_newline).enumerate() {
-            let char_w = if c == '\t' {
-                tab_size - (cur_width % tab_size)
-            } else {
-                c.width().unwrap_or(0)
-            };
+        let line_str: String = line.chars().take(len_without_newline).collect();
+        let breaks = Self::compute_line_break_segments(&line_str);
+        let chars: Vec<char> = line_str.chars().collect();
 
-            if cur_width + char_w > width && i > start {
-                result.push(start..i);
-                start = i;
-                cur_width = 0;
+        use unicode_width::UnicodeWidthChar;
+
+        let mut result = Vec::new();
+        let mut line_start = 0;
+        let mut cur_width = 0;
+        let mut seg_start = 0;
+
+        for seg_end in breaks {
+            if seg_end <= seg_start {
+                continue;
             }
-            
-            cur_width += char_w;
+
+            // Simulate adding segment `seg_start..seg_end` to current line
+            let mut simulated_width = cur_width;
+            for &c in &chars[seg_start..seg_end] {
+                let w = if c == '\t' {
+                    tab_size - (simulated_width % tab_size)
+                } else {
+                    c.width().unwrap_or(0)
+                };
+                simulated_width += w;
+            }
+
+            if simulated_width <= width {
+                cur_width = simulated_width;
+            } else {
+                // If the current line already has content, wrap before this segment
+                if seg_start > line_start {
+                    result.push(line_start..seg_start);
+                    line_start = seg_start;
+                    cur_width = 0;
+                }
+
+                // Check if segment fits on a fresh line
+                let mut fresh_width = 0;
+                for &c in &chars[seg_start..seg_end] {
+                    let w = if c == '\t' {
+                        tab_size - (fresh_width % tab_size)
+                    } else {
+                        c.width().unwrap_or(0)
+                    };
+                    fresh_width += w;
+                }
+
+                if fresh_width <= width {
+                    cur_width = fresh_width;
+                } else {
+                    // Segment itself is longer than width: fallback to character-by-character wrap
+                    for (offset, &c) in chars[seg_start..seg_end].iter().enumerate() {
+                        let idx = seg_start + offset;
+                        let w = if c == '\t' {
+                            tab_size - (cur_width % tab_size)
+                        } else {
+                            c.width().unwrap_or(0)
+                        };
+
+                        if cur_width + w > width && idx > line_start {
+                            result.push(line_start..idx);
+                            line_start = idx;
+                            cur_width = 0;
+                            let w_recomputed = if c == '\t' {
+                                tab_size - (cur_width % tab_size)
+                            } else {
+                                c.width().unwrap_or(0)
+                            };
+                            cur_width += w_recomputed;
+                        } else {
+                            cur_width += w;
+                        }
+                    }
+                }
+            }
+
+            seg_start = seg_end;
         }
-        
-        result.push(start..len_without_newline);
+
+        if line_start < len_without_newline {
+            result.push(line_start..len_without_newline);
+        } else if result.is_empty() {
+            result.push(0..len_without_newline);
+        }
+
         result
     }
 
@@ -330,12 +415,6 @@ impl Editor {
             return vec![0..self.line(line_idx).len_chars()];
         }
         let line = self.line(line_idx);
-        let mut result = Vec::new();
-        let mut start = 0;
-        let mut cur_px = 0.0;
-        let tab_width_px = tab_size as f32 * ascii_width_px;
-
-        use unicode_width::UnicodeWidthChar;
 
         let mut len_without_newline = line.len_chars();
         while len_without_newline > 0 {
@@ -351,8 +430,15 @@ impl Editor {
             return vec![0..0];
         }
 
-        for (i, c) in line.chars().take(len_without_newline).enumerate() {
-            let char_px = if c == '\t' {
+        let line_str: String = line.chars().take(len_without_newline).collect();
+        let breaks = Self::compute_line_break_segments(&line_str);
+        let chars: Vec<char> = line_str.chars().collect();
+
+        use unicode_width::UnicodeWidthChar;
+
+        let tab_width_px = tab_size as f32 * ascii_width_px;
+        let char_px_fn = |c: char, cur_px: f32| -> f32 {
+            if c == '\t' {
                 let col_px = cur_px % tab_width_px;
                 tab_width_px - col_px
             } else if c.width() == Some(2) {
@@ -361,18 +447,71 @@ impl Editor {
                 0.0
             } else {
                 ascii_width_px
-            };
+            }
+        };
 
-            if cur_px + char_px > max_width_px && i > start {
-                result.push(start..i);
-                start = i;
-                cur_px = 0.0;
+        let mut result = Vec::new();
+        let mut line_start = 0;
+        let mut cur_px = 0.0;
+        let mut seg_start = 0;
+
+        for seg_end in breaks {
+            if seg_end <= seg_start {
+                continue;
             }
 
-            cur_px += char_px;
+            // Simulate adding segment `seg_start..seg_end` to current line
+            let mut simulated_px = cur_px;
+            for &c in &chars[seg_start..seg_end] {
+                simulated_px += char_px_fn(c, simulated_px);
+            }
+
+            if simulated_px <= max_width_px + 0.01 {
+                cur_px = simulated_px;
+            } else {
+                // If the current line already has content, wrap before this segment
+                if seg_start > line_start {
+                    result.push(line_start..seg_start);
+                    line_start = seg_start;
+                    cur_px = 0.0;
+                }
+
+                // Check if segment fits on a fresh line
+                let mut fresh_px = 0.0;
+                for &c in &chars[seg_start..seg_end] {
+                    fresh_px += char_px_fn(c, fresh_px);
+                }
+
+                if fresh_px <= max_width_px + 0.01 {
+                    cur_px = fresh_px;
+                } else {
+                    // Segment itself is longer than max_width_px: fallback to character-by-character wrap
+                    for (offset, &c) in chars[seg_start..seg_end].iter().enumerate() {
+                        let idx = seg_start + offset;
+                        let px = char_px_fn(c, cur_px);
+
+                        if cur_px + px > max_width_px + 0.01 && idx > line_start {
+                            result.push(line_start..idx);
+                            line_start = idx;
+                            cur_px = 0.0;
+                            let px_recomputed = char_px_fn(c, cur_px);
+                            cur_px += px_recomputed;
+                        } else {
+                            cur_px += px;
+                        }
+                    }
+                }
+            }
+
+            seg_start = seg_end;
         }
 
-        result.push(start..len_without_newline);
+        if line_start < len_without_newline {
+            result.push(line_start..len_without_newline);
+        } else if result.is_empty() {
+            result.push(0..len_without_newline);
+        }
+
         result
     }
 
@@ -1317,6 +1456,304 @@ impl Editor {
         }
         Ok(())
     }
+
+    pub fn find_matching_bracket(&self, cursor: usize) -> Option<usize> {
+        let total_chars = self.rope.len_chars();
+        if cursor >= total_chars {
+            return None;
+        }
+        let line_idx = self.rope.char_to_line(cursor);
+        let line_start = self.rope.line_to_char(line_idx);
+        let line_end = line_start + self.rope.line(line_idx).len_chars();
+
+        let bracket_chars = ['(', ')', '{', '}', '[', ']'];
+        let mut start_pos = None;
+        for pos in cursor..line_end {
+            let ch = self.rope.char(pos);
+            if bracket_chars.contains(&ch) {
+                start_pos = Some(pos);
+                break;
+            }
+        }
+        let pos = start_pos?;
+        let ch = self.rope.char(pos);
+        let (target, forward) = match ch {
+            '(' => (')', true),
+            ')' => ('(', false),
+            '{' => ('}', true),
+            '}' => ('{', false),
+            '[' => (']', true),
+            ']' => ('[', false),
+            _ => return None,
+        };
+
+        let mut depth = 0;
+        if forward {
+            for (i, c) in self.rope.chars_at(pos).enumerate() {
+                if c == ch {
+                    depth += 1;
+                } else if c == target {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(pos + i);
+                    }
+                }
+            }
+        } else {
+            let mut curr = pos;
+            loop {
+                let c = self.rope.char(curr);
+                if c == ch {
+                    depth += 1;
+                } else if c == target {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(curr);
+                    }
+                }
+                if curr == 0 {
+                    break;
+                }
+                curr -= 1;
+            }
+        }
+        None
+    }
+
+    pub fn search_word_at_cursor(&mut self, forward: bool) {
+        let range = self.find_word_bounds(self.cursor);
+        let word = self.rope.slice(range).to_string();
+        if word.is_empty() {
+            return;
+        }
+        let query = crate::search::SearchQuery {
+            pattern: word,
+            flags: crate::search::SearchFlags {
+                match_case: true,
+                whole_word: true,
+                use_regex: false,
+            },
+        };
+        self.find_results = self.search(&query);
+        if !self.find_results.is_empty() {
+            if forward {
+                let idx = self.find_results.iter().position(|m| m.char_range.start > self.cursor).unwrap_or(0);
+                self.current_match_idx = Some(idx);
+                let m = &self.find_results[idx];
+                self.cursor = m.char_range.start;
+                self.selection = Some(m.char_range.clone());
+            } else {
+                let idx = self.find_results.iter().rposition(|m| m.char_range.start < self.cursor).unwrap_or(self.find_results.len() - 1);
+                self.current_match_idx = Some(idx);
+                let m = &self.find_results[idx];
+                self.cursor = m.char_range.start;
+                self.selection = Some(m.char_range.clone());
+            }
+        }
+    }
+
+    pub fn find_next_match(&mut self) {
+        if self.find_results.is_empty() {
+            return;
+        }
+        let idx = match self.current_match_idx {
+            Some(i) => (i + 1) % self.find_results.len(),
+            None => 0,
+        };
+        self.current_match_idx = Some(idx);
+        let m = &self.find_results[idx];
+        self.cursor = m.char_range.start;
+        self.selection = Some(m.char_range.clone());
+    }
+
+    pub fn find_prev_match(&mut self) {
+        if self.find_results.is_empty() {
+            return;
+        }
+        let idx = match self.current_match_idx {
+            Some(i) => if i == 0 { self.find_results.len() - 1 } else { i - 1 },
+            None => 0,
+        };
+        self.current_match_idx = Some(idx);
+        let m = &self.find_results[idx];
+        self.cursor = m.char_range.start;
+        self.selection = Some(m.char_range.clone());
+    }
+
+    pub fn indent_line(&mut self, line: usize, expand_tab: bool, tab_size: usize) {
+        if line >= self.line_count() {
+            return;
+        }
+        let line_start = self.rope.line_to_char(line);
+        let text = if expand_tab {
+            " ".repeat(tab_size)
+        } else {
+            "\t".to_string()
+        };
+        self.insert(line_start, &text);
+    }
+
+    pub fn unindent_line(&mut self, line: usize, tab_size: usize) {
+        if line >= self.line_count() {
+            return;
+        }
+        let line_start = self.rope.line_to_char(line);
+        let line_slice = self.rope.line(line);
+        let line_str = line_slice.to_string();
+        if line_str.starts_with('\t') {
+            self.delete(line_start..line_start + 1);
+        } else {
+            let spaces = line_str.chars().take_while(|c| *c == ' ').take(tab_size).count();
+            if spaces > 0 {
+                self.delete(line_start..line_start + spaces);
+            }
+        }
+    }
+
+    pub fn indent_range(&mut self, start_line: usize, end_line: usize, expand_tab: bool, tab_size: usize) {
+        let (s, e) = if start_line <= end_line { (start_line, end_line) } else { (end_line, start_line) };
+        for l in s..=e.min(self.line_count().saturating_sub(1)) {
+            self.indent_line(l, expand_tab, tab_size);
+        }
+    }
+
+    pub fn unindent_range(&mut self, start_line: usize, end_line: usize, tab_size: usize) {
+        let (s, e) = if start_line <= end_line { (start_line, end_line) } else { (end_line, start_line) };
+        for l in s..=e.min(self.line_count().saturating_sub(1)) {
+            self.unindent_line(l, tab_size);
+        }
+    }
+
+    pub fn toggle_case_at_cursor(&mut self) {
+        if self.cursor >= self.rope.len_chars() {
+            return;
+        }
+        let ch = self.rope.char(self.cursor);
+        if ch == '\n' || ch == '\r' {
+            return;
+        }
+        let swapped = if ch.is_uppercase() {
+            ch.to_lowercase().to_string()
+        } else {
+            ch.to_uppercase().to_string()
+        };
+        self.delete(self.cursor..self.cursor + 1);
+        self.insert(self.cursor, &swapped);
+        let (line, col) = self.char_to_line_col(self.cursor);
+        let max_col = self.get_line_max_col(line);
+        if col < max_col {
+            self.move_cursor_right(false);
+        }
+    }
+
+    pub fn change_case_range(&mut self, range: std::ops::Range<usize>, upper: Option<bool>) {
+        if range.is_empty() || range.start >= self.rope.len_chars() {
+            return;
+        }
+        let slice = self.rope.slice(range.clone()).to_string();
+        let transformed: String = match upper {
+            Some(true) => slice.to_uppercase(),
+            Some(false) => slice.to_lowercase(),
+            None => slice.chars().map(|c| {
+                if c.is_uppercase() {
+                    c.to_lowercase().to_string()
+                } else {
+                    c.to_uppercase().to_string()
+                }
+            }).collect(),
+        };
+        self.delete(range.clone());
+        self.insert(range.start, &transformed);
+        self.cursor = range.start;
+    }
+
+    pub fn find_inline_char(&self, cursor: usize, ch: char, forward: bool, till: bool) -> Option<usize> {
+        if cursor >= self.rope.len_chars() {
+            return None;
+        }
+        let line = self.rope.char_to_line(cursor);
+        let line_start = self.rope.line_to_char(line);
+        let line_len = self.rope.line(line).len_chars();
+        let line_end = line_start + line_len;
+
+        if forward {
+            if cursor + 1 >= line_end {
+                return None;
+            }
+            for pos in (cursor + 1)..line_end {
+                let c = self.rope.char(pos);
+                if c == '\n' || c == '\r' {
+                    break;
+                }
+                if c == ch {
+                    if till {
+                        return Some(pos.saturating_sub(1).max(cursor));
+                    } else {
+                        return Some(pos);
+                    }
+                }
+            }
+        } else {
+            if cursor == line_start {
+                return None;
+            }
+            let mut curr = cursor.saturating_sub(1);
+            loop {
+                let c = self.rope.char(curr);
+                if c == ch {
+                    if till {
+                        return Some((curr + 1).min(cursor));
+                    } else {
+                        return Some(curr);
+                    }
+                }
+                if curr == line_start {
+                    break;
+                }
+                curr -= 1;
+            }
+        }
+        None
+    }
+}
+
+/// Normalizes a character typed in Vi normal/visual/command mode,
+/// converting full-width (Zenkaku) characters, full-width symbols,
+/// and Japanese IME key outputs to their ASCII equivalents.
+pub fn normalize_vi_char(c: char) -> char {
+    match c {
+        // Full-width ASCII: ！ (U+FF01) through ～ (U+FF5E)
+        '\u{FF01}'..='\u{FF5E}' => {
+            char::from_u32(c as u32 - 0xFF01 + 0x21).unwrap_or(c)
+        }
+        // Ideographic full-width space
+        '\u{3000}' => ' ',
+        // Japanese IME Romaji/Hiragana key outputs
+        'い' | 'イ' => 'i',
+        'あ' | 'ア' => 'a',
+        'お' | 'オ' => 'o',
+        'う' | 'ウ' => 'u',
+        // Japanese Nakaguro (slash key on Japanese layout)
+        '・' => '/',
+        // Wave dash / full-width tilde
+        '〜' => '~',
+        _ => c,
+    }
+}
+
+/// Normalizes a key string typed in Vi normal/visual/command mode.
+pub fn normalize_vi_key(key: &str) -> String {
+    match key {
+        "っ" | "ッ" => "dd".to_string(),
+        "・" => "/".to_string(),
+        "〜" => "~".to_string(),
+        "　" => " ".to_string(),
+        s if s.chars().count() == 1 => {
+            let c = s.chars().next().unwrap();
+            normalize_vi_char(c).to_string()
+        }
+        s => s.chars().map(normalize_vi_char).collect(),
+    }
 }
 
 #[cfg(test)]
@@ -1943,6 +2380,249 @@ mod tests {
         assert_eq!(editor.selection, Some(6..17));
         assert_eq!(editor.selection_anchor, Some(6));
     }
+
+    #[test]
+    fn test_find_matching_bracket() {
+        let mut editor = Editor::new();
+        editor.insert(0, "fn test(a: (i32, {b: [1, 2]})) -> bool { true }\n");
+
+        // Cursor at index 7: '(' of fn test(
+        assert_eq!(editor.find_matching_bracket(7), Some(29));
+        // Cursor at matching ')' at index 29
+        assert_eq!(editor.find_matching_bracket(29), Some(7));
+
+        // Cursor at '{' of {b: ...} at index 17
+        assert_eq!(editor.find_matching_bracket(17), Some(27));
+        assert_eq!(editor.find_matching_bracket(27), Some(17));
+
+        // Cursor at '[' at index 21
+        assert_eq!(editor.find_matching_bracket(21), Some(26));
+        assert_eq!(editor.find_matching_bracket(26), Some(21));
+
+        // Cursor before bracket on the line (e.g. index 3 't' of test) finds first bracket '(' at 7 -> jumps to 29
+        assert_eq!(editor.find_matching_bracket(3), Some(29));
+    }
+
+    #[test]
+    fn test_search_word_and_navigate_matches() {
+        let mut editor = Editor::new();
+        editor.insert(0, "apple banana apple cherry apple date\n");
+
+        // Cursor at first 'apple'
+        editor.cursor = 2;
+        editor.search_word_at_cursor(true);
+        assert_eq!(editor.find_results.len(), 3);
+        // Jump to next apple
+        assert_eq!(editor.cursor, 13);
+
+        // Next match
+        editor.find_next_match();
+        assert_eq!(editor.cursor, 26);
+
+        // Wrap to first match
+        editor.find_next_match();
+        assert_eq!(editor.cursor, 0);
+
+        // Previous match wraps to last match
+        editor.find_prev_match();
+        assert_eq!(editor.cursor, 26);
+    }
+
+    #[test]
+    fn test_indent_and_unindent() {
+        let mut editor = Editor::new();
+        editor.insert(0, "line1\nline2\n");
+
+        editor.indent_line(0, true, 4);
+        assert_eq!(editor.rope.to_string(), "    line1\nline2\n");
+
+        editor.unindent_line(0, 4);
+        assert_eq!(editor.rope.to_string(), "line1\nline2\n");
+
+        editor.indent_range(0, 1, false, 4);
+        assert_eq!(editor.rope.to_string(), "\tline1\n\tline2\n");
+
+        editor.unindent_range(0, 1, 4);
+        assert_eq!(editor.rope.to_string(), "line1\nline2\n");
+    }
+
+    #[test]
+    fn test_case_operations() {
+        let mut editor = Editor::new();
+        editor.insert(0, "Hello World\n");
+        editor.cursor = 0;
+
+        editor.toggle_case_at_cursor();
+        assert_eq!(editor.rope.to_string(), "hello World\n");
+
+        editor.change_case_range(0..5, Some(true));
+        assert_eq!(editor.rope.to_string(), "HELLO World\n");
+
+        editor.change_case_range(0..5, Some(false));
+        assert_eq!(editor.rope.to_string(), "hello World\n");
+    }
+
+    #[test]
+    fn test_find_inline_char() {
+        let mut editor = Editor::new();
+        editor.insert(0, "let foo = bar(baz);\n");
+
+        // Forward 'f' from cursor 0 -> find 'b'
+        assert_eq!(editor.find_inline_char(0, 'b', true, false), Some(10));
+        // Forward 't' (till) from cursor 0 -> find 'b' (pos 9)
+        assert_eq!(editor.find_inline_char(0, 'b', true, true), Some(9));
+
+        // Backward 'F' from cursor 15 -> find 'b' at 14 ('baz')
+        assert_eq!(editor.find_inline_char(15, 'b', false, false), Some(14));
+        // Backward 'T' (till) from cursor 15 -> find 'b' at 14 -> till is 15
+        assert_eq!(editor.find_inline_char(15, 'b', false, true), Some(15));
+    }
+
+    #[test]
+    fn test_normalize_vi_char_and_key() {
+        // Full-width Latin letters
+        assert_eq!(normalize_vi_char('ｊ'), 'j');
+        assert_eq!(normalize_vi_char('ｋ'), 'k');
+        assert_eq!(normalize_vi_char('ｈ'), 'h');
+        assert_eq!(normalize_vi_char('ｌ'), 'l');
+        assert_eq!(normalize_vi_char('ｗ'), 'w');
+        assert_eq!(normalize_vi_char('ｑ'), 'q');
+        assert_eq!(normalize_vi_char('Ｇ'), 'G');
+
+        // Full-width symbols
+        assert_eq!(normalize_vi_char('：'), ':');
+        assert_eq!(normalize_vi_char('／'), '/');
+        assert_eq!(normalize_vi_char('・'), '/');
+        assert_eq!(normalize_vi_char('〜'), '~');
+        assert_eq!(normalize_vi_char('～'), '~');
+        assert_eq!(normalize_vi_char('！'), '!');
+        assert_eq!(normalize_vi_char('＄'), '$');
+        assert_eq!(normalize_vi_char('％'), '%');
+        assert_eq!(normalize_vi_char('＾'), '^');
+        assert_eq!(normalize_vi_char('＊'), '*');
+        assert_eq!(normalize_vi_char('\u{3000}'), ' ');
+
+        // Full-width digits
+        assert_eq!(normalize_vi_char('０'), '0');
+        assert_eq!(normalize_vi_char('９'), '9');
+
+        // Japanese Romaji/Kana outputs
+        assert_eq!(normalize_vi_char('い'), 'i');
+        assert_eq!(normalize_vi_char('イ'), 'i');
+        assert_eq!(normalize_vi_char('あ'), 'a');
+        assert_eq!(normalize_vi_char('ア'), 'a');
+        assert_eq!(normalize_vi_char('お'), 'o');
+        assert_eq!(normalize_vi_char('オ'), 'o');
+        assert_eq!(normalize_vi_char('う'), 'u');
+        assert_eq!(normalize_vi_char('ウ'), 'u');
+
+        // normalize_vi_key tests
+        assert_eq!(normalize_vi_key("っ"), "dd");
+        assert_eq!(normalize_vi_key("ッ"), "dd");
+        assert_eq!(normalize_vi_key("ｊ"), "j");
+        assert_eq!(normalize_vi_key("い"), "i");
+        assert_eq!(normalize_vi_key("・"), "/");
+        assert_eq!(normalize_vi_key("：ｗｑ"), ":wq");
+        assert_eq!(normalize_vi_key("："), ":");
+    }
+
+    #[test]
+    fn test_japanese_kinsoku_shori_punctuation_and_brackets() {
+        let mut editor = Editor::new();
+        // Width 12 allows exactly 6 full-width (2-col) characters per line
+        // Without kinsoku shori, "これは、テストです。" at width 6 cols (3 full-width chars) would break as:
+        // Line 1: "これは" (3 chars, 6 cols)
+        // Line 2: "、テス" (comma at start!)
+        let text = "これは、テストです。";
+        editor.insert(0, text);
+
+        let wraps = editor.wrap_line(0, 6, 4);
+        let chars: Vec<char> = text.chars().collect();
+        for (i, range) in wraps.iter().enumerate() {
+            let line_chunk: String = chars[range.clone()].iter().collect();
+            let first_char = line_chunk.chars().next().unwrap();
+            assert_ne!(first_char, '、', "Visual line {} must not start with '、'", i);
+            assert_ne!(first_char, '。', "Visual line {} must not start with '。'", i);
+        }
+
+        // Check bracket kinsoku
+        let bracket_text = "「これは、（テスト）です。」";
+        let mut editor_bracket = Editor::new();
+        editor_bracket.insert(0, bracket_text);
+        let b_chars: Vec<char> = bracket_text.chars().collect();
+        let b_wraps = editor_bracket.wrap_line(0, 8, 4); // 4 CJK chars per line
+        for (i, range) in b_wraps.iter().enumerate() {
+            let line_chunk: String = b_chars[range.clone()].iter().collect();
+            let first_char = line_chunk.chars().next().unwrap();
+            assert_ne!(first_char, '、', "Line {} must not start with comma", i);
+            assert_ne!(first_char, '。', "Line {} must not start with period", i);
+            assert_ne!(first_char, '）', "Line {} must not start with closing parenthesis", i);
+            assert_ne!(first_char, '」', "Line {} must not start with closing quote", i);
+            if i < b_wraps.len() - 1 {
+                let last_char = line_chunk.chars().last().unwrap();
+                assert_ne!(last_char, '「', "Line {} must not end with opening quote when text follows", i);
+                assert_ne!(last_char, '（', "Line {} must not end with opening parenthesis when text follows", i);
+            }
+        }
+    }
+
+    #[test]
+    fn test_english_word_wrapping_and_fallback() {
+        let mut editor = Editor::new();
+        let text = "The quick brown fox jumps over the lazy dog.";
+        editor.insert(0, text);
+
+        // Width 12
+        let wraps = editor.wrap_line(0, 12, 4);
+        let chars: Vec<char> = text.chars().collect();
+        for range in &wraps {
+            let chunk: String = chars[range.clone()].iter().collect();
+            // Verify no words are sliced in the middle
+            let words: Vec<&str> = chunk.split_whitespace().collect();
+            for word in words {
+                assert!(
+                    ["The", "quick", "brown", "fox", "jumps", "over", "the", "lazy", "dog."].contains(&word),
+                    "Word '{}' was split across lines in chunk '{}'", word, chunk
+                );
+            }
+        }
+
+        // Test emergency fallback for excessively long unbroken word
+        let mut editor_long = Editor::new();
+        editor_long.insert(0, "Supercalifragilisticexpialidocious");
+        let wraps_long = editor_long.wrap_line(0, 10, 4);
+        assert_eq!(wraps_long.len(), 4);
+        assert_eq!(wraps_long[0], 0..10);
+        assert_eq!(wraps_long[1], 10..20);
+        assert_eq!(wraps_long[2], 20..30);
+        assert_eq!(wraps_long[3], 30..34);
+    }
+
+    #[test]
+    fn test_wrap_line_px_kinsoku_shori() {
+        let mut editor = Editor::new();
+        let text = "テキストエディタで手軽に書いた文書からHTMLを生成するために開発されたが、PowerPoint形式やLaTeX形式のファイルへ変換するソフトウェア（コンバータ）も開発されている。";
+        editor.insert(0, text);
+
+        let ascii_w = 7.225;
+        let cjk_w = 12.0;
+        let max_w = 400.0;
+
+        let wraps = editor.wrap_line_px(0, max_w, ascii_w, cjk_w, 4);
+        let chars: Vec<char> = text.chars().collect();
+        for (i, range) in wraps.iter().enumerate() {
+            let chunk: String = chars[range.clone()].iter().collect();
+            let first_char = chunk.chars().next().unwrap();
+            assert_ne!(first_char, '、', "Line {} in pixel wrap must not start with '、'", i);
+            assert_ne!(first_char, '。', "Line {} in pixel wrap must not start with '。'", i);
+            assert_ne!(first_char, '）', "Line {} in pixel wrap must not start with '）'", i);
+            if i < wraps.len() - 1 {
+                let last_char = chunk.chars().last().unwrap();
+                assert_ne!(last_char, '（', "Line {} in pixel wrap must not end with '（'", i);
+            }
+        }
+    }
 }
+
 
 

@@ -1,6 +1,6 @@
 id = "text-tools"
 name = "Standard Text Tools"
-version = "0.1.4"
+version = "0.1.5"
 description = "Text manipulation utilities and Markdown outline provider"
 languages = ["markdown", "md", "json", "txt"]
 

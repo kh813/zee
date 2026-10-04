@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-use std::fs;
+use std::path::{Path, PathBuf};
+use std::fs::{self, File};
 use anyhow::{Result, Context};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -166,6 +166,195 @@ impl Config {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BackupReport {
+    pub config_copied: bool,
+    pub themes_count: usize,
+    pub syntax_count: usize,
+    pub plugins_count: usize,
+    pub total_files: usize,
+}
+
+fn collect_files_recursive(dir: &Path, base: &Path, files: &mut Vec<(PathBuf, String)>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_recursive(&path, base, files)?;
+        } else if path.is_file() {
+            let rel = path.strip_prefix(base)?;
+            let rel_str = rel.iter()
+                .map(|p| p.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
+            files.push((path, rel_str));
+        }
+    }
+    Ok(())
+}
+
+pub fn export_backup_from_dir(config_dir: &Path, dest_path: &Path, include_plugins: bool) -> Result<BackupReport> {
+    let mut files_to_pack: Vec<(PathBuf, String)> = Vec::new();
+    let mut report = BackupReport::default();
+
+    let config_file = config_dir.join("config.toml");
+    if config_file.exists() {
+        files_to_pack.push((config_file, "config.toml".to_string()));
+        report.config_copied = true;
+    }
+
+    let themes_dir = config_dir.join("themes");
+    let mut theme_files = Vec::new();
+    collect_files_recursive(&themes_dir, config_dir, &mut theme_files)?;
+    report.themes_count = theme_files.len();
+    files_to_pack.extend(theme_files);
+
+    let syntax_dir = config_dir.join("syntax");
+    let mut syntax_files = Vec::new();
+    collect_files_recursive(&syntax_dir, config_dir, &mut syntax_files)?;
+    report.syntax_count = syntax_files.len();
+    files_to_pack.extend(syntax_files);
+
+    if include_plugins {
+        let plugins_dir = config_dir.join("plugins");
+        let mut plugin_files = Vec::new();
+        collect_files_recursive(&plugins_dir, config_dir, &mut plugin_files)?;
+        report.plugins_count = plugin_files.len();
+        files_to_pack.extend(plugin_files);
+    }
+
+    report.total_files = files_to_pack.len();
+
+    if let Some(parent) = dest_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let dest_name = dest_path.to_string_lossy().to_lowercase();
+    if dest_name.ends_with(".tar.gz") || dest_name.ends_with(".tgz") {
+        let tar_gz = File::create(dest_path)?;
+        let enc = flate2::write::GzEncoder::new(tar_gz, flate2::Compression::default());
+        let mut tar = tar::Builder::new(enc);
+
+        for (file_path, archive_name) in files_to_pack {
+            let mut f = File::open(&file_path)?;
+            tar.append_file(&archive_name, &mut f)?;
+        }
+        tar.finish()?;
+    } else {
+        let zip_file = File::create(dest_path)?;
+        let mut zip = zip::ZipWriter::new(zip_file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        for (file_path, archive_name) in files_to_pack {
+            let mut f = File::open(&file_path)?;
+            zip.start_file(&archive_name, options)?;
+            std::io::copy(&mut f, &mut zip)?;
+        }
+        zip.finish()?;
+    }
+
+    Ok(report)
+}
+
+pub fn export_backup(dest_path: &Path, include_plugins: bool) -> Result<BackupReport> {
+    let config_dir = Config::config_dir().context("Could not determine config directory")?;
+    export_backup_from_dir(&config_dir, dest_path, include_plugins)
+}
+
+pub fn import_backup_to_dir(config_dir: &Path, src_path: &Path) -> Result<BackupReport> {
+    if !src_path.exists() {
+        return Err(anyhow::anyhow!("Source file does not exist: {:?}", src_path));
+    }
+    fs::create_dir_all(config_dir)?;
+
+    let mut report = BackupReport::default();
+    let src_str = src_path.to_string_lossy().to_lowercase();
+
+    if src_str.ends_with(".toml") {
+        let dest = config_dir.join("config.toml");
+        fs::copy(src_path, dest)?;
+        report.config_copied = true;
+        report.total_files = 1;
+        return Ok(report);
+    }
+
+    if src_str.ends_with(".tar.gz") || src_str.ends_with(".tgz") {
+        let file = File::open(src_path)?;
+        let dec = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(dec);
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?.to_path_buf();
+            if path.iter().any(|c| c == ".." || c == "/") {
+                continue;
+            }
+            let out_path = config_dir.join(&path);
+            if let Some(p) = out_path.parent() {
+                fs::create_dir_all(p)?;
+            }
+            if entry.header().entry_type().is_file() {
+                entry.unpack(&out_path)?;
+                let rel_str = path.to_string_lossy();
+                if rel_str == "config.toml" {
+                    report.config_copied = true;
+                } else if rel_str.starts_with("themes") {
+                    report.themes_count += 1;
+                } else if rel_str.starts_with("syntax") {
+                    report.syntax_count += 1;
+                } else if rel_str.starts_with("plugins") {
+                    report.plugins_count += 1;
+                }
+                report.total_files += 1;
+            }
+        }
+        return Ok(report);
+    }
+
+    let file = File::open(src_path)?;
+    let mut zip = zip::ZipArchive::new(file)?;
+    for i in 0..zip.len() {
+        let mut zfile = zip.by_index(i)?;
+        let raw_name = zfile.name().to_string();
+        let path = PathBuf::from(&raw_name);
+        if path.iter().any(|c| c == ".." || c == "/") {
+            continue;
+        }
+        let out_path = config_dir.join(&path);
+        if zfile.is_dir() {
+            fs::create_dir_all(&out_path)?;
+        } else {
+            if let Some(p) = out_path.parent() {
+                fs::create_dir_all(p)?;
+            }
+            let mut out = File::create(&out_path)?;
+            std::io::copy(&mut zfile, &mut out)?;
+
+            if raw_name == "config.toml" {
+                report.config_copied = true;
+            } else if raw_name.starts_with("themes") {
+                report.themes_count += 1;
+            } else if raw_name.starts_with("syntax") {
+                report.syntax_count += 1;
+            } else if raw_name.starts_with("plugins") {
+                report.plugins_count += 1;
+            }
+            report.total_files += 1;
+        }
+    }
+
+    Ok(report)
+}
+
+pub fn import_backup(src_path: &Path) -> Result<BackupReport> {
+    let config_dir = Config::config_dir().context("Could not determine config directory")?;
+    import_backup_to_dir(&config_dir, src_path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +389,74 @@ mod tests {
         assert_eq!(config.ui_font_size, 13.5);
 
         assert_eq!(Config::default().sidebar_position, "right");
+    }
+
+    #[test]
+    fn test_export_and_import_backup_zip() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_backup_zip_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let src_config_dir = temp_dir.join("src_config");
+        let dst_config_dir = temp_dir.join("dst_config");
+        let zip_file = temp_dir.join("backup.zip");
+
+        fs::create_dir_all(src_config_dir.join("themes")).unwrap();
+        fs::create_dir_all(src_config_dir.join("plugins")).unwrap();
+        fs::write(src_config_dir.join("config.toml"), "theme = \"nord\"\n").unwrap();
+        fs::write(src_config_dir.join("themes").join("my_theme.toml"), "# theme\n").unwrap();
+        fs::write(src_config_dir.join("plugins").join("my_plugin.wasm"), b"\0asm").unwrap();
+
+        // Export with plugins
+        let export_rep = export_backup_from_dir(&src_config_dir, &zip_file, true).unwrap();
+        assert!(export_rep.config_copied);
+        assert_eq!(export_rep.themes_count, 1);
+        assert_eq!(export_rep.plugins_count, 1);
+        assert_eq!(export_rep.total_files, 3);
+        assert!(zip_file.exists());
+
+        // Import
+        let import_rep = import_backup_to_dir(&dst_config_dir, &zip_file).unwrap();
+        assert!(import_rep.config_copied);
+        assert_eq!(import_rep.themes_count, 1);
+        assert_eq!(import_rep.plugins_count, 1);
+        assert_eq!(import_rep.total_files, 3);
+
+        assert!(dst_config_dir.join("config.toml").exists());
+        assert_eq!(fs::read_to_string(dst_config_dir.join("config.toml")).unwrap(), "theme = \"nord\"\n");
+        assert!(dst_config_dir.join("themes").join("my_theme.toml").exists());
+        assert!(dst_config_dir.join("plugins").join("my_plugin.wasm").exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_export_and_import_backup_tar_gz() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_backup_tar_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let src_config_dir = temp_dir.join("src_config");
+        let dst_config_dir = temp_dir.join("dst_config");
+        let tar_file = temp_dir.join("backup.tar.gz");
+
+        fs::create_dir_all(src_config_dir.join("syntax")).unwrap();
+        fs::write(src_config_dir.join("config.toml"), "theme = \"solarized\"\n").unwrap();
+        fs::write(src_config_dir.join("syntax").join("custom.syntax"), "syntax rules").unwrap();
+
+        // Export without plugins
+        let export_rep = export_backup_from_dir(&src_config_dir, &tar_file, false).unwrap();
+        assert!(export_rep.config_copied);
+        assert_eq!(export_rep.syntax_count, 1);
+        assert_eq!(export_rep.plugins_count, 0);
+        assert_eq!(export_rep.total_files, 2);
+        assert!(tar_file.exists());
+
+        // Import
+        let import_rep = import_backup_to_dir(&dst_config_dir, &tar_file).unwrap();
+        assert!(import_rep.config_copied);
+        assert_eq!(import_rep.syntax_count, 1);
+        assert_eq!(import_rep.total_files, 2);
+
+        assert_eq!(fs::read_to_string(dst_config_dir.join("config.toml")).unwrap(), "theme = \"solarized\"\n");
+        assert!(dst_config_dir.join("syntax").join("custom.syntax").exists());
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

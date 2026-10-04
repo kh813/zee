@@ -133,6 +133,6 @@ pub enum ViMode {
     VisualBlock,
 }
 
-pub use config::Config;
+pub use config::{Config, export_backup, import_backup, BackupReport};
 pub use i18n::I18n;
 pub use buffer::{normalize_vi_char, normalize_vi_key};

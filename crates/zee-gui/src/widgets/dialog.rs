@@ -32,6 +32,7 @@ pub enum DialogType {
     #[allow(dead_code)]
     Message { title: String, message: String },
     Settings,
+    PluginManager,
 }
 
 pub struct Dialog {
@@ -344,6 +345,9 @@ pub enum DialogEvent {
     Confirm,
     Save(UnsavedChangesIntent),
     DontSave(UnsavedChangesIntent),
+    ExportConfig,
+    ExportAll,
+    ImportBackup,
 }
 
 impl EventEmitter<DialogEvent> for Dialog {}
@@ -356,8 +360,9 @@ impl Render for Dialog {
         let fg = led_color_to_gpui(theme.editor.foreground);
         let border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
 
-        let dialog_width = if matches!(self.dialog_type, DialogType::Settings) { px(560.0) } else { px(460.0) };
-        let dialog_max_h = if matches!(self.dialog_type, DialogType::Settings) { px(640.0) } else { px(580.0) };
+        let is_wide = matches!(self.dialog_type, DialogType::Settings | DialogType::PluginManager);
+        let dialog_width = if is_wide { px(560.0) } else { px(460.0) };
+        let dialog_max_h = if is_wide { px(640.0) } else { px(580.0) };
 
         div()
             .absolute()
@@ -1636,6 +1641,85 @@ impl Dialog {
                                      })
                              )
                      )
+                    // Backup & Restore Section
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .pt_1()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(with_alpha(fg, 0.75))
+                                    .child(self.i18n.get("dialog.settings.backup_section").to_string())
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .h(px(26.0))
+                                            .px_2p5()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(chip_border)
+                                            .bg(chip_bg)
+                                            .text_size(px(11.5))
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
+                                                cx.emit(DialogEvent::ExportConfig);
+                                            }))
+                                            .child(self.i18n.get("dialog.settings.export_config_only").to_string())
+                                    )
+                                    .child(
+                                        div()
+                                            .h(px(26.0))
+                                            .px_2p5()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(chip_border)
+                                            .bg(chip_bg)
+                                            .text_size(px(11.5))
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
+                                                cx.emit(DialogEvent::ExportAll);
+                                            }))
+                                            .child(self.i18n.get("dialog.settings.export_all").to_string())
+                                    )
+                                    .child(
+                                        div()
+                                            .h(px(26.0))
+                                            .px_2p5()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(accent)
+                                            .bg(chip_active_bg)
+                                            .text_size(px(11.5))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
+                                                cx.emit(DialogEvent::ImportBackup);
+                                            }))
+                                            .child(self.i18n.get("dialog.settings.import_backup").to_string())
+                                    )
+                            )
+                    )
                     // Footer Actions
                     .child(
                         div()
@@ -1679,6 +1763,272 @@ impl Dialog {
                                     }))
                                     .child(self.i18n.get("dialog.settings.reset_defaults").to_string())
                             )
+                            .child(
+                                div()
+                                    .h(px(28.0))
+                                    .px_5()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(accent)
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .text_size(px(12.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                    .child(self.i18n.get("dialog.ok").to_string())
+                            )
+                    )
+            }
+            DialogType::PluginManager => {
+                let plugins = workspace.plugin_manager.plugins.iter().map(|p| p.manifest.clone()).collect::<Vec<_>>();
+                let accent = led_color_to_gpui(theme.syntax.keyword.unwrap_or(theme.ui.menu_item_active_fg));
+                let chip_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
+                let chip_border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
+                let button_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.12);
+                let button_hover = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.22);
+                let input_bg = with_alpha(led_color_to_gpui(theme.editor.background), 0.7);
+
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3p5()
+                    .child(
+                        // Header
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_size(px(16.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(self.i18n.get("dialog.plugin.title").to_string())
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .text_color(with_alpha(fg, 0.6))
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.8))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                    .child("✕")
+                            )
+                    )
+                    .child(
+                        // Action buttons bar
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .h(px(28.0))
+                                    .px_3()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(accent)
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                        let workspace = this.workspace.clone();
+                                        cx.spawn(|_, cx: &mut AsyncApp| {
+                                            let cx = cx.clone();
+                                            async move {
+                                                let file = rfd::AsyncFileDialog::new()
+                                                    .add_filter("WASM Plugin", &["wasm"])
+                                                    .pick_file()
+                                                    .await;
+
+                                                if let Some(file) = file {
+                                                    let path = file.path().to_path_buf();
+                                                    let _ = zee_core::plugin::PluginManager::install_plugin_from_path(&path);
+                                                    cx.update(|cx| {
+                                                        workspace.update(cx, |w, cx| {
+                                                            w.reload_plugins();
+                                                            cx.notify();
+                                                        });
+                                                    });
+                                                }
+                                            }
+                                        }).detach();
+                                    }))
+                                    .child(self.i18n.get("dialog.plugin.install").to_string())
+                            )
+                            .child(
+                                div()
+                                    .h(px(28.0))
+                                    .px_3()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(button_bg)
+                                    .text_size(px(12.0))
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(button_hover))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {
+                                        if let Some(dir) = zee_core::plugin::PluginManager::plugins_dir() {
+                                            let _ = std::fs::create_dir_all(&dir);
+                                            let _ = zee_core::selfupdate::open_url(&dir.to_string_lossy());
+                                        }
+                                    }))
+                                    .child(self.i18n.get("dialog.plugin.open_dir").to_string())
+                            )
+                    )
+                    // Plugins list
+                    .child(
+                        div()
+                            .flex_grow()
+                            .min_h(px(220.0))
+                            .max_h(px(340.0))
+                            .overflow_hidden()
+                            .p_2()
+                            .bg(input_bg)
+                            .border_1()
+                            .border_color(chip_border)
+                            .rounded_md()
+                            .child(if plugins.is_empty() {
+                                div()
+                                    .h_full()
+                                    .w_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(px(12.5))
+                                    .text_color(with_alpha(fg, 0.5))
+                                    .child(self.i18n.get("dialog.plugin.empty").to_string())
+                                    .into_any_element()
+                            } else {
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .w_full()
+                                    .children(plugins.into_iter().map(|manifest| {
+                                        let plugin_id = manifest.id.clone();
+                                        let has_commands = !manifest.capabilities.commands.is_empty();
+                                        let has_outline = manifest.capabilities.outline_provider;
+                                        
+                                        div()
+                                            .p_2p5()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(chip_border)
+                                            .bg(chip_bg)
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_2()
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(13.0))
+                                                                    .font_weight(FontWeight::BOLD)
+                                                                    .child(manifest.name)
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(11.0))
+                                                                    .text_color(with_alpha(fg, 0.55))
+                                                                    .child(format!("v{}", manifest.version))
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .px_1p5()
+                                                                    .py_0p5()
+                                                                    .rounded_sm()
+                                                                    .bg(with_alpha(gpui::rgb(0x4caf50), 0.2))
+                                                                    .text_color(gpui::rgb(0x4caf50))
+                                                                    .text_size(px(10.0))
+                                                                    .font_weight(FontWeight::MEDIUM)
+                                                                    .child("✓ Active")
+                                                            )
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .px_2()
+                                                            .py_0p5()
+                                                            .rounded_sm()
+                                                            .bg(with_alpha(gpui::rgb(0xe53935), 0.15))
+                                                            .text_color(gpui::rgb(0xe53935))
+                                                            .text_size(px(11.0))
+                                                            .cursor_pointer()
+                                                            .hover(|s| s.opacity(0.8))
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                                let id = plugin_id.clone();
+                                                                let _ = zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id);
+                                                                this.workspace.update(cx, |w, cx| {
+                                                                    w.reload_plugins();
+                                                                    cx.notify();
+                                                                });
+                                                                cx.notify();
+                                                            }))
+                                                            .child("Uninstall")
+                                                    )
+                                            )
+                                            .children(manifest.description.map(|desc| {
+                                                div()
+                                                    .text_size(px(11.5))
+                                                    .text_color(with_alpha(fg, 0.75))
+                                                    .child(desc)
+                                            }))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1p5()
+                                                    .pt_0p5()
+                                                    .children(if has_outline {
+                                                        Some(div()
+                                                            .px_1p5()
+                                                            .rounded_sm()
+                                                            .bg(with_alpha(accent, 0.15))
+                                                            .text_color(accent)
+                                                            .text_size(px(10.5))
+                                                            .child("Outline Provider"))
+                                                    } else {
+                                                        None
+                                                    })
+                                                    .children(if has_commands {
+                                                        Some(div()
+                                                            .px_1p5()
+                                                            .rounded_sm()
+                                                            .bg(with_alpha(fg, 0.12))
+                                                            .text_color(with_alpha(fg, 0.8))
+                                                            .text_size(px(10.5))
+                                                            .child(format!("Commands: {}", manifest.capabilities.commands.join(", "))))
+                                                    } else {
+                                                        None
+                                                    })
+                                            )
+                                    }))
+                                    .into_any_element()
+                            })
+                    )
+                    // Footer
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(chip_border)
                             .child(
                                 div()
                                     .h(px(28.0))

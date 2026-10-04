@@ -58,7 +58,8 @@ impl Render for MenuBar {
             (0, self.i18n.get("menu.file").to_string()),
             (1, self.i18n.get("menu.edit").to_string()),
             (2, self.i18n.get("menu.view").to_string()),
-            (3, self.i18n.get("menu.help").to_string()),
+            (3, self.i18n.get("menu.plugins").to_string()),
+            (4, self.i18n.get("menu.help").to_string()),
         ];
 
         let mut bar = div()

@@ -348,6 +348,75 @@ impl PluginManager {
         }
         None
     }
+
+    pub fn install_plugin_from_path(src: &Path) -> Result<String> {
+        let plugins_dir = Self::plugins_dir().context("Could not determine plugins directory")?;
+        fs::create_dir_all(&plugins_dir)?;
+
+        let filename = src.file_name().context("Invalid source filename")?;
+        let filename_str = filename.to_string_lossy().to_string();
+
+        if src.is_file() {
+            let dest = plugins_dir.join(filename);
+            fs::copy(src, &dest)?;
+            Ok(filename_str)
+        } else if src.is_dir() {
+            let dest_dir = plugins_dir.join(filename);
+            fs::create_dir_all(&dest_dir)?;
+            for entry in fs::read_dir(src)? {
+                let entry = entry?;
+                let file_path = entry.path();
+                if file_path.is_file() {
+                    if let Some(name) = file_path.file_name() {
+                        fs::copy(&file_path, dest_dir.join(name))?;
+                    }
+                }
+            }
+            Ok(filename_str)
+        } else {
+            Err(anyhow::anyhow!("Source path is neither a file nor a directory"))
+        }
+    }
+
+    pub fn uninstall_plugin_by_id(id: &str) -> Result<bool> {
+        let plugins_dir = Self::plugins_dir().context("Could not determine plugins directory")?;
+        if !plugins_dir.exists() {
+            return Ok(false);
+        }
+
+        let mut removed = false;
+        let wasm_file = plugins_dir.join(format!("{}.wasm", id));
+        if wasm_file.exists() {
+            fs::remove_file(&wasm_file)?;
+            removed = true;
+        }
+
+        let plugin_dir = plugins_dir.join(id);
+        if plugin_dir.exists() {
+            fs::remove_dir_all(&plugin_dir)?;
+            removed = true;
+        }
+
+        for entry in fs::read_dir(&plugins_dir)?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let toml_path = path.join("plugin.toml");
+                if toml_path.exists() {
+                    if let Ok(content) = fs::read_to_string(&toml_path) {
+                        if let Ok(manifest) = toml::from_str::<PluginManifest>(&content) {
+                            if manifest.id == id {
+                                fs::remove_dir_all(&path)?;
+                                removed = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(removed)
+    }
 }
 
 #[cfg(test)]

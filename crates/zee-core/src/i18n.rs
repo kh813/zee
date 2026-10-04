@@ -205,6 +205,31 @@ impl I18n {
         m.insert("dialog.settings.sidebar_left".to_string(), "Left".to_string());
         m.insert("dialog.settings.sidebar_right".to_string(), "Right".to_string());
         m.insert("dialog.settings.reset_defaults".to_string(), "Reset Defaults".to_string());
+        m.insert("dialog.settings.backup_section".to_string(), "Backup & Restore".to_string());
+        m.insert("dialog.settings.export_config_only".to_string(), "Export Settings (Config Only)".to_string());
+        m.insert("dialog.settings.export_all".to_string(), "Export All (Config + Plugins)".to_string());
+        m.insert("dialog.settings.import_backup".to_string(), "Import Settings / Backup…".to_string());
+
+        m.insert("menu.file.export_config".to_string(), "Export Settings…".to_string());
+        m.insert("menu.file.import_config".to_string(), "Import Settings…".to_string());
+        m.insert("menu.plugins".to_string(), "Plugins".to_string());
+        m.insert("menu.plugins.manage".to_string(), "Manage Plugins…".to_string());
+        m.insert("menu.plugins.open_folder".to_string(), "Open Plugins Folder".to_string());
+        m.insert("menu.plugins.no_plugins".to_string(), "No Plugins Installed".to_string());
+
+        m.insert("dialog.backup.export_title".to_string(), "Export Complete".to_string());
+        m.insert("dialog.backup.export_success".to_string(), "Successfully exported {count} files to:\n{path}".to_string());
+        m.insert("dialog.backup.import_title".to_string(), "Import Complete".to_string());
+        m.insert("dialog.backup.import_success".to_string(), "Successfully restored configuration and plugins ({count} files).".to_string());
+        m.insert("dialog.backup.error_title".to_string(), "Backup Operation Failed".to_string());
+
+        m.insert("dialog.plugin.title".to_string(), "Plugin Manager".to_string());
+        m.insert("dialog.plugin.install".to_string(), "Install Plugin…".to_string());
+        m.insert("dialog.plugin.open_dir".to_string(), "Open Plugins Folder".to_string());
+        m.insert("dialog.plugin.uninstall".to_string(), "Uninstall".to_string());
+        m.insert("dialog.plugin.installed".to_string(), "Installed Plugins".to_string());
+        m.insert("dialog.plugin.empty".to_string(), "No plugins installed yet.".to_string());
+        m.insert("dialog.plugin.active".to_string(), "Active".to_string());
 
         m.insert("about.version".to_string(), "Version".to_string());
         m.insert("about.license".to_string(), "License".to_string());
@@ -340,6 +365,31 @@ impl I18n {
         m.insert("dialog.settings.sidebar_left".to_string(), "左側".to_string());
         m.insert("dialog.settings.sidebar_right".to_string(), "右側".to_string());
         m.insert("dialog.settings.reset_defaults".to_string(), "初期値に戻す".to_string());
+        m.insert("dialog.settings.backup_section".to_string(), "バックアップと復元".to_string());
+        m.insert("dialog.settings.export_config_only".to_string(), "設定のみエクスポート".to_string());
+        m.insert("dialog.settings.export_all".to_string(), "設定とプラグインをエクスポート".to_string());
+        m.insert("dialog.settings.import_backup".to_string(), "設定 / バックアップをインポート…".to_string());
+
+        m.insert("menu.file.export_config".to_string(), "設定のエクスポート…".to_string());
+        m.insert("menu.file.import_config".to_string(), "設定のインポート…".to_string());
+        m.insert("menu.plugins".to_string(), "プラグイン".to_string());
+        m.insert("menu.plugins.manage".to_string(), "プラグインの管理…".to_string());
+        m.insert("menu.plugins.open_folder".to_string(), "プラグインフォルダを開く".to_string());
+        m.insert("menu.plugins.no_plugins".to_string(), "インストール済みのプラグインはありません".to_string());
+
+        m.insert("dialog.backup.export_title".to_string(), "エクスポート完了".to_string());
+        m.insert("dialog.backup.export_success".to_string(), "{count} 個のファイルを正常にエクスポートしました:\n{path}".to_string());
+        m.insert("dialog.backup.import_title".to_string(), "インポート完了".to_string());
+        m.insert("dialog.backup.import_success".to_string(), "設定およびプラグイン（{count} ファイル）を正常に復元しました。".to_string());
+        m.insert("dialog.backup.error_title".to_string(), "バックアップ処理失敗".to_string());
+
+        m.insert("dialog.plugin.title".to_string(), "プラグイン管理".to_string());
+        m.insert("dialog.plugin.install".to_string(), "プラグインをインストール…".to_string());
+        m.insert("dialog.plugin.open_dir".to_string(), "プラグインフォルダを開く".to_string());
+        m.insert("dialog.plugin.uninstall".to_string(), "削除".to_string());
+        m.insert("dialog.plugin.installed".to_string(), "インストール済みプラグイン".to_string());
+        m.insert("dialog.plugin.empty".to_string(), "プラグインはまだインストールされていません。".to_string());
+        m.insert("dialog.plugin.active".to_string(), "有効".to_string());
 
         m.insert("about.version".to_string(), "バージョン".to_string());
         m.insert("about.license".to_string(), "ライセンス".to_string());

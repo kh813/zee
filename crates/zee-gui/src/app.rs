@@ -546,6 +546,19 @@ impl Action for SetSyntax {
     fn name_for_type() -> &'static str { "SetSyntax" }
 }
 
+#[derive(serde::Deserialize, PartialEq, Eq, Clone, Debug)]
+pub struct ExecutePluginCommand {
+    pub command: String,
+}
+
+impl Action for ExecutePluginCommand {
+    fn name(&self) -> &'static str { "ExecutePluginCommand" }
+    fn boxed_clone(&self) -> Box<dyn Action> { Box::new(self.clone()) }
+    fn build(v: gpui::private::serde_json::Value) -> Result<Box<dyn Action>> { Ok(Box::new(serde_json::from_value::<Self>(v)?)) }
+    fn partial_eq(&self, _other: &dyn Action) -> bool { false }
+    fn name_for_type() -> &'static str { "ExecutePluginCommand" }
+}
+
 #[cfg(target_os = "macos")]
 pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec<Menu> {
     let mut theme_items = Vec::new();
@@ -598,6 +611,39 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
         i18n.get("menu.view.vi_mode").to_string()
     };
 
+    let mut plugin_menu_items = Vec::new();
+    let mut plugin_manager = zee_core::plugin::PluginManager::new();
+    let dev_plugin_dir = std::path::PathBuf::from("plugins/zee-plugin-text");
+    if dev_plugin_dir.exists() {
+        let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
+    }
+
+    if plugin_manager.plugins.is_empty() {
+        plugin_menu_items.push(MenuItem::action(i18n.get("menu.plugins.no_plugins"), NoOp {}));
+    } else {
+        for plugin in &plugin_manager.plugins {
+            if plugin.manifest.capabilities.commands.is_empty() {
+                plugin_menu_items.push(MenuItem::action(format!("✓ {}", plugin.manifest.name), NoOp {}));
+            } else {
+                let mut cmd_items = Vec::new();
+                for cmd in &plugin.manifest.capabilities.commands {
+                    cmd_items.push(MenuItem::action(
+                        cmd.clone(),
+                        ExecutePluginCommand { command: cmd.clone() },
+                    ));
+                }
+                plugin_menu_items.push(MenuItem::submenu(Menu {
+                    name: plugin.manifest.name.clone().into(),
+                    items: cmd_items,
+                    disabled: false,
+                }));
+            }
+        }
+    }
+    plugin_menu_items.push(MenuItem::separator());
+    plugin_menu_items.push(MenuItem::action(i18n.get("menu.plugins.manage"), ManagePlugins {}));
+    plugin_menu_items.push(MenuItem::action(i18n.get("menu.plugins.open_folder"), OpenPluginsFolder {}));
+
     vec![
         Menu {
             name: "zee".into(),
@@ -621,6 +667,9 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.file.save"), Save {}),
                 MenuItem::action(i18n.get("menu.file.save_as"), SaveAs {}),
+                MenuItem::separator(),
+                MenuItem::action(i18n.get("menu.file.export_config"), ExportConfig {}),
+                MenuItem::action(i18n.get("menu.file.import_config"), ImportConfig {}),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.file.close"), CloseTab {}),
                 MenuItem::separator(),
@@ -708,6 +757,11 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
             disabled: false,
         },
         Menu {
+            name: i18n.get("menu.plugins").into(),
+            items: plugin_menu_items,
+            disabled: false,
+        },
+        Menu {
             name: i18n.get("menu.help").into(),
             items: vec![
                 MenuItem::action(i18n.get("menu.help.about"), About {}),
@@ -721,6 +775,7 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
 actions!(zee, [
     // App/File
     About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, Save, SaveAs, CloseTab,
+    ExportConfig, ExportAll, ImportConfig, ManagePlugins, OpenPluginsFolder,
 
     // Edit
     Undo, Redo, Cut, Copy, Paste, Find, Replace, SelectAll,

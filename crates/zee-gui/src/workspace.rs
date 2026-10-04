@@ -64,6 +64,23 @@ impl Workspace {
         self.sidebar_tab = SidebarTab::Files;
     }
 
+    pub fn reload_config(&mut self) {
+        let config = Config::load();
+        if let Some(t) = Theme::find_by_name(&config.theme) {
+            self.theme = t;
+        }
+        self.config = config;
+    }
+
+    pub fn reload_plugins(&mut self) {
+        let mut plugin_manager = zee_core::plugin::PluginManager::new();
+        let dev_plugin_dir = PathBuf::from("plugins/zee-plugin-text");
+        if dev_plugin_dir.exists() {
+            let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
+        }
+        self.plugin_manager = plugin_manager;
+    }
+
     pub fn update_outline(&mut self) {
         if let Some((ext, text)) = self.active_editor().map(|e| {
             let ext = e.path.as_ref()

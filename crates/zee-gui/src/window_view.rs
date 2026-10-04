@@ -259,6 +259,21 @@ impl WindowView {
                         }
                     }).detach();
                 }
+                DialogEvent::ExportConfig => {
+                    this.dialog = None;
+                    cx.notify();
+                    Self::trigger_export(false, this.i18n.clone(), cx);
+                }
+                DialogEvent::ExportAll => {
+                    this.dialog = None;
+                    cx.notify();
+                    Self::trigger_export(true, this.i18n.clone(), cx);
+                }
+                DialogEvent::ImportBackup => {
+                    this.dialog = None;
+                    cx.notify();
+                    Self::trigger_import(this.i18n.clone(), cx);
+                }
                 _ => {}
             }
         }).detach();
@@ -881,6 +896,116 @@ impl WindowView {
         }
     }
 
+    fn handle_export_config(&mut self, _: &ExportConfig, _window: &mut Window, cx: &mut Context<Self>) {
+        Self::trigger_export(false, self.i18n.clone(), cx);
+    }
+
+    fn handle_export_all(&mut self, _: &ExportAll, _window: &mut Window, cx: &mut Context<Self>) {
+        Self::trigger_export(true, self.i18n.clone(), cx);
+    }
+
+    fn handle_import_config(&mut self, _: &ImportConfig, _window: &mut Window, cx: &mut Context<Self>) {
+        Self::trigger_import(self.i18n.clone(), cx);
+    }
+
+    fn handle_manage_plugins(&mut self, _: &ManagePlugins, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_dialog(DialogType::PluginManager, Some(window), cx);
+    }
+
+    fn handle_open_plugins_folder(&mut self, _: &OpenPluginsFolder, _window: &mut Window, _cx: &mut Context<Self>) {
+        if let Some(dir) = zee_core::plugin::PluginManager::plugins_dir() {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = zee_core::selfupdate::open_url(&dir.to_string_lossy());
+        }
+    }
+
+    fn trigger_export(include_plugins: bool, _i18n: I18n, cx: &mut Context<Self>) {
+        let default_name = if include_plugins { "zee-backup.zip" } else { "zee-config.zip" };
+        let view_handle = cx.entity().clone();
+        cx.spawn(move |_, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let file = rfd::AsyncFileDialog::new()
+                    .set_file_name(default_name)
+                    .add_filter("Zip Archive", &["zip"])
+                    .add_filter("Tar Gz Archive", &["tar.gz", "tgz"])
+                    .save_file()
+                    .await;
+
+                if let Some(file) = file {
+                    let path = file.path().to_path_buf();
+                    let res = zee_core::export_backup(&path, include_plugins);
+                    cx.update(|cx| {
+                        view_handle.update(cx, |this, cx| {
+                            match res {
+                                Ok(report) => {
+                                    let title = this.i18n.get("dialog.backup.export_title").to_string();
+                                    let msg = this.i18n.get("dialog.backup.export_success")
+                                        .replace("{count}", &report.total_files.to_string())
+                                        .replace("{path}", &path.to_string_lossy());
+                                    this.show_dialog(DialogType::Message { title, message: msg }, None, cx);
+                                }
+                                Err(e) => {
+                                    let title = this.i18n.get("dialog.backup.error_title").to_string();
+                                    let msg = format!("{}", e);
+                                    this.show_dialog(DialogType::Message { title, message: msg }, None, cx);
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+        }).detach();
+    }
+
+    fn trigger_import(_i18n: I18n, cx: &mut Context<Self>) {
+        let view_handle = cx.entity().clone();
+        cx.spawn(move |_, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let file = rfd::AsyncFileDialog::new()
+                    .add_filter("Zee Backup / Config", &["zip", "tar.gz", "tgz", "toml"])
+                    .pick_file()
+                    .await;
+
+                if let Some(file) = file {
+                    let path = file.path().to_path_buf();
+                    let res = zee_core::import_backup(&path);
+                    cx.update(|cx| {
+                        view_handle.update(cx, |this, cx| {
+                            match res {
+                                Ok(report) => {
+                                    this.workspace.update(cx, |w, cx| {
+                                        w.reload_config();
+                                        w.reload_plugins();
+                                        cx.notify();
+                                    });
+                                    let title = this.i18n.get("dialog.backup.import_title").to_string();
+                                    let msg = this.i18n.get("dialog.backup.import_success")
+                                        .replace("{count}", &report.total_files.to_string());
+                                    this.show_dialog(DialogType::Message { title, message: msg }, None, cx);
+                                }
+                                Err(e) => {
+                                    let title = this.i18n.get("dialog.backup.error_title").to_string();
+                                    let msg = format!("{}", e);
+                                    this.show_dialog(DialogType::Message { title, message: msg }, None, cx);
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+        }).detach();
+    }
+
+    fn handle_execute_plugin_command(&mut self, action: &ExecutePluginCommand, _window: &mut Window, cx: &mut Context<Self>) {
+        let cmd = action.command.clone();
+        self.workspace.update(cx, |w, cx| {
+            w.apply_plugin_transform(&cmd);
+            cx.notify();
+        });
+    }
+
     fn handle_reopen_with_encoding(&mut self, action: &ReopenWithEncoding, _window: &mut Window, cx: &mut Context<Self>) {
         let enc = self.parse_encoding(&action.encoding);
         self.workspace.update(cx, |w, cx| {
@@ -1022,6 +1147,12 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_set_syntax))
             .on_action(cx.listener(Self::handle_go_to_line))
             .on_action(cx.listener(Self::handle_open_settings))
+            .on_action(cx.listener(Self::handle_export_config))
+            .on_action(cx.listener(Self::handle_export_all))
+            .on_action(cx.listener(Self::handle_import_config))
+            .on_action(cx.listener(Self::handle_manage_plugins))
+            .on_action(cx.listener(Self::handle_open_plugins_folder))
+            .on_action(cx.listener(Self::handle_execute_plugin_command))
             .on_action(cx.listener(Self::handle_zoom_in))
             .on_action(cx.listener(Self::handle_zoom_out))
             .on_action(cx.listener(Self::handle_reset_zoom))
@@ -1139,13 +1270,15 @@ impl WindowView {
                 0 => px(8.0),
                 1 => px(48.0),
                 2 => px(90.0),
-                _ => px(136.0),
+                3 => px(136.0),
+                _ => px(196.0),
             };
 
             let menu_content = match idx {
                 0 => self.render_file_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
                 1 => self.render_edit_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
                 2 => self.render_view_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
+                3 => self.render_plugins_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
                 _ => self.render_help_menu(fg, hover_bg, muted_fg, cx).into_any_element(),
             };
 
@@ -1253,6 +1386,9 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.file.save").to_string(), Some("Ctrl+S"), false, Save {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.save_as").to_string(), Some("Ctrl+Shift+S"), false, SaveAs {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
+            .child(self.render_menu_item(self.i18n.get("menu.file.export_config").to_string(), None, false, ExportConfig {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.import_config").to_string(), None, false, ImportConfig {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.file.close").to_string(), Some("Ctrl+W"), false, CloseTab {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.file.exit").to_string(), Some("Ctrl+Q"), false, Exit {}, fg, hover_bg, muted_fg, cx))
@@ -1303,6 +1439,42 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.view.vi_mode").to_string(), None, vi_mode_checked, ToggleViMode {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.app.preferences").to_string(), Some("Ctrl+,"), false, OpenSettings {}, fg, hover_bg, muted_fg, cx))
+    }
+
+    fn render_plugins_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace = self.workspace.read(cx);
+        let plugins = &workspace.plugin_manager.plugins;
+        let mut menu = div()
+            .flex()
+            .flex_col();
+
+        if plugins.is_empty() {
+            menu = menu.child(self.render_menu_item(self.i18n.get("menu.plugins.no_plugins").to_string(), None, false, NoOp {}, fg, hover_bg, muted_fg, cx));
+        } else {
+            for plugin in plugins {
+                if plugin.manifest.capabilities.commands.is_empty() {
+                    menu = menu.child(self.render_menu_item(format!("✓ {}", plugin.manifest.name), None, false, NoOp {}, fg, hover_bg, muted_fg, cx));
+                } else {
+                    for cmd in &plugin.manifest.capabilities.commands {
+                        menu = menu.child(self.render_menu_item(
+                            format!("{}: {}", plugin.manifest.name, cmd),
+                            None,
+                            false,
+                            ExecutePluginCommand { command: cmd.clone() },
+                            fg,
+                            hover_bg,
+                            muted_fg,
+                            cx,
+                        ));
+                    }
+                }
+            }
+        }
+
+        menu
+            .child(self.render_menu_sep(border))
+            .child(self.render_menu_item(self.i18n.get("menu.plugins.manage").to_string(), None, false, ManagePlugins {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.plugins.open_folder").to_string(), None, false, OpenPluginsFolder {}, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_help_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, cx: &mut Context<Self>) -> impl IntoElement {

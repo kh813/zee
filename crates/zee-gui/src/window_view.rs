@@ -337,6 +337,28 @@ impl WindowView {
         }).detach();
     }
 
+    fn handle_open_folder(&mut self, _: &OpenFolder, _window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        cx.spawn(|_, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let folder = rfd::AsyncFileDialog::new()
+                    .pick_folder()
+                    .await;
+
+                if let Some(folder) = folder {
+                    let path = folder.path().to_path_buf();
+                    cx.update(|cx| {
+                        workspace.update(cx, |w, cx| {
+                            w.set_root_path(path);
+                            cx.notify();
+                        });
+                    });
+                }
+            }
+        }).detach();
+    }
+
     fn handle_save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let path_opt = workspace.read(cx).active_editor().and_then(|e| e.path.clone());
@@ -957,6 +979,7 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_new_tab))
             .on_action(cx.listener(Self::handle_new_window))
             .on_action(cx.listener(Self::handle_open))
+            .on_action(cx.listener(Self::handle_open_folder))
             .on_action(cx.listener(Self::handle_save))
             .on_action(cx.listener(Self::handle_save_as))
             .on_action(cx.listener(Self::handle_close_tab))
@@ -1225,6 +1248,7 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.file.new_tab").to_string(), Some("Ctrl+T"), false, NewTab {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.new_window").to_string(), Some("Ctrl+N"), false, NewWindow {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open").to_string(), Some("Ctrl+O"), false, Open {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.open_folder").to_string(), Some("Ctrl+Shift+O"), false, OpenFolder {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.file.save").to_string(), Some("Ctrl+S"), false, Save {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.save_as").to_string(), Some("Ctrl+Shift+S"), false, SaveAs {}, fg, hover_bg, muted_fg, cx))

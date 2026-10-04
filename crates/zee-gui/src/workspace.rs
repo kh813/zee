@@ -30,9 +30,10 @@ impl Workspace {
     }
 
     pub fn new_with_root(config: Config, root_path: Option<PathBuf>) -> Self {
+        let is_custom_root = root_path.is_some();
         let root = root_path.unwrap_or_else(zee_core::file_tree::user_root_dir);
         let file_tree = FileTree::new(&root, false);
-        let sidebar_visible = config.sidebar;
+        let sidebar_visible = if is_custom_root { true } else { config.sidebar };
         let mut plugin_manager = zee_core::plugin::PluginManager::new();
         // Check local development plugins directory if present
         let dev_plugin_dir = PathBuf::from("plugins/zee-plugin-text");
@@ -59,6 +60,8 @@ impl Workspace {
 
     pub fn set_root_path(&mut self, path: PathBuf) {
         self.file_tree.set_root(path);
+        self.sidebar_visible = true;
+        self.sidebar_tab = SidebarTab::Files;
     }
 
     pub fn update_outline(&mut self) {
@@ -310,4 +313,34 @@ mod tests {
         workspace.add_editor(Editor::new());
         assert_eq!(workspace.editors[2].vi_mode, zee_core::ViMode::Insert);
     }
+
+    #[test]
+    fn test_open_folder_reveals_sidebar_files_tab() {
+        let temp_dir = std::env::temp_dir().join("zee_test_open_folder");
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let config = Config {
+            sidebar: false,
+            ..Default::default()
+        };
+
+        // Opening with root_path specified
+        let workspace = Workspace::new_with_root(config.clone(), Some(temp_dir.clone()));
+        assert!(workspace.sidebar_visible);
+        assert_eq!(workspace.sidebar_tab, SidebarTab::Files);
+        assert_eq!(workspace.file_tree.root_path, temp_dir);
+
+        // Opening without root path (uses user root and respects config.sidebar)
+        let mut default_workspace = Workspace::new(config);
+        assert!(!default_workspace.sidebar_visible);
+
+        // Calling set_root_path reveals sidebar and switches tab
+        default_workspace.set_root_path(temp_dir.clone());
+        assert!(default_workspace.sidebar_visible);
+        assert_eq!(default_workspace.sidebar_tab, SidebarTab::Files);
+        assert_eq!(default_workspace.file_tree.root_path, temp_dir);
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
 }
+

@@ -22,6 +22,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-o", Open {}, None),
         #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-o", OpenFolder {}, None),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-s", Save {}, None),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-s", SaveAs {}, None),
@@ -92,6 +94,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         KeyBinding::new("ctrl-n", NewWindow {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-o", Open {}, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-o", OpenFolder {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-s", Save {}, None),
         #[cfg(not(target_os = "macos"))]
@@ -613,6 +617,7 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
                 MenuItem::action(i18n.get("menu.file.new_tab"), NewTab {}),
                 MenuItem::action(i18n.get("menu.file.new_window"), NewWindow {}),
                 MenuItem::action(i18n.get("menu.file.open"), Open {}),
+                MenuItem::action(i18n.get("menu.file.open_folder"), OpenFolder {}),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.file.save"), Save {}),
                 MenuItem::action(i18n.get("menu.file.save_as"), SaveAs {}),
@@ -715,7 +720,7 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
 
 actions!(zee, [
     // App/File
-    About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, Save, SaveAs, CloseTab,
+    About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, Save, SaveAs, CloseTab,
 
     // Edit
     Undo, Redo, Cut, Copy, Paste, Find, Replace, SelectAll,

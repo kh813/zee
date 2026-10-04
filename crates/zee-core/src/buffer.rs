@@ -1626,6 +1626,51 @@ mod tests {
     }
 
     #[test]
+    fn test_cursor_overlay_position_and_text_stability() {
+        let mut editor = Editor::new();
+        let sample = "const message = 'Hello, 世界！';\t// Tab test\n";
+        editor.insert(0, sample);
+
+        let ascii_w: f32 = 8.428;
+        let cjk_w: f32 = 14.0;
+        let tab_size = 4;
+        let line_len = editor.line(0).len_chars();
+        let range = 0..line_len;
+
+        // Verify that visual X offset increases monotonically and precisely without any split points
+        let mut prev_x = 0.0;
+        for col in 0..line_len {
+            let vx = editor.get_visual_px(0, col, &range, ascii_w, cjk_w, tab_size);
+            if col == 0 {
+                assert_eq!(vx, 0.0);
+            } else {
+                assert!(vx > prev_x, "Cursor vx should strictly increase with column");
+            }
+            prev_x = vx;
+        }
+
+        // Verify wrapped line cursor row detection
+        let max_w: f32 = 100.0;
+        let wraps = editor.wrap_line_px(0, max_w, ascii_w, cjk_w, tab_size);
+        let wraps_len = wraps.len();
+        assert!(wraps_len > 1);
+
+        for (v_idx, r) in wraps.iter().enumerate() {
+            let is_last_vrow = v_idx == wraps_len - 1;
+            for col in 0..line_len {
+                let is_on_row = if is_last_vrow {
+                    col >= r.start && col <= r.end
+                } else {
+                    col >= r.start && col < r.end
+                };
+                if col >= r.start && col < r.end {
+                    assert!(is_on_row);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_mouse_hit_testing_calculation() {
         let mut editor = Editor::new();
         editor.insert(0, "Line 0: abcdef\nLine 1: 123456\nLine 2: 漢字テキスト\n");

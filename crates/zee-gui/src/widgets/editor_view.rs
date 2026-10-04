@@ -1828,7 +1828,7 @@ impl EditorView {
         let theme = &workspace.theme;
         let word_wrap = workspace.config.word_wrap;
         let line_height = px(workspace.config.line_height);
-        let char_width = workspace.config.font_size * 0.6;
+        let char_width = self.ascii_width_px;
 
         let line = editor.rope.line(line_idx);
         let mut line_str = line.to_string();
@@ -1889,49 +1889,60 @@ impl EditorView {
                     .h(line_height)
                     .relative()
                     .overflow_hidden()
-                    .child(
-                        div()
+                    .child({
+                        let cursor_overlay = self.render_cursor_overlay(
+                            line_idx,
+                            v_idx,
+                            wraps_len,
+                            &range,
+                            workspace,
+                            editor,
+                            is_cursor_line,
+                        );
+
+                        let mut line_container = div()
                             .when(!word_wrap, |d| {
                                 d.absolute()
                                     .top_0()
                                     .left(px(-(editor.scroll_col as f32 * char_width)))
                                     .h_full()
-                                    .flex()
-                                    .items_center()
                             })
                             .when(word_wrap, |d| {
                                 d.absolute()
                                     .top_0()
                                     .left_0()
                                     .h_full()
+                            })
+                            .child(
+                                div()
+                                    .h_full()
                                     .flex()
                                     .items_center()
-                            })
-                            .children(self.render_visual_line_content(
-                                line_idx,
-                                v_idx,
-                                wraps_len,
-                                range,
-                                &line_str,
-                                workspace,
-                                editor,
-                                is_cursor_line,
-                            ))
-                    )
+                                    .children(self.render_visual_line_content(
+                                        line_idx,
+                                        range.clone(),
+                                        &line_str,
+                                        workspace,
+                                        editor,
+                                    ))
+                            );
+
+                        if let Some(cursor) = cursor_overlay {
+                            line_container = line_container.child(cursor);
+                        }
+
+                        line_container
+                    })
             )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_visual_line_content(
         &self,
         line_idx: usize,
-        v_idx: usize,
-        wraps_len: usize,
         range: std::ops::Range<usize>,
         line_str: &str,
         workspace: &Workspace,
         editor: &zee_core::buffer::Editor,
-        is_cursor_line: bool,
     ) -> Vec<AnyElement> {
         let theme = &workspace.theme;
         let line_height = px(workspace.config.line_height);
@@ -1950,19 +1961,6 @@ impl EditorView {
         };
         let v_text = &line_str[byte_start..byte_end];
         let v_len_chars = v_text.chars().count();
-
-        let (_cursor_line, cursor_col) = editor.char_to_line_col(editor.cursor);
-        let is_last_vrow = v_idx == wraps_len - 1;
-        let is_cursor_on_vrow = is_cursor_line && if is_last_vrow {
-            cursor_col >= range.start && cursor_col <= range.end
-        } else {
-            cursor_col >= range.start && cursor_col < range.end
-        };
-        let cursor_vcol = if is_cursor_on_vrow {
-            cursor_col.saturating_sub(range.start)
-        } else {
-            usize::MAX
-        };
 
         let line_start_char = editor.rope.line_to_char(line_idx);
         let v_start_char = line_start_char + range.start;
@@ -1994,75 +1992,9 @@ impl EditorView {
         };
 
         let mut elements = Vec::new();
-        let mut cursor_rendered = false;
 
-        let is_block_cursor = workspace.config.vi_mode && editor.vi_mode != zee_core::ViMode::Insert;
-        let char_width_val = workspace.config.font_size * 0.6;
-        let cursor_color = led_color_to_gpui(theme.editor.cursor);
-
-        let render_cursor = |elements: &mut Vec<AnyElement>| {
-            if let Some(ref preedit) = self.preedit_text {
-                elements.push(self.render_preedit_element(preedit, theme));
-            }
-            if is_block_cursor {
-                elements.push(
-                    div()
-                        .relative()
-                        .w(px(0.0))
-                        .h(line_height)
-                        .flex_none()
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .w(px(char_width_val))
-                                .h(line_height)
-                                .bg(with_alpha(cursor_color, 0.5))
-                                .border_1()
-                                .border_color(cursor_color)
-                        )
-                        .into_any_element()
-                );
-            } else {
-                elements.push(
-                    div()
-                        .relative()
-                        .w(px(0.0))
-                        .h(line_height)
-                        .flex_none()
-                        .child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .left_0()
-                                .w(px(2.5))
-                                .h(line_height)
-                                .bg(cursor_color)
-                        )
-                        .into_any_element()
-                );
-            }
-        };
-
-        let mut render_chunk = |text: &str, chunk_start_char: usize, token_color: Option<Rgba>, elements: &mut Vec<AnyElement>| {
+        let render_chunk = |text: &str, chunk_start_char: usize, token_color: Option<Rgba>, elements: &mut Vec<AnyElement>| {
             if text.is_empty() { return; }
-            let chunk_chars: Vec<char> = text.chars().collect();
-            let chunk_len = chunk_chars.len();
-
-            if is_cursor_on_vrow && !cursor_rendered
-                && cursor_vcol >= chunk_start_char && cursor_vcol <= chunk_start_char + chunk_len {
-                    let split_idx = cursor_vcol - chunk_start_char;
-                    let part1 = chunk_chars[..split_idx].iter().collect::<String>();
-                    let part2 = chunk_chars[split_idx..].iter().collect::<String>();
-
-                    self.render_chunk_internal(&part1, chunk_start_char, token_color, v_selection.clone(), theme, line_height, elements);
-                    render_cursor(elements);
-                    cursor_rendered = true;
-                    self.render_chunk_internal(&part2, chunk_start_char + split_idx, token_color, v_selection.clone(), theme, line_height, elements);
-                    return;
-                }
-
             self.render_chunk_internal(text, chunk_start_char, token_color, v_selection.clone(), theme, line_height, elements);
         };
 
@@ -2096,25 +2028,108 @@ impl EditorView {
             render_chunk(v_text, 0, None, &mut elements);
         }
 
-        if is_cursor_on_vrow && !cursor_rendered {
-            render_cursor(&mut elements);
-        }
-
         elements
     }
 
-    fn render_preedit_element(&self, text: &str, _theme: &Theme) -> AnyElement {
-        div()
-            .h_full()
-            .flex()
-            .items_center()
-            .text_color(gpui::rgb(0xffffff))
-            .bg(gpui::rgb(0x0000ff))
-            .border_b_1()
-            .border_color(gpui::rgb(0xffffff))
-            .font_family(mono_font_family())
-            .child(text.to_string())
-            .into_any_element()
+    #[allow(clippy::too_many_arguments)]
+    fn render_cursor_overlay(
+        &self,
+        line_idx: usize,
+        v_idx: usize,
+        wraps_len: usize,
+        range: &std::ops::Range<usize>,
+        workspace: &Workspace,
+        editor: &zee_core::buffer::Editor,
+        is_cursor_line: bool,
+    ) -> Option<AnyElement> {
+        if !is_cursor_line {
+            return None;
+        }
+
+        let (_cursor_line, cursor_col) = editor.char_to_line_col(editor.cursor);
+        let is_last_vrow = v_idx == wraps_len - 1;
+        let is_cursor_on_vrow = if is_last_vrow {
+            cursor_col >= range.start && cursor_col <= range.end
+        } else {
+            cursor_col >= range.start && cursor_col < range.end
+        };
+
+        if !is_cursor_on_vrow {
+            return None;
+        }
+
+        let cursor_x = editor.get_visual_px(
+            line_idx,
+            cursor_col,
+            range,
+            self.ascii_width_px,
+            self.cjk_width_px,
+            workspace.config.tab_size,
+        );
+
+        let theme = &workspace.theme;
+        let line_height = px(workspace.config.line_height);
+
+        if let Some(ref preedit) = self.preedit_text {
+            return Some(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left(px(cursor_x))
+                    .h(line_height)
+                    .flex()
+                    .items_center()
+                    .text_color(gpui::rgb(0xffffff))
+                    .bg(gpui::rgb(0x0000ff))
+                    .border_b_1()
+                    .border_color(gpui::rgb(0xffffff))
+                    .font_family(mono_font_family())
+                    .child(preedit.clone())
+                    .into_any_element(),
+            );
+        }
+
+        let is_block_cursor = workspace.config.vi_mode && editor.vi_mode != zee_core::ViMode::Insert;
+        let cursor_color = led_color_to_gpui(theme.editor.cursor);
+
+        if is_block_cursor {
+            let line = editor.rope.line(line_idx);
+            let char_at_cursor = line.chars().nth(cursor_col);
+            use unicode_width::UnicodeWidthChar;
+            let cursor_w = match char_at_cursor {
+                Some('\t') => {
+                    let tab_width_px = workspace.config.tab_size as f32 * self.ascii_width_px;
+                    let col_px = cursor_x % tab_width_px;
+                    tab_width_px - col_px
+                }
+                Some(c) if c.width() == Some(2) => self.cjk_width_px,
+                _ => self.ascii_width_px,
+            };
+
+            Some(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left(px(cursor_x))
+                    .w(px(cursor_w))
+                    .h(line_height)
+                    .bg(with_alpha(cursor_color, 0.5))
+                    .border_1()
+                    .border_color(cursor_color)
+                    .into_any_element(),
+            )
+        } else {
+            Some(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left(px(cursor_x))
+                    .w(px(2.0))
+                    .h(line_height)
+                    .bg(cursor_color)
+                    .into_any_element(),
+            )
+        }
     }
 
     #[allow(clippy::too_many_arguments)]

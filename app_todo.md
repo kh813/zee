@@ -59,6 +59,7 @@
   - 各言語のパーサーを独自実装するのではなく、業界標準の `tree-sitter` および言語別 grammar crates を採用する。
   - Tree-sitter は増分解析（Incremental Parsing）と高耐障害性（シンタックスエラーのある書きかけコードでもパニックせず構文木を維持）を兼ね備えており、エディタ用途に最適。
   - WASM プラグインシステム (`zee:plugin/outline`) と組み合わせ、プラグイン側からもカスタム言語のアウトラインを提供可能にする。
+  - 詳細設計書: `docs/treesitter_outline_design.md` 参照。
 
 - **採用候補 Crate**:
   - `tree-sitter`: コア構文解析ライブラリ

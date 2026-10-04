@@ -414,6 +414,7 @@ open -n "$APP"
     Ok(())
 }
 
+#[allow(dead_code)]
 fn extract_zip_app_bundle(zip_bytes: &[u8], dest_dir: &Path) -> Result<PathBuf> {
     use std::io::Cursor;
     let reader = Cursor::new(zip_bytes);
@@ -518,6 +519,7 @@ rm -rf "$STAGING"
     Ok(())
 }
 
+#[allow(dead_code)]
 fn extract_tar_gz_binary(tar_gz_bytes: &[u8], target_name: &str, dest_file: &Path) -> Result<()> {
     use flate2::read::GzDecoder;
     use std::io::Cursor;

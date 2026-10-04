@@ -1258,13 +1258,16 @@ impl WindowView {
         let open_menu = menu_bar.open_menu;
 
         if let Some(idx) = open_menu {
-            let workspace = self.workspace.read(cx);
-            let theme = &workspace.theme;
-            let bg = led_color_to_gpui(theme.ui.menu_bar_bg);
-            let fg = led_color_to_gpui(theme.ui.menu_bar_fg);
-            let border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
-            let hover_bg = with_alpha(fg, 0.15);
-            let muted_fg = with_alpha(fg, 0.55);
+            let (bg, fg, border, hover_bg, muted_fg) = {
+                let workspace = self.workspace.read(cx);
+                let theme = &workspace.theme;
+                let bg = led_color_to_gpui(theme.ui.menu_bar_bg);
+                let fg = led_color_to_gpui(theme.ui.menu_bar_fg);
+                let border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
+                let hover_bg = with_alpha(fg, 0.15);
+                let muted_fg = with_alpha(fg, 0.55);
+                (bg, fg, border, hover_bg, muted_fg)
+            };
 
             let left_pos = match idx {
                 0 => px(8.0),
@@ -1442,8 +1445,7 @@ impl WindowView {
     }
 
     fn render_plugins_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace = self.workspace.read(cx);
-        let plugins = workspace.plugin_manager.all_manifests();
+        let plugins = self.workspace.read(cx).plugin_manager.all_manifests();
         let mut menu = div()
             .flex()
             .flex_col();

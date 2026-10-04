@@ -186,6 +186,8 @@ impl I18n {
         m.insert("sidebar.prop_encoding".to_string(), "Encoding".to_string());
         m.insert("sidebar.prop_line_ending".to_string(), "Line Ending".to_string());
         m.insert("sidebar.no_file".to_string(), "(No active file)".to_string());
+        m.insert("sidebar.no_files".to_string(), "(No files)".to_string());
+        m.insert("sidebar.no_headings".to_string(), "(No headings in this file)".to_string());
 
         m.insert("menu.view.syntax_plain".to_string(), "Plain Text".to_string());
 
@@ -346,6 +348,8 @@ impl I18n {
         m.insert("sidebar.prop_encoding".to_string(), "エンコーディング".to_string());
         m.insert("sidebar.prop_line_ending".to_string(), "改行コード".to_string());
         m.insert("sidebar.no_file".to_string(), "（ファイルなし）".to_string());
+        m.insert("sidebar.no_files".to_string(), "（ファイルなし）".to_string());
+        m.insert("sidebar.no_headings".to_string(), "（見出しがありません）".to_string());
 
         m.insert("menu.view.syntax_plain".to_string(), "標準テキスト".to_string());
 

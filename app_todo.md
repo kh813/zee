@@ -15,8 +15,13 @@
   - [x] Allow splitting the sidebar vertically into two panes (top/bottom)
   - [x] Top pane: Files tree / Outline tree
   - [x] Bottom pane: Active file properties (file name, size, line count, character count, encoding, line ending format) with collapsible toggle
-- [ ] **Enhanced Code Outline**:
-  - [ ] In addition to Markdown headings (already implemented), display function/class/method outline tree for source code files (via WASM plugins or built-in grammar parsers) with click-to-jump
+- [x] **Sidebar Tree Scrolling & UI Alignment (Bugfix)**:
+  - [x] Enable vertical scrolling (`overflow_y_scroll`) and horizontal scrolling (`overflow_x_scroll`) for the file tree and outline views to avoid content being cut off
+  - [x] Fix boundary shift between Files and Outline: add `flex_shrink_0()` to properties panel and `flex_1().min_h_0()` to tree container, keeping the divider line completely stable across tab switches
+  - [x] Unify typography (12px text, 10px icons, 24px row height), indentation (`(depth * 14) + 8`), and padding (`px_3 py_2` empty state, `py_1` wrapper) between Files and Outline tabs
+- [ ] **Enhanced Code Outline & Language Support (Phase 25 計画参照)**:
+  - [ ] Support Python, Go, Rust, JSON, CSS, HTML etc. via Tree-sitter integration or WASM plugin providers
+  - [ ] Click-to-jump navigation from outline symbols to buffer location
 
 ### Config & Ecosystem
 - [x] **Configuration Persistence (`~/.config/zee/config.toml`)**:
@@ -41,6 +46,66 @@
   - [ ] Add standard GUI mouse rectangular selection via `Alt (Option) + mouse drag` (accessible even when Vi mode is OFF)
   - [ ] Implement rectangular block paste (`Block Paste`): pasting rectangular multi-line text into a column without inserting standard line breaks
   - [ ] Support real-time multi-cursor typing across selected lines during visual block insertion
+
+---
+
+## Phase 25: 多言語アウトライン対応 (Tree-sitter採用) & LSP (Language Server Protocol) 検討計画
+
+サイドパネルのアウトライン（現在は Markdown の見出しのみ対応）を主要プログラミング言語およびマークアップ言語へと拡張し、シンタックスハイライト・シンボルジャンプの高度化を図るためのアーキテクチャ計画。
+
+### 1. 多言語アウトライン機能 (Tree-sitter 採用計画)
+
+- **基本方針**:
+  - 各言語のパーサーを独自実装するのではなく、業界標準の `tree-sitter` および言語別 grammar crates を採用する。
+  - Tree-sitter は増分解析（Incremental Parsing）と高耐障害性（シンタックスエラーのある書きかけコードでもパニックせず構文木を維持）を兼ね備えており、エディタ用途に最適。
+  - WASM プラグインシステム (`zee:plugin/outline`) と組み合わせ、プラグイン側からもカスタム言語のアウトラインを提供可能にする。
+
+- **採用候補 Crate**:
+  - `tree-sitter`: コア構文解析ライブラリ
+  - `tree-sitter-rust`: Rust 言語文法
+  - `tree-sitter-python`: Python 言語文法
+  - `tree-sitter-go`: Go 言語文法
+  - `tree-sitter-json`: JSON 文法
+  - `tree-sitter-css`: CSS 文法
+  - `tree-sitter-html`: HTML 文法
+
+- **各言語における抽出対象シンボル (Outline Node 定義)**:
+  - **Rust**: 関数 (`fn`), 構造体 (`struct`), 列挙型 (`enum`), トレイト (`trait`), 実装ブロック (`impl`), 定数 (`const`)
+  - **Python**: 関数・メソッド (`def`, `async def`), クラス (`class`)
+  - **Go**: 関数 (`func`), メソッド, 型定義 (`type ... struct`, `type ... interface`)
+  - **JSON**: トップレベルの主要キー、ネストされたオブジェクト・配列名
+  - **CSS**: スタイルルールセレクタ (`.class`, `#id`), `@media`, `@keyframes`
+  - **HTML**: 主要セマンティック要素 (`header`, `nav`, `main`, `section`, `article`, `div[id]`, `h1`-`h6`)
+  - **Markdown** (実装済): 見出し階層 (`#` 〜 `######`)
+
+- **UI 連携**:
+  - サイドバー Outline タブにアイコン・バッジ（例: `fn`, `struct`, `class`, `H1`）とともに階層ツリー表示
+  - 各アイテムクリックで対象行・カラムへ即座にカーソルジャンプ (`jump_to_line`)
+
+---
+
+### 2. Language Server Protocol (LSP) 対応の検討 (アイデア・将来展望)
+
+- **検討の背景**:
+  - zee の当初の設計方針は「MS-DOS Edit / Micro のような軽量・高速・シンプルで外部依存のないエディタ」であり、重量級の LSP クライアントを標準搭載しない方針としていた。
+  - しかし、シンタックスハイライトの精度向上（セマンティックハイライト）や、大規模コードベースでの定義ジャンプ、シンボル検索において、LSP の利点が大きい。
+  - そこで、「必須機能」ではなく**オプショナルな機能（設定または拡張プラグインとして任意有効化可能）**として LSP 対応を検討枠に加える。
+
+- **LSP 導入によるメリット**:
+  1. **高度なシンタックスハイライト (Semantic Tokens)**:
+     - `textDocument/semanticTokens/full` により、静的正規表現では判別が難しい型名、変数名、マクロ、定数、引数名などをコンパイラ精度で色分け可能。
+  2. **高精度なシンボルツリー (Document Symbols)**:
+     - `textDocument/documentSymbol` により、言語サーバーが提供する完全なシンボル階層をアウトラインに直接反映可能。
+  3. **定義ジャンプ・ホバー情報 (Go to Definition & Hover)**:
+     - `textDocument/definition` や `textDocument/hover` による型情報・ドキュメントのポップアップ表示。
+
+- **採用候補 Crate**:
+  - `lsp-types`: LSP 3.17 仕様に準拠した型定義
+  - `async-lsp` または tokio ベースの軽量 stdio JSON-RPC クライアント
+
+- **ハイブリッド運用設計案**:
+  - **デフォルト**: Tree-sitter + Built-in highlight（外部サーバー不要で 0 秒起動・完全オフライン動作）。
+  - **LSP 有効時**: システムに `rust-analyzer`, `pyright`, `gopls` 等がインストールされていればバックグラウンドで接続し、Semantic Tokens や定義ジャンプを上乗せ適用。
 
 ---
 

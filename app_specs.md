@@ -881,11 +881,15 @@ zee-gui/src/
 
 ---
 
-## 19. Not Planned
+## 19. Future & Under Consideration (将来計画・検討中の機能)
 
-- IDE features (git integration, LSP, DAP)
-- Vertical/horizontal split views
-- Plugin system
+- **WASM プラグインシステム**: v0.1.6 にて Wasmtime Component Model / WIT アーキテクチャを基盤導入済。
+- **多言語コードアウトライン (Tree-sitter)**: Markdown 見出しに加え、Python, Go, Rust, JSON, CSS, HTML のシンボル抽出を `tree-sitter` クレート群の採用により計画。
+- **Language Server Protocol (LSP)**: 当初は非対応方針（Not Planned）としていたが、高度なシンタックスハイライト（Semantic Tokens）やシンボルアウトラインの向上を目的として、オプショナルな連携機能として検討中。
+
+### Not Planned (現時点で非対応の項目)
+- 重量級 IDE 機能（フルスペックのデバッガ DAP や複雑なプロジェクト管理、Git GUI など）
+- 複雑なタイリングウィンドウマネージャ機能
 
 ---
 

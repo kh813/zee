@@ -211,10 +211,13 @@ impl Render for SidebarView {
             .child(header)
             .child(
                 div()
-                    .flex_grow()
+                    .id("sidebar-content-scroll")
+                    .flex_1()
+                    .min_h_0()
                     .w_full()
-                    .overflow_hidden()
-                    .py_2()
+                    .overflow_y_scroll()
+                    .overflow_x_scroll()
+                    .py_1()
                     .child(content)
             )
             .child(properties_panel)
@@ -234,8 +237,18 @@ impl SidebarView {
         sel_bg: Rgba,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        if items.is_empty() {
+            return div()
+                .px_3()
+                .py_2()
+                .text_size(px(12.0))
+                .text_color(muted_fg)
+                .child(self.i18n.get("sidebar.no_files").to_string())
+                .into_any_element();
+        }
+
         div()
-            .w_full()
+            .min_w_full()
             .flex()
             .flex_col()
             .children(
@@ -262,7 +275,7 @@ impl SidebarView {
                     let path_for_click = path.clone();
                     div()
                         .h(px(24.0))
-                        .w_full()
+                        .min_w_full()
                         .flex()
                         .items_center()
                         .pl(depth_px)
@@ -293,17 +306,19 @@ impl SidebarView {
                         .child(
                             div()
                                 .w(px(14.0))
+                                .flex_shrink_0()
                                 .text_size(px(10.0))
                                 .text_color(if is_dir { muted_fg } else { with_alpha(muted_fg, 0.4) })
                                 .child(icon)
                         )
                         .child(
                             div()
-                                .truncate()
+                                .whitespace_nowrap()
                                 .child(item.name)
                         )
                 })
             )
+            .into_any_element()
     }
 
     fn render_outline(
@@ -320,16 +335,16 @@ impl SidebarView {
 
         if flat.is_empty() {
             return div()
-                .px_4()
+                .px_3()
                 .py_2()
                 .text_size(px(12.0))
                 .text_color(muted_fg)
-                .child("(No headings in this file)")
+                .child(self.i18n.get("sidebar.no_headings").to_string())
                 .into_any_element();
         }
 
         div()
-            .w_full()
+            .min_w_full()
             .flex()
             .flex_col()
             .children(
@@ -348,7 +363,7 @@ impl SidebarView {
 
                     div()
                         .h(px(24.0))
-                        .w_full()
+                        .min_w_full()
                         .flex()
                         .items_center()
                         .pl(depth_px)
@@ -367,6 +382,7 @@ impl SidebarView {
                         .child(
                             div()
                                 .w(px(14.0))
+                                .flex_shrink_0()
                                 .text_size(px(10.0))
                                 .text_color(muted_fg)
                                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
@@ -381,6 +397,7 @@ impl SidebarView {
                         )
                         .child(
                             div()
+                                .flex_shrink_0()
                                 .text_size(px(10.0))
                                 .text_color(muted_fg)
                                 .mr_1()
@@ -388,7 +405,7 @@ impl SidebarView {
                         )
                         .child(
                             div()
-                                .truncate()
+                                .whitespace_nowrap()
                                 .child(item.title)
                         )
                 })
@@ -443,6 +460,7 @@ impl SidebarView {
 
         let mut panel = div()
             .w_full()
+            .flex_shrink_0()
             .border_t_1()
             .border_color(border_color)
             .child(header);

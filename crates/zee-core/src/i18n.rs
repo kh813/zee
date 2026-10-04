@@ -191,6 +191,9 @@ impl I18n {
         m.insert("dialog.settings.line_height".to_string(), "Line Height".to_string());
         m.insert("dialog.settings.ui_font_size".to_string(), "UI Font Size".to_string());
         m.insert("dialog.settings.tab_size".to_string(), "Tab Width".to_string());
+        m.insert("dialog.settings.sidebar_position".to_string(), "Sidebar Position".to_string());
+        m.insert("dialog.settings.sidebar_left".to_string(), "Left".to_string());
+        m.insert("dialog.settings.sidebar_right".to_string(), "Right".to_string());
         m.insert("dialog.settings.reset_defaults".to_string(), "Reset Defaults".to_string());
 
         m.insert("about.version".to_string(), "Version".to_string());
@@ -313,6 +316,9 @@ impl I18n {
         m.insert("dialog.settings.line_height".to_string(), "行の高さ".to_string());
         m.insert("dialog.settings.ui_font_size".to_string(), "UIフォントサイズ".to_string());
         m.insert("dialog.settings.tab_size".to_string(), "タブ幅".to_string());
+        m.insert("dialog.settings.sidebar_position".to_string(), "サイドバーの位置".to_string());
+        m.insert("dialog.settings.sidebar_left".to_string(), "左側".to_string());
+        m.insert("dialog.settings.sidebar_right".to_string(), "右側".to_string());
         m.insert("dialog.settings.reset_defaults".to_string(), "初期値に戻す".to_string());
 
         m.insert("about.version".to_string(), "バージョン".to_string());

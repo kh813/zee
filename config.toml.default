@@ -98,6 +98,16 @@ expand_tab = false
 sidebar = false
 
 
+# Sidebar placement position.
+# "right" : Positioned on the right side of the editor (default, macOS friendly).
+# "left"  : Positioned on the left side of the editor (Windows Explorer / VSCode default).
+# Can also be changed at runtime via Preferences (Cmd+, / Ctrl+,).
+#
+# Type    : string   ("right" / "left")
+# Default : "right"
+sidebar_position = "right"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GUI Specific Settings (zee-gui only; ignored by zee-tui)
 # ─────────────────────────────────────────────────────────────────────────────

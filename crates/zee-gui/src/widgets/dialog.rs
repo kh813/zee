@@ -1051,6 +1051,7 @@ impl Dialog {
                 let expand_tab = workspace.config.expand_tab;
                 let line_numbers = workspace.config.line_numbers;
                 let word_wrap = workspace.config.word_wrap;
+                let sidebar_position = workspace.config.sidebar_position.clone();
 
                 let chip_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
                 let chip_active_bg = with_alpha(accent, 0.25);
@@ -1536,7 +1537,7 @@ impl Dialog {
                                             }))
                                             .child(if line_numbers { "✓ Lines" } else { "Lines" })
                                     )
-                                    // Word Wrap toggle
+                                     // Word Wrap toggle
                                     .child(
                                         div()
                                             .h(px(24.0))
@@ -1559,9 +1560,82 @@ impl Dialog {
                                                 cx.notify();
                                             }))
                                             .child(if word_wrap { "✓ Wrap" } else { "Wrap" })
-                                    )
-                            )
-                    )
+                                     )
+                             )
+                     )
+                     // Sidebar Position Row
+                     .child(
+                         div()
+                             .flex()
+                             .items_center()
+                             .justify_between()
+                             .pt_0p5()
+                             .child(
+                                 div()
+                                     .text_size(px(11.5))
+                                     .font_weight(FontWeight::MEDIUM)
+                                     .text_color(with_alpha(fg, 0.75))
+                                     .child(format!("{}:", self.i18n.get("dialog.settings.sidebar_position")))
+                             )
+                             .child(
+                                 div()
+                                     .flex()
+                                     .items_center()
+                                     .gap_1p5()
+                                     .child({
+                                         let is_left = sidebar_position == "left";
+                                         div()
+                                             .h(px(24.0))
+                                             .px_3()
+                                             .flex()
+                                             .items_center()
+                                             .justify_center()
+                                             .rounded_md()
+                                             .border_1()
+                                             .border_color(if is_left { accent } else { chip_border })
+                                             .bg(if is_left { chip_active_bg } else { chip_bg })
+                                             .text_size(px(11.5))
+                                             .font_weight(if is_left { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                             .cursor_pointer()
+                                             .hover(|s| s.opacity(0.85))
+                                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                 this.workspace.update(cx, |w, cx| {
+                                                     w.config.sidebar_position = "left".to_string();
+                                                     let _ = zee_core::config::Config::write_key("sidebar_position", "left");
+                                                     cx.notify();
+                                                 });
+                                                 cx.notify();
+                                             }))
+                                             .child(self.i18n.get("dialog.settings.sidebar_left").to_string())
+                                     })
+                                     .child({
+                                         let is_right = sidebar_position != "left";
+                                         div()
+                                             .h(px(24.0))
+                                             .px_3()
+                                             .flex()
+                                             .items_center()
+                                             .justify_center()
+                                             .rounded_md()
+                                             .border_1()
+                                             .border_color(if is_right { accent } else { chip_border })
+                                             .bg(if is_right { chip_active_bg } else { chip_bg })
+                                             .text_size(px(11.5))
+                                             .font_weight(if is_right { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                             .cursor_pointer()
+                                             .hover(|s| s.opacity(0.85))
+                                             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                 this.workspace.update(cx, |w, cx| {
+                                                     w.config.sidebar_position = "right".to_string();
+                                                     let _ = zee_core::config::Config::write_key("sidebar_position", "right");
+                                                     cx.notify();
+                                                 });
+                                                 cx.notify();
+                                             }))
+                                             .child(self.i18n.get("dialog.settings.sidebar_right").to_string())
+                                     })
+                             )
+                     )
                     // Footer Actions
                     .child(
                         div()
@@ -1591,12 +1665,14 @@ impl Dialog {
                                             w.config.ui_font_size = 13.0;
                                             w.config.tab_size = 4;
                                             w.config.expand_tab = true;
+                                            w.config.sidebar_position = "right".to_string();
                                             let _ = zee_core::config::Config::write_key("font_family", "");
                                             let _ = zee_core::config::Config::write_key("font_size", "12.0");
                                             let _ = zee_core::config::Config::write_key("line_height", "19.0");
                                             let _ = zee_core::config::Config::write_key("ui_font_size", "13.0");
                                             let _ = zee_core::config::Config::write_key("tab_size", "4");
                                             let _ = zee_core::config::Config::write_key("expand_tab", "true");
+                                            let _ = zee_core::config::Config::write_key("sidebar_position", "right");
                                             cx.notify();
                                         });
                                         cx.notify();

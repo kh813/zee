@@ -3,11 +3,11 @@
 ## Phase 23: Upcoming Roadmap & Features (Planned)
 
 ### UI & Sidebar Refinements
-- [ ] **Configurable Sidebar Position (Left / Right)**:
-  - [ ] Support placing the sidebar on either the left or right side of the editor
-  - [ ] Default to **right** side (natural for macOS users, while configurable to left for Windows Explorer familiarity)
-  - [ ] Add `sidebar_position = "right"` (options: `"left"`, `"right"`) to `config.toml` and Preferences settings
-  - [ ] Update border styling (`border_l_1` when right, `border_r_1` when left) and coordinate calculations in `editor_view`
+- [x] **Configurable Sidebar Position (Left / Right)**:
+  - [x] Support placing the sidebar on either the left or right side of the editor
+  - [x] Default to **right** side (natural for macOS users, while configurable to left for Windows Explorer familiarity)
+  - [x] Add `sidebar_position = "right"` (options: `"left"`, `"right"`) to `config.toml` and Preferences settings
+  - [x] Update border styling (`border_l_1` when right, `border_r_1` when left) and coordinate calculations in `editor_view`
 - [ ] **Sidebar Vertical Split & File Properties**:
   - [ ] Allow splitting the sidebar vertically into two panes (top/bottom)
   - [ ] Top pane: Files tree / Outline tree

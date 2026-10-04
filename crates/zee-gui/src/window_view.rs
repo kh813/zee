@@ -1060,7 +1060,10 @@ impl WindowView {
         #[cfg(not(target_os = "macos"))]
         let container = container.child(self.menu_bar.clone());
 
-        let is_sidebar_visible = self.workspace.read(cx).sidebar_visible;
+        let (is_sidebar_visible, is_right_sidebar) = {
+            let w = self.workspace.read(cx);
+            (w.sidebar_visible, w.config.sidebar_position != "left")
+        };
 
         let main_area = div()
             .flex_grow()
@@ -1070,12 +1073,20 @@ impl WindowView {
             .h_full()
             .overflow_hidden();
 
+        let editor_wrapper = div().flex_grow().h_full().child(self.editor.clone());
+
         let main_area = if is_sidebar_visible {
-            main_area
-                .child(self.sidebar.clone())
-                .child(div().flex_grow().h_full().child(self.editor.clone()))
+            if is_right_sidebar {
+                main_area
+                    .child(editor_wrapper)
+                    .child(self.sidebar.clone())
+            } else {
+                main_area
+                    .child(self.sidebar.clone())
+                    .child(editor_wrapper)
+            }
         } else {
-            main_area.child(div().flex_grow().h_full().child(self.editor.clone()))
+            main_area.child(editor_wrapper)
         };
 
         container

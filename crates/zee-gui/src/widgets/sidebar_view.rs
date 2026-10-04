@@ -38,7 +38,7 @@ impl SidebarView {
 
 impl Render for SidebarView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (active_tab, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes) = {
+        let (active_tab, is_right_sidebar, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes) = {
             let workspace = self.workspace.read(cx);
             let theme = &workspace.theme;
 
@@ -51,11 +51,12 @@ impl Render for SidebarView {
             let sel_bg = with_alpha(led_color_to_gpui(theme.editor.selection), 0.85);
 
             let active_tab = workspace.sidebar_tab;
+            let is_right_sidebar = workspace.config.sidebar_position != "left";
             let file_items = workspace.file_tree.flatten();
             let active_path = workspace.active_editor().and_then(|e| e.path.clone());
             let outline_nodes = workspace.outline_nodes.clone();
 
-            (active_tab, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes)
+            (active_tab, is_right_sidebar, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes)
         };
 
         // Render header tabs
@@ -135,16 +136,23 @@ impl Render for SidebarView {
             SidebarTab::Outline => self.render_outline(&outline_nodes, text_color, active_fg, muted_fg, hover_bg, cx).into_any_element(),
         };
 
-        div()
+        let mut container = div()
             .w(px(240.0))
             .h_full()
             .flex()
             .flex_col()
             .bg(bg_color)
-            .border_r_1()
             .border_color(border_color)
             .font_family(ui_font_family())
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle);
+
+        if is_right_sidebar {
+            container = container.border_l_1();
+        } else {
+            container = container.border_r_1();
+        }
+
+        container
             .child(header)
             .child(
                 div()

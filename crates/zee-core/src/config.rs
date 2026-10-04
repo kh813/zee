@@ -11,6 +11,7 @@ pub struct Config {
     pub vi_mode: bool,
     pub word_wrap: bool,
     pub sidebar: bool,
+    pub sidebar_position: String,
     pub tab_size: usize,
     pub expand_tab: bool,
     // GUI specific customization (CLI ignores font settings)
@@ -30,6 +31,7 @@ impl Default for Config {
             vi_mode: false,
             word_wrap: true,
             sidebar: false,
+            sidebar_position: "right".to_string(),
             tab_size: 4,
             expand_tab: false,
             font_family: None,
@@ -70,6 +72,12 @@ impl Config {
                     "vi_mode" => if let Some(b) = v.as_bool() { config.vi_mode = b; },
                     "word_wrap" => if let Some(b) = v.as_bool() { config.word_wrap = b; },
                     "sidebar" => if let Some(b) = v.as_bool() { config.sidebar = b; },
+                    "sidebar_position" => if let Some(s) = v.as_str() {
+                        let s = s.trim().to_lowercase();
+                        if s == "left" || s == "right" {
+                            config.sidebar_position = s;
+                        }
+                    },
                     "tab_size" => if let Some(i) = v.as_integer() { config.tab_size = i as usize; },
                     "expand_tab" => if let Some(b) = v.as_bool() { config.expand_tab = b; },
                     "font_family" => if let Some(s) = v.as_str() { config.font_family = Some(s.to_string()); },
@@ -168,6 +176,7 @@ mod tests {
         language = "ja"
         theme = "catppuccin-mocha"
         line_numbers = false
+        sidebar_position = "left"
         tab_size = 2
         expand_tab = false
         font_family = "Fira Code"
@@ -181,6 +190,7 @@ mod tests {
         assert_eq!(config.language, "ja");
         assert_eq!(config.theme, "catppuccin-mocha");
         assert!(!config.line_numbers);
+        assert_eq!(config.sidebar_position, "left");
         assert_eq!(config.tab_size, 2);
         assert!(!config.expand_tab);
         assert_eq!(config.font_family, Some("Fira Code".to_string()));
@@ -188,5 +198,7 @@ mod tests {
         assert_eq!(config.line_height, 24.0);
         assert_eq!(config.ui_font_family, Some("Inter".to_string()));
         assert_eq!(config.ui_font_size, 13.5);
+
+        assert_eq!(Config::default().sidebar_position, "right");
     }
 }

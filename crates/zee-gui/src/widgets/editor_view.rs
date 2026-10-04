@@ -5,6 +5,8 @@ use zee_core::syntax::TokenType;
 use zee_core::theme::Theme;
 use crate::widgets::{led_color_to_gpui, mono_font_family, with_alpha};
 
+const TEXT_AREA_LEFT_PADDING: Pixels = px(6.0);
+
 pub struct EditorView {
     pub workspace: Entity<Workspace>,
     pub focus_handle: FocusHandle,
@@ -1811,6 +1813,7 @@ impl EditorView {
         let line_height = px(workspace.config.line_height);
         let font_size = workspace.config.font_size;
         let gutter_width = if workspace.config.line_numbers { px(52.0) } else { px(0.0) };
+        let text_left_padding = if workspace.config.line_numbers { TEXT_AREA_LEFT_PADDING } else { px(0.0) };
         let sidebar_width = if workspace.sidebar_visible { px(240.0) } else { px(0.0) };
         let char_width = px(font_size * 0.6);
         let tab_size = workspace.config.tab_size;
@@ -1824,7 +1827,7 @@ impl EditorView {
 
         let top_offset = tab_bar_height + menu_bar_height;
         let relative_y = position.y - top_offset;
-        let left_offset = sidebar_width + gutter_width;
+        let left_offset = sidebar_width + gutter_width + text_left_padding;
         let relative_x = (position.x - left_offset).max(px(0.0));
 
         if !word_wrap {
@@ -1942,15 +1945,20 @@ impl EditorView {
 
             let char_pos = self.mouse_pos_to_char_pos(event.position, cx);
             self.workspace.update(cx, |w, cx| {
+                let line_height = w.config.line_height;
+                let word_wrap = w.config.word_wrap;
+                let tab_size = w.config.tab_size;
+
                 let editor = match w.active_editor_mut() {
                     Some(e) => e,
                     None => return,
                 };
 
                 // Auto-scroll when dragging near top or bottom
+                let max_scroll_row = self.max_scroll_row(editor, line_height, word_wrap, tab_size, viewport_height);
                 if event.position.y < top_offset + px(24.0) && editor.scroll_row > 0 {
                     editor.scroll_row = editor.scroll_row.saturating_sub(1);
-                } else if event.position.y > viewport_height - px(24.0) && editor.scroll_row + 1 < editor.line_count() {
+                } else if event.position.y > viewport_height - px(24.0) && editor.scroll_row < max_scroll_row {
                     editor.scroll_row += 1;
                 }
 
@@ -1976,16 +1984,64 @@ impl EditorView {
         });
     }
 
-    fn handle_scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    pub fn max_scroll_row(
+        &self,
+        editor: &zee_core::buffer::Editor,
+        line_height: f32,
+        word_wrap: bool,
+        tab_size: usize,
+        viewport_height: Pixels,
+    ) -> usize {
+        let line_height_px = px(line_height);
+        let tab_bar_height = px(36.0);
+        #[cfg(not(target_os = "macos"))]
+        let menu_bar_height = px(28.0);
+        #[cfg(target_os = "macos")]
+        let menu_bar_height = px(0.0);
+
+        let chrome_height = tab_bar_height + menu_bar_height + px(26.0);
+        let editor_height = (viewport_height - chrome_height).max(line_height_px);
+        let visible_lines = (editor_height / line_height_px).floor().max(1.0) as usize;
+
+        let line_count = editor.line_count();
+        if !word_wrap {
+            line_count.saturating_sub(visible_lines)
+        } else {
+            let mut total_vrows = 0;
+            let mut target_line = 0;
+            for l in (0..line_count).rev() {
+                let vrows = editor.wrap_line_px(
+                    l,
+                    self.last_wrap_width_px,
+                    self.ascii_width_px,
+                    self.cjk_width_px,
+                    tab_size,
+                ).len().max(1);
+                total_vrows += vrows;
+                if total_vrows >= visible_lines {
+                    target_line = l;
+                    break;
+                }
+            }
+            target_line
+        }
+    }
+
+    fn handle_scroll(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
         let line_height_px = px(self.workspace.read(cx).config.line_height);
         let char_width_px = px(self.workspace.read(cx).config.font_size * 0.6);
+        let viewport_height = window.viewport_size().height;
 
         self.workspace.update(cx, |w, cx| {
+            let line_height = w.config.line_height;
             let word_wrap = w.config.word_wrap;
+            let tab_size = w.config.tab_size;
+
             let editor = match w.active_editor_mut() {
                 Some(e) => e,
                 None => return,
             };
+            let max_scroll_row = self.max_scroll_row(editor, line_height, word_wrap, tab_size, viewport_height);
             let delta = event.delta.pixel_delta(line_height_px);
             
             // Vertical scroll
@@ -1994,7 +2050,7 @@ impl EditorView {
                 if rows > 0 {
                     editor.scroll_row = editor.scroll_row.saturating_sub(rows as usize);
                 } else {
-                    editor.scroll_row = (editor.scroll_row + (-rows) as usize).min(editor.line_count().saturating_sub(1));
+                    editor.scroll_row = (editor.scroll_row + (-rows) as usize).min(max_scroll_row);
                 }
             }
 
@@ -2137,6 +2193,7 @@ impl EntityInputHandler for EditorView {
         
         let line_height = px(workspace.config.line_height);
         let gutter_width = if workspace.config.line_numbers { px(52.0) } else { px(0.0) };
+        let text_left_padding = if workspace.config.line_numbers { TEXT_AREA_LEFT_PADDING } else { px(0.0) };
         let char_width = px(workspace.config.font_size * 0.6);
 
         let (line, col) = editor.char_to_line_col(range_utf16.start);
@@ -2194,7 +2251,7 @@ impl EntityInputHandler for EditorView {
             if !found { (vrow, px(0.0)) } else { (vrow, px(target_vx)) }
         };
 
-        let origin_x = bounds.origin.x + gutter_width + visual_x;
+        let origin_x = bounds.origin.x + gutter_width + text_left_padding + visual_x;
         let origin_y = bounds.origin.y + (line_height * visual_row as f32);
 
         Some(Bounds {
@@ -2264,6 +2321,7 @@ impl Render for EditorView {
         let line_height = px(workspace.config.line_height);
 
         let gutter_width = if workspace.config.line_numbers { px(52.0) } else { px(0.0) };
+        let text_left_padding = if workspace.config.line_numbers { TEXT_AREA_LEFT_PADDING } else { px(0.0) };
         let sidebar_width = if workspace.sidebar_visible { px(240.0) } else { px(0.0) };
         let font_size_val = workspace.config.font_size;
         let ascii_width = if cfg!(target_os = "macos") { font_size_val * 0.602 } else { font_size_val * 0.6 };
@@ -2271,7 +2329,7 @@ impl Render for EditorView {
         self.ascii_width_px = ascii_width;
         self.cjk_width_px = cjk_width;
         let viewport_width = window.viewport_size().width;
-        let available_width_px = (viewport_width - sidebar_width - gutter_width - px(16.0)).max(px(100.0));
+        let available_width_px = (viewport_width - sidebar_width - gutter_width - text_left_padding - px(16.0)).max(px(100.0));
         let available_width_val: f32 = available_width_px / px(1.0);
         self.last_wrap_width_px = available_width_val;
         let wrap_cols = ((available_width_px / px(ascii_width)).floor() as usize).max(20);
@@ -2464,6 +2522,7 @@ impl EditorView {
         };
 
         let gutter_width = if workspace.config.line_numbers { px(52.0) } else { px(0.0) };
+        let text_left_padding = if workspace.config.line_numbers { TEXT_AREA_LEFT_PADDING } else { px(0.0) };
         let gutter_border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.2);
 
         div()
@@ -2515,13 +2574,13 @@ impl EditorView {
                             .when(!word_wrap, |d| {
                                 d.absolute()
                                     .top_0()
-                                    .left(px(-(editor.scroll_col as f32 * char_width)))
+                                    .left(text_left_padding - px(editor.scroll_col as f32 * char_width))
                                     .h_full()
                             })
                             .when(word_wrap, |d| {
                                 d.absolute()
                                     .top_0()
-                                    .left_0()
+                                    .left(text_left_padding)
                                     .h_full()
                             })
                             .child(

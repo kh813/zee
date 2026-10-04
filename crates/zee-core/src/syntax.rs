@@ -33,6 +33,7 @@ impl SyntaxDefinition {
             include_str!("../../../assets/syntax/go.toml"),
             include_str!("../../../assets/syntax/html.toml"),
             include_str!("../../../assets/syntax/javascript.toml"),
+            include_str!("../../../assets/syntax/json.toml"),
             include_str!("../../../assets/syntax/markdown.toml"),
             include_str!("../../../assets/syntax/plain-text.toml"),
             include_str!("../../../assets/syntax/python.toml"),
@@ -286,3 +287,43 @@ impl SyntaxHighlighter {
             .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_all_builtin_syntaxes_compile() {
+        let builtins = SyntaxDefinition::builtins();
+        assert!(builtins.iter().any(|b| b.meta.name == "JSON"));
+        for def in builtins {
+            let name = def.meta.name.clone();
+            if let Err(e) = SyntaxHighlighter::new(def) {
+                panic!("Failed to compile syntax {}: {}", name, e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_json_syntax_highlighting() {
+        let builtins = SyntaxDefinition::builtins();
+        let json_def = builtins.into_iter().find(|b| b.meta.name == "JSON").unwrap();
+        let highlighter = SyntaxHighlighter::new(json_def).unwrap();
+
+        let line = r#"{"name": "zee", "count": 42, "valid": true}"#;
+        let spans = highlighter.highlight_line(line, LineState::Normal);
+        assert!(!spans.is_empty());
+        // Verify key, string, number, constant, punctuation are captured
+        let has_type = spans.iter().any(|s| s.token == TokenType::TypeName);
+        let has_string = spans.iter().any(|s| s.token == TokenType::String);
+        let has_number = spans.iter().any(|s| s.token == TokenType::Number);
+        let has_const = spans.iter().any(|s| s.token == TokenType::Constant);
+        let has_punct = spans.iter().any(|s| s.token == TokenType::Punctuation);
+        assert!(has_type);
+        assert!(has_string);
+        assert!(has_number);
+        assert!(has_const);
+        assert!(has_punct);
+    }
+}
+

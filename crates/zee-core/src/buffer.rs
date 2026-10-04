@@ -1882,6 +1882,20 @@ mod tests {
     }
 
     #[test]
+    fn test_syntax_detection_json() {
+        let temp_dir = std::env::temp_dir();
+        let json_file = temp_dir.join("test_syntax_sample.json");
+        std::fs::write(&json_file, r#"{"name": "zee", "fast": true}"#).unwrap();
+
+        let editor = Editor::from_file(&json_file).unwrap();
+        assert!(editor.syntax_highlighter.is_some());
+        assert_eq!(editor.syntax_highlighter.as_ref().unwrap().def.meta.name, "JSON");
+        assert_eq!(editor.line_tokens.len(), 1);
+        assert!(!editor.line_tokens[0].as_ref().unwrap().is_empty());
+        let _ = std::fs::remove_file(&json_file);
+    }
+
+    #[test]
     fn test_visual_col_helpers() {
         let mut editor = Editor::new();
         editor.insert(0, "a\tbc"); // a (0), \t (1-3), b (4), c (5)

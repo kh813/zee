@@ -560,7 +560,7 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
 
     let mut syntax_items = Vec::new();
     // In a real app we'd load these from core, but for now we'll hardcode or use builtins if available
-    for syntax in ["Plain Text", "Markdown", "Rust", "TOML", "Python", "Go", "Swift", "JavaScript", "HTML", "CSS", "XML"] {
+    for syntax in ["Plain Text", "Markdown", "Rust", "TOML", "JSON", "Python", "Go", "Swift", "JavaScript", "HTML", "CSS", "XML"] {
         syntax_items.push(MenuItem::action(
             syntax,
             SetSyntax { name: syntax.to_string() },

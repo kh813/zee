@@ -1,5 +1,41 @@
   # zee Todo List
 
+## Phase 23: Upcoming Roadmap & Features (Planned)
+
+### UI & Sidebar Refinements
+- [ ] **Configurable Sidebar Position (Left / Right)**:
+  - [ ] Support placing the sidebar on either the left or right side of the editor
+  - [ ] Default to **right** side (natural for macOS users, while configurable to left for Windows Explorer familiarity)
+  - [ ] Add `sidebar_position = "right"` (options: `"left"`, `"right"`) to `config.toml` and Preferences settings
+  - [ ] Update border styling (`border_l_1` when right, `border_r_1` when left) and coordinate calculations in `editor_view`
+- [ ] **Sidebar Vertical Split & File Properties**:
+  - [ ] Allow splitting the sidebar vertically into two panes (top/bottom)
+  - [ ] Top pane: Files tree / Outline tree
+  - [ ] Bottom pane: Active file properties (file name, full path, file size, last modified timestamp, encoding, line ending, permissions)
+- [ ] **Enhanced Code Outline**:
+  - [ ] In addition to Markdown headings (already implemented), display function/class/method outline tree for source code files (via WASM plugins or built-in grammar parsers) with click-to-jump
+
+### Config & Ecosystem
+- [x] **Configuration Persistence (`~/.config/zee/config.toml`)**:
+  - [x] Auto-load and write back runtime settings to `~/.config/zee/config.toml` (macOS/Linux) and `%APPDATA%\zee\config.toml` (Windows)
+- [ ] **Config & Plugins Export/Import**:
+  - [ ] Add menu actions to export configuration and installed plugins into an archive/file
+  - [ ] Add menu actions to import configuration and plugins
+
+### Plugin System & Management
+- [x] **Plugin Directory (`~/.config/zee/plugins/`)**:
+  - [x] Core `PluginManager` already scans and loads WASM plugins from `~/.config/zee/plugins/`
+- [ ] **Plugin Management UI**:
+  - [ ] Create a dedicated modal dialog/management screen to list, enable, disable, and view details of installed plugins
+- [ ] **Plugins Menu in Menu Bar**:
+  - [ ] Add top-level "Plugins" menu
+  - [ ] Dynamically populate commands provided by active plugins and execute them on the active buffer / selection
+
+### Editing & Selection Enhancements
+- [ ] **Rectangular / Column Selection (矩形選択)**:
+  - [ ] Support vertical column / box selection across multiple lines (`Alt + mouse drag` or visual block mode)
+  - [ ] Support column editing, multi-cursor insertion/deletion, and block cut/copy/paste (evaluate core implementation vs WASM plugin extensibility)
+
 ## Phase 22: GUI Font & Spacing and Theme Customization
 - [x] **GUI Font & Typography Customization (`zee-gui`)**:
   - [x] Add `font_family`, `font_size`, and `line_height` to `Config` for editor code area

@@ -151,7 +151,7 @@ impl Render for SidebarView {
                     .flex_grow()
                     .w_full()
                     .overflow_hidden()
-                    .py_1()
+                    .py_2()
                     .child(content)
             )
     }
@@ -256,7 +256,8 @@ impl SidebarView {
 
         if flat.is_empty() {
             return div()
-                .p_4()
+                .px_4()
+                .py_2()
                 .text_size(px(12.0))
                 .text_color(muted_fg)
                 .child("(No headings in this file)")

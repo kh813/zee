@@ -1,0 +1,25 @@
+[meta]
+name = "JSON"
+extensions = ["json"]
+
+[[rule]]
+token = "type_name"
+pattern = "\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\"\\s*:"
+
+[[rule]]
+token = "string"
+pattern = "\"[^\"\\\\]*(?:\\\\.[^\"\\\\]*)*\""
+
+[[rule]]
+token = "constant"
+pattern = "true|false|null"
+word_boundary = true
+
+[[rule]]
+token = "number"
+pattern = "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"
+word_boundary = true
+
+[[rule]]
+token = "punctuation"
+pattern = "[\\[\\]\\{\\},:]"

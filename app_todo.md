@@ -140,11 +140,26 @@ world plugin {
   - エディタ本体を起動せずに `cargo test` だけでプラグインロジックをテスト可能なモック環境。
 
 ### 6. 段階的実装ロードマップ
-- **Step 1**: WIT で最小限の `zee:plugin@0.2.0` world（バッファ読み書き＋コマンド 1 個）を定義。
-- **Step 2**: ホスト側で `wasmtime` (Component Model, fuel, StoreLimits, epoch, スレッド分離) の最小基盤を実装。
-- **Step 3**: 既存の `zee-plugin-text` を新しい WIT / Component Model 形式に移行し、互換性とパフォーマンスを検証。
-- **Step 4**: Manifest 権限モデルおよび WASI preopen によるセキュリティサンドボックスを適用。
-- **Step 5**: SDK（`zee-plugin-sdk`）とテンプレートを整備し、コミュニティへ公開。
+- [x] **Step 1: WIT 仕様の策定** (`crates/zee-core/wit/plugin.wit`):
+  - [x] `zee:plugin@0.2.0` package 定義
+  - [x] `buffer` interface（`buffer-info`, `edit`, `get-info`, `get-text-range`, `get-all-text`, `apply-edits`）
+  - [x] `outline` interface（`outline-node`, `get-outline`）
+  - [x] `plugin` world（`import buffer`, `export on-init`, `export on-command`, `export get-outline`）
+- [x] **Step 2: ホスト側（Wasmtime + Component Model）ランタイム基盤実装** (`crates/zee-core/src/component_plugin.rs`):
+  - [x] Wasmtime Component Model 統合 & `wasmtime::component::bindgen!` バインディング生成
+  - [x] 暴走防止: `consume_fuel(true)` による命令数制限 & `epoch_interruption(true)` (50ms バックグラウンドティッカー) によるタイムアウト中断
+  - [x] メモリ制限: `StoreLimits` による最大メモリ割り当てサイズ制御
+  - [x] スレッド分離: `execute_command_async` によるバックグラウンドワーカー実行（UI スレッドブロッキング回避）
+  - [x] バッファ境界保護: UTF-8 文字境界検証 & 範囲外チェック
+- [x] **Step 3: Component Model プラグインの検証 & 暴走・制限テスト**:
+  - [x] WAT による Component Model バイナリの生成と実行検証 (`test_component_command_execution`)
+  - [x] Fuel 枯渇による無限ループ自動停止テスト (`test_component_plugin_init_and_fuel_interruption`)
+  - [x] Epoch タイムアウトによる無限ループ強制中断テスト (`test_component_plugin_epoch_timeout`)
+  - [x] メモリ上限超過時のメモリ拡張拒否テスト (`test_store_limits_memory_allocation`)
+  - [x] 非同期実行 & メッセージパッシング応答テスト (`test_async_command_execution`)
+  - [x] 設計書 & 進捗記録の作成 (`docs/wasm_plugin_system_design.md`)
+- [ ] **Step 4**: Manifest 権限モデルおよび WASI preopen によるセキュリティサンドボックスを適用。
+- [ ] **Step 5**: SDK（`zee-plugin-sdk`）とテンプレートを整備し、コミュニティへ公開。
 
 ## Phase 22: GUI Font & Spacing and Theme Customization
 - [x] **GUI Font & Typography Customization (`zee-gui`)**:

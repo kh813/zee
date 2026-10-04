@@ -1,0 +1,37 @@
+package zee:plugin@0.2.0;
+
+interface buffer {
+    record edit {
+        start-byte: u32,
+        end-byte: u32,
+        new-text: string,
+    }
+
+    record buffer-info {
+        line-count: u32,
+        byte-length: u32,
+        path: option<string>,
+    }
+
+    get-info: func() -> buffer-info;
+    get-text-range: func(start-byte: u32, end-byte: u32) -> result<string, string>;
+    get-all-text: func() -> string;
+    apply-edits: func(edits: list<edit>) -> result<_, string>;
+}
+
+interface outline {
+    record outline-node {
+        title: string,
+        level: u32,
+        line: u32,
+    }
+}
+
+world plugin {
+    import buffer;
+    use outline.{outline-node};
+
+    export on-command: func(name: string) -> result<string, string>;
+    export get-outline: func() -> result<list<outline-node>, string>;
+    export on-init: func() -> result<_, string>;
+}

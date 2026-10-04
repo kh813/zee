@@ -7,6 +7,7 @@ pub mod theme;
 pub mod file_tree;
 pub mod outline;
 pub mod plugin;
+pub mod component_plugin;
 pub mod selfupdate;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

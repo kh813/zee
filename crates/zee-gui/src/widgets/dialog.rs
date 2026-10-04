@@ -145,6 +145,40 @@ impl Dialog {
     fn start_apply_update(&mut self, asset_url: String, cx: &mut Context<Self>) {
         self.update_status = Some(UpdateStatus::Downloading);
         cx.notify();
+
+        // Save session state so that tabs, cursor positions, root folder, and sidebar state are preserved after relaunch
+        let session = {
+            let ws = self.workspace.read(cx);
+            let mut files = Vec::new();
+            for editor in &ws.editors {
+                let unsaved_content = if editor.is_modified() || editor.path.is_none() {
+                    Some(editor.rope.to_string())
+                } else {
+                    None
+                };
+                files.push(zee_core::session::SessionEditorState {
+                    path: editor.path.clone(),
+                    cursor: editor.cursor,
+                    scroll_row: editor.scroll_row,
+                    is_modified: editor.is_modified(),
+                    unsaved_content,
+                });
+            }
+            let sidebar_tab = match ws.sidebar_tab {
+                crate::workspace::SidebarTab::Files => "files".to_string(),
+                crate::workspace::SidebarTab::Outline => "outline".to_string(),
+            };
+            zee_core::session::UpdateSession {
+                files,
+                active_index: ws.active_editor_index,
+                root_folder: Some(ws.file_tree.root_path.clone()),
+                expanded_folders: ws.file_tree.expanded_paths(),
+                sidebar_visible: ws.sidebar_visible,
+                sidebar_tab,
+            }
+        };
+        let _ = session.save();
+
         cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
@@ -171,6 +205,7 @@ impl Dialog {
                             }).detach();
                         }
                         Err(err) => {
+                            zee_core::session::UpdateSession::clear();
                             this.update_status = Some(UpdateStatus::Failed {
                                 error: err.to_string(),
                                 html_url: Some(format!("https://github.com/{}/releases", zee_core::selfupdate::GITHUB_REPO)),

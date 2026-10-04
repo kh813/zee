@@ -334,7 +334,10 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
     // Initial window or CLI argument paths
     let cli_paths: Vec<std::path::PathBuf> = std::env::args().skip(1).map(std::path::PathBuf::from).collect();
     if !cli_paths.is_empty() {
+        zee_core::session::UpdateSession::clear();
         open_paths(cli_paths, config.clone(), i18n.clone(), app);
+    } else if let Some(session) = zee_core::session::UpdateSession::load_and_clear() {
+        restore_session_window(session, config.clone(), i18n.clone(), app);
     } else {
         new_window(config.clone(), i18n.clone(), app);
     }
@@ -475,6 +478,85 @@ pub fn open_paths(paths: Vec<std::path::PathBuf>, config: Config, i18n: I18n, cx
                     opened_any = true;
                 }
             }
+            if opened_any {
+                w.update_outline();
+            }
+            w
+        });
+        cx.new(|cx| WindowView::new(config, i18n, workspace, window, cx))
+    }).expect("Failed to open window");
+}
+
+pub fn restore_session_window(session: zee_core::session::UpdateSession, config: Config, i18n: I18n, cx: &mut App) {
+    cx.activate(true);
+    let theme_to_use = if config.theme == "terminal-default" || config.theme.is_empty() {
+        match cx.window_appearance() {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => {
+                Theme::find_by_name("tokyo-night").unwrap_or_default()
+            }
+            WindowAppearance::Light | WindowAppearance::VibrantLight => {
+                Theme::find_by_name("catppuccin-latte").unwrap_or_default()
+            }
+        }
+    } else {
+        Theme::find_by_name(&config.theme).unwrap_or_default()
+    };
+
+    let options = centered_window_options(cx);
+    cx.open_window(options, move |window, cx| {
+        window.activate_window();
+        let workspace = cx.new(|_| {
+            let mut w = Workspace::new_with_root(config.clone(), session.root_folder.clone());
+            w.theme = theme_to_use;
+            w.sidebar_visible = session.sidebar_visible;
+            w.sidebar_tab = match session.sidebar_tab.as_str() {
+                "outline" => crate::workspace::SidebarTab::Outline,
+                _ => crate::workspace::SidebarTab::Files,
+            };
+            if !session.expanded_folders.is_empty() {
+                w.file_tree.restore_expanded_paths(&session.expanded_folders);
+            }
+
+            let mut opened_any = false;
+            for file_state in session.files {
+                let editor = if let Some(path) = &file_state.path {
+                    if let Ok(mut ed) = zee_core::buffer::Editor::from_file(path) {
+                        if let Some(unsaved) = &file_state.unsaved_content {
+                            ed.delete(0..ed.rope.len_chars());
+                            ed.insert(0, unsaved);
+                            ed.modified_since_save = file_state.is_modified;
+                        }
+                        Some(ed)
+                    } else if let Some(unsaved) = &file_state.unsaved_content {
+                        let mut ed = zee_core::buffer::Editor::new();
+                        ed.path = Some(path.clone());
+                        ed.insert(0, unsaved);
+                        ed.modified_since_save = file_state.is_modified;
+                        Some(ed)
+                    } else {
+                        None
+                    }
+                } else if let Some(unsaved) = &file_state.unsaved_content {
+                    let mut ed = zee_core::buffer::Editor::new();
+                    ed.insert(0, unsaved);
+                    ed.modified_since_save = file_state.is_modified;
+                    Some(ed)
+                } else {
+                    None
+                };
+
+                if let Some(mut ed) = editor {
+                    ed.cursor = file_state.cursor.min(ed.rope.len_chars());
+                    ed.scroll_row = file_state.scroll_row;
+                    w.add_editor(ed);
+                    opened_any = true;
+                }
+            }
+
+            if session.active_index < w.editors.len() {
+                w.active_editor_index = session.active_index;
+            }
+
             if opened_any {
                 w.update_outline();
             }

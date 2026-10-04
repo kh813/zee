@@ -92,6 +92,16 @@ impl FileTree {
         Self::refresh_node(&mut self.root_node, self.show_hidden);
     }
 
+    pub fn expanded_paths(&self) -> Vec<PathBuf> {
+        let mut list = Vec::new();
+        Self::collect_expanded(&self.root_node, &mut list);
+        list
+    }
+
+    pub fn restore_expanded_paths(&mut self, list: &[PathBuf]) {
+        Self::restore_expanded(&mut self.root_node, list, self.show_hidden);
+    }
+
     fn refresh_node(node: &mut FileTreeNode, show_hidden: bool) {
         if node.is_dir {
             let mut existing_expanded: Vec<PathBuf> = Vec::new();
@@ -112,13 +122,17 @@ impl FileTree {
     }
 
     fn restore_expanded(node: &mut FileTreeNode, list: &[PathBuf], show_hidden: bool) {
-        if node.is_dir && list.contains(&node.path) {
-            node.is_expanded = true;
-            if node.children.is_empty() {
-                Self::populate_children(node, show_hidden);
+        if node.is_dir {
+            if list.contains(&node.path) {
+                node.is_expanded = true;
+                if node.children.is_empty() {
+                    Self::populate_children(node, show_hidden);
+                }
             }
-            for child in &mut node.children {
-                Self::restore_expanded(child, list, show_hidden);
+            if node.is_expanded {
+                for child in &mut node.children {
+                    Self::restore_expanded(child, list, show_hidden);
+                }
             }
         }
     }
@@ -238,6 +252,35 @@ mod tests {
         tree.toggle_expand(&temp_dir.join("sub_dir"));
         let flat_expanded = tree.flatten();
         assert_eq!(flat_expanded.len(), 5);
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_tree_expanded_paths_roundtrip() {
+        let temp_dir = std::env::temp_dir().join("zee_test_expanded_paths");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("dir1").join("dir2")).unwrap();
+        fs::write(temp_dir.join("dir1").join("dir2").join("file.txt"), "hello").unwrap();
+
+        let mut tree = FileTree::new(&temp_dir, false);
+        // Expand dir1
+        tree.toggle_expand(&temp_dir.join("dir1"));
+        // Expand dir2
+        tree.toggle_expand(&temp_dir.join("dir1").join("dir2"));
+
+        let expanded = tree.expanded_paths();
+        assert!(expanded.contains(&temp_dir));
+        assert!(expanded.contains(&temp_dir.join("dir1")));
+        assert!(expanded.contains(&temp_dir.join("dir1").join("dir2")));
+
+        // Create a new fresh tree on same dir
+        let mut new_tree = FileTree::new(&temp_dir, false);
+        assert_eq!(new_tree.flatten().len(), 2); // root + dir1 (collapsed)
+
+        // Restore expanded paths
+        new_tree.restore_expanded_paths(&expanded);
+        assert_eq!(new_tree.flatten().len(), 4); // root + dir1 + dir2 + file.txt
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

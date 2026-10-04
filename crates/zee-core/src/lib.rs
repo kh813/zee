@@ -9,6 +9,7 @@ pub mod outline;
 pub mod plugin;
 pub mod component_plugin;
 pub mod selfupdate;
+pub mod session;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {

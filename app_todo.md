@@ -110,6 +110,39 @@
 
 ---
 
+## Phase 26: Selfupdate 後のセッション復元 (開いていたファイル・サイドパネル状態の維持)
+
+アプリケーションのセルフアップデート実行後、再起動時に以前開いていたファイルやサイドパネルの状態を忠実に復元する機能。
+
+### 実装内容
+- [x] **セッション状態データモデル (`zee_core::session::UpdateSession`)**:
+  - `SessionEditorState`:
+    - `path`: ファイルパス（新規未保存バッファは `None`）
+    - `cursor`: カーソル文字位置
+    - `scroll_row`: スクロール位置（行数）
+    - `is_modified`: 編集フラグ
+    - `unsaved_content`: 未保存バッファの内容（未保存状態でもテキストを損失しない）
+  - `UpdateSession`:
+    - `files`: 各エディタタブの状態一覧
+    - `active_index`: 再起動前に選択されていたアクティブタブの番号
+    - `root_folder`: 開いていたプロジェクト／ルートフォルダ
+    - `expanded_folders`: ファイルツリーで展開中だったディレクトリ一覧
+    - `sidebar_visible`: サイドパネルの開閉状態（表示/非表示）
+    - `sidebar_tab`: サイドパネルの選択タブ（`Files` または `Outline`）
+  - `save()` / `load_and_clear()` / `clear()`:
+    - `~/.config/zee/update_session.json`（Windows は `%APPDATA%\zee\update_session.json`）へ JSON 保存・読み込み後即時安全削除。
+
+- [x] **アップデート適用時のセッション保存 (`crates/zee-gui/src/widgets/dialog.rs`)**:
+  - アップデートダイアログの「今すぐ更新」実行時に Workspace から現在の状態を抽出し保存
+  - ダウンロード・適用が失敗した場合は `UpdateSession::clear()` で残骸を自動破棄
+
+- [x] **再起動起動時の復元ハンドラ (`crates/zee-gui/src/app.rs`)**:
+  - `setup_app` 時に CLI 引数がない場合、`UpdateSession::load_and_clear()` が存在すれば `restore_session_window` を起動
+  - ファイルツリーの展開フォルダ（`restore_expanded_paths`）、タブ並び順、アクティブタブ、カーソル・スクロール位置、アウトライン（`update_outline`）を自動復元
+  - CLI 引数が指定された場合は CLI 引数を優先し、一時セッションを消去
+
+---
+
 ## Phase 24: 次世代 WASM プラグインシステム アーキテクチャ計画 (Component Model / WIT 移行)
 
 現在実装済みの wasmi ベースの軽量スタック型 WASM 実装を発展させ、Wasmtime Component Model / WIT に基づく本格的・安全・高機能な拡張機能エコシステムへ刷新する計画。

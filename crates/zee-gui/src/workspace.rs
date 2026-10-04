@@ -359,5 +359,122 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }
+
+    #[test]
+    fn test_workspace_session_restoration() {
+        let temp_dir = std::env::temp_dir().join("zee_test_session_restore");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(temp_dir.join("subdir")).unwrap();
+        let file1 = temp_dir.join("file1.rs");
+        let file2 = temp_dir.join("file2.md");
+        std::fs::write(&file1, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+        std::fs::write(&file2, "# Title\n\nContent here\n").unwrap();
+
+        let session = zee_core::session::UpdateSession {
+            files: vec![
+                zee_core::session::SessionEditorState {
+                    path: Some(file1.clone()),
+                    cursor: 12,
+                    scroll_row: 1,
+                    is_modified: false,
+                    unsaved_content: None,
+                },
+                zee_core::session::SessionEditorState {
+                    path: Some(file2.clone()),
+                    cursor: 4,
+                    scroll_row: 0,
+                    is_modified: true,
+                    unsaved_content: Some("# Title\n\nModified draft\n".to_string()),
+                },
+                zee_core::session::SessionEditorState {
+                    path: None,
+                    cursor: 3,
+                    scroll_row: 0,
+                    is_modified: true,
+                    unsaved_content: Some("untitled scratch".to_string()),
+                },
+            ],
+            active_index: 1,
+            root_folder: Some(temp_dir.clone()),
+            expanded_folders: vec![temp_dir.join("subdir")],
+            sidebar_visible: true,
+            sidebar_tab: "outline".to_string(),
+        };
+
+        // Simulate restore logic
+        let mut w = Workspace::new_with_root(Config::default(), session.root_folder.clone());
+        w.sidebar_visible = session.sidebar_visible;
+        w.sidebar_tab = match session.sidebar_tab.as_str() {
+            "outline" => SidebarTab::Outline,
+            _ => SidebarTab::Files,
+        };
+        if !session.expanded_folders.is_empty() {
+            w.file_tree.restore_expanded_paths(&session.expanded_folders);
+        }
+
+        for file_state in session.files {
+            let editor = if let Some(path) = &file_state.path {
+                if let Ok(mut ed) = zee_core::buffer::Editor::from_file(path) {
+                    if let Some(unsaved) = &file_state.unsaved_content {
+                        ed.delete(0..ed.rope.len_chars());
+                        ed.insert(0, unsaved);
+                        ed.modified_since_save = file_state.is_modified;
+                    }
+                    Some(ed)
+                } else {
+                    None
+                }
+            } else if let Some(unsaved) = &file_state.unsaved_content {
+                let mut ed = Editor::new();
+                ed.insert(0, unsaved);
+                ed.modified_since_save = file_state.is_modified;
+                Some(ed)
+            } else {
+                None
+            };
+
+            if let Some(mut ed) = editor {
+                ed.cursor = file_state.cursor.min(ed.rope.len_chars());
+                ed.scroll_row = file_state.scroll_row;
+                w.add_editor(ed);
+            }
+        }
+
+        if session.active_index < w.editors.len() {
+            w.active_editor_index = session.active_index;
+        }
+
+        w.update_outline();
+
+        // Verify restoration
+        assert_eq!(w.editors.len(), 3);
+        assert_eq!(w.active_editor_index, 1);
+        assert!(w.sidebar_visible);
+        assert_eq!(w.sidebar_tab, SidebarTab::Outline);
+        assert_eq!(w.file_tree.root_path, temp_dir);
+        assert!(w.file_tree.expanded_paths().contains(&temp_dir.join("subdir")));
+
+        // Tab 0
+        assert_eq!(w.editors[0].path, Some(file1));
+        assert_eq!(w.editors[0].cursor, 12);
+        assert_eq!(w.editors[0].scroll_row, 1);
+        assert!(!w.editors[0].is_modified());
+
+        // Tab 1 (active, modified, outline updated)
+        assert_eq!(w.editors[1].path, Some(file2));
+        assert_eq!(w.editors[1].cursor, 4);
+        assert!(w.editors[1].is_modified());
+        assert_eq!(w.editors[1].rope.to_string(), "# Title\n\nModified draft\n");
+        assert!(!w.outline_nodes.is_empty());
+        assert_eq!(w.outline_nodes[0].title, "Title");
+
+        // Tab 2 (untitled scratch)
+        assert_eq!(w.editors[2].path, None);
+        assert_eq!(w.editors[2].cursor, 3);
+        assert!(w.editors[2].is_modified());
+        assert_eq!(w.editors[2].rope.to_string(), "untitled scratch");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
 

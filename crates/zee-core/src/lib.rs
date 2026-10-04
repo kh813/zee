@@ -114,6 +114,16 @@ pub enum LineEnding {
     Cr,
 }
 
+impl LineEnding {
+    pub fn name(&self) -> &'static str {
+        match self {
+            LineEnding::Lf => "LF",
+            LineEnding::Crlf => "CRLF",
+            LineEnding::Cr => "CR",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViMode {
     Normal,

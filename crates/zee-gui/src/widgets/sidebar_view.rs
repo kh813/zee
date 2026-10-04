@@ -4,21 +4,46 @@ use crate::widgets::{led_color_to_gpui, ui_font_family, with_alpha};
 use zee_core::outline::{self, FlatOutlineItem, OutlineNode};
 use zee_core::file_tree::FlatFileItem;
 use zee_core::buffer::Editor;
+use zee_core::i18n::I18n;
+
+#[derive(Clone)]
+struct ActiveFileProps {
+    file_name: String,
+    size_str: String,
+    lines: usize,
+    chars: usize,
+    encoding: &'static str,
+    line_ending: &'static str,
+}
+
+fn format_file_size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
 
 pub struct SidebarView {
     pub workspace: Entity<Workspace>,
+    pub i18n: I18n,
     pub focus_handle: FocusHandle,
+    pub show_properties: bool,
 }
 
 impl SidebarView {
-    pub fn new(workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: Entity<Workspace>, i18n: I18n, cx: &mut Context<Self>) -> Self {
         cx.observe(&workspace, |_, _, cx| {
             cx.notify();
         }).detach();
 
         Self {
             workspace,
+            i18n,
             focus_handle: cx.focus_handle(),
+            show_properties: true,
         }
     }
 
@@ -38,7 +63,7 @@ impl SidebarView {
 
 impl Render for SidebarView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (active_tab, is_right_sidebar, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes) = {
+        let (active_tab, is_right_sidebar, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props) = {
             let workspace = self.workspace.read(cx);
             let theme = &workspace.theme;
 
@@ -56,7 +81,28 @@ impl Render for SidebarView {
             let active_path = workspace.active_editor().and_then(|e| e.path.clone());
             let outline_nodes = workspace.outline_nodes.clone();
 
-            (active_tab, is_right_sidebar, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes)
+            let active_props = workspace.active_editor().map(|editor| {
+                let file_name = editor.path.as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| self.i18n.get("status.no_name").to_string());
+
+                let bytes = editor.path.as_ref()
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .map(|m| m.len() as usize)
+                    .unwrap_or_else(|| editor.rope.len_bytes());
+
+                ActiveFileProps {
+                    file_name,
+                    size_str: format_file_size(bytes),
+                    lines: editor.rope.len_lines(),
+                    chars: editor.rope.len_chars(),
+                    encoding: editor.encoding.name(),
+                    line_ending: editor.line_ending.name(),
+                }
+            });
+
+            (active_tab, is_right_sidebar, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props)
         };
 
         // Render header tabs
@@ -152,6 +198,15 @@ impl Render for SidebarView {
             container = container.border_r_1();
         }
 
+        let properties_panel = self.render_file_properties(
+            active_props,
+            text_color,
+            muted_fg,
+            border_color,
+            hover_bg,
+            cx,
+        );
+
         container
             .child(header)
             .child(
@@ -162,6 +217,7 @@ impl Render for SidebarView {
                     .py_2()
                     .child(content)
             )
+            .child(properties_panel)
     }
 }
 
@@ -338,5 +394,108 @@ impl SidebarView {
                 })
             )
             .into_any_element()
+    }
+
+    fn render_file_properties(
+        &self,
+        props: Option<ActiveFileProps>,
+        text_color: Rgba,
+        muted_fg: Rgba,
+        border_color: Rgba,
+        hover_bg: Rgba,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_expanded = self.show_properties;
+        let title = self.i18n.get("sidebar.properties").to_string();
+
+        let header = div()
+            .h(px(26.0))
+            .w_full()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px_2()
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                this.show_properties = !this.show_properties;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .text_color(muted_fg)
+                            .child(if is_expanded { "▼" } else { "▶" })
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(muted_fg)
+                            .child(title)
+                    )
+            );
+
+        let mut panel = div()
+            .w_full()
+            .border_t_1()
+            .border_color(border_color)
+            .child(header);
+
+        if is_expanded {
+            let body = if let Some(p) = props {
+                let add_row = |label: String, val: String| {
+                    div()
+                        .h(px(20.0))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .text_size(px(11.0))
+                        .child(
+                            div()
+                                .text_color(muted_fg)
+                                .child(label)
+                        )
+                        .child(
+                            div()
+                                .text_color(text_color)
+                                .font_weight(FontWeight::MEDIUM)
+                                .truncate()
+                                .max_w(px(135.0))
+                                .child(val)
+                        )
+                };
+
+                div()
+                    .px_2p5()
+                    .pb_2()
+                    .pt_1()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(add_row(self.i18n.get("sidebar.prop_file").to_string(), p.file_name))
+                    .child(add_row(self.i18n.get("sidebar.prop_size").to_string(), p.size_str))
+                    .child(add_row(self.i18n.get("sidebar.prop_lines").to_string(), format!("{}", p.lines)))
+                    .child(add_row(self.i18n.get("sidebar.prop_chars").to_string(), format!("{}", p.chars)))
+                    .child(add_row(self.i18n.get("sidebar.prop_encoding").to_string(), p.encoding.to_string()))
+                    .child(add_row(self.i18n.get("sidebar.prop_line_ending").to_string(), p.line_ending.to_string()))
+            } else {
+                div()
+                    .px_2p5()
+                    .py_2()
+                    .text_size(px(11.0))
+                    .text_color(muted_fg)
+                    .child(self.i18n.get("sidebar.no_file").to_string())
+            };
+
+            panel = panel.child(body);
+        }
+
+        panel
     }
 }

@@ -178,6 +178,15 @@ impl I18n {
         m.insert("dialog.file_browser.modified".to_string(), "Modified".to_string());
         m.insert("dialog.file_browser.filename".to_string(), "File name".to_string());
 
+        m.insert("sidebar.properties".to_string(), "File Properties".to_string());
+        m.insert("sidebar.prop_file".to_string(), "File".to_string());
+        m.insert("sidebar.prop_size".to_string(), "Size".to_string());
+        m.insert("sidebar.prop_lines".to_string(), "Lines".to_string());
+        m.insert("sidebar.prop_chars".to_string(), "Characters".to_string());
+        m.insert("sidebar.prop_encoding".to_string(), "Encoding".to_string());
+        m.insert("sidebar.prop_line_ending".to_string(), "Line Ending".to_string());
+        m.insert("sidebar.no_file".to_string(), "(No active file)".to_string());
+
         m.insert("menu.view.syntax_plain".to_string(), "Plain Text".to_string());
 
         m.insert("menu.app.preferences".to_string(), "Preferences…".to_string());
@@ -303,6 +312,15 @@ impl I18n {
         m.insert("dialog.file_browser.size".to_string(), "サイズ".to_string());
         m.insert("dialog.file_browser.modified".to_string(), "更新日時".to_string());
         m.insert("dialog.file_browser.filename".to_string(), "ファイル名".to_string());
+
+        m.insert("sidebar.properties".to_string(), "ファイル情報".to_string());
+        m.insert("sidebar.prop_file".to_string(), "ファイル".to_string());
+        m.insert("sidebar.prop_size".to_string(), "サイズ".to_string());
+        m.insert("sidebar.prop_lines".to_string(), "行数".to_string());
+        m.insert("sidebar.prop_chars".to_string(), "文字数".to_string());
+        m.insert("sidebar.prop_encoding".to_string(), "エンコーディング".to_string());
+        m.insert("sidebar.prop_line_ending".to_string(), "改行コード".to_string());
+        m.insert("sidebar.no_file".to_string(), "（ファイルなし）".to_string());
 
         m.insert("menu.view.syntax_plain".to_string(), "標準テキスト".to_string());
 

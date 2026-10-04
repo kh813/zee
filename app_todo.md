@@ -35,9 +35,11 @@
   - [ ] Dynamically populate commands provided by active plugins and execute them on the active buffer / selection
 
 ### Editing & Selection Enhancements
-- [ ] **Rectangular / Column Selection (矩形選択)**:
-  - [ ] Support vertical column / box selection across multiple lines (`Alt + mouse drag` or visual block mode)
-  - [ ] Support column editing, multi-cursor insertion/deletion, and block cut/copy/paste (evaluate core implementation vs WASM plugin extensibility)
+- [ ] **Rectangular / Column Selection (矩形選択 - 今後予定)**:
+  - [ ] Core `ViMode::VisualBlock` foundation is already implemented in `zee-core` (`Ctrl+v`, `delete_visual_block`, `insert_visual_block`, `y`/`d`/`c`/`I`/`A`)
+  - [ ] Add standard GUI mouse rectangular selection via `Alt (Option) + mouse drag` (accessible even when Vi mode is OFF)
+  - [ ] Implement rectangular block paste (`Block Paste`): pasting rectangular multi-line text into a column without inserting standard line breaks
+  - [ ] Support real-time multi-cursor typing across selected lines during visual block insertion
 
 ## Phase 22: GUI Font & Spacing and Theme Customization
 - [x] **GUI Font & Typography Customization (`zee-gui`)**:

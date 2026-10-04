@@ -35,7 +35,7 @@ pub struct WindowView {
 impl WindowView {
     pub fn new(config: Config, i18n: I18n, workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| EditorView::new(workspace.clone(), cx));
-        let sidebar = cx.new(|cx| SidebarView::new(workspace.clone(), cx));
+        let sidebar = cx.new(|cx| SidebarView::new(workspace.clone(), i18n.clone(), cx));
         let tab_bar = cx.new(|cx| TabBar::new(workspace.clone(), cx));
         let status_bar = cx.new(|cx| StatusBar::new(workspace.clone(), cx));
         let find_panel = cx.new(|cx| FindPanel::new(workspace.clone(), cx));

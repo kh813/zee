@@ -62,8 +62,8 @@ impl Render for StatusBar {
         let hover_pill_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.12);
         let modified_color = led_color_to_gpui(theme.syntax.keyword.unwrap_or(theme.editor.cursor));
 
-        div()
-            .h(px(26.0))
+        let status_row = div()
+            .h(px(24.0))
             .w_full()
             .flex()
             .items_center()
@@ -120,17 +120,6 @@ impl Render for StatusBar {
                     } else {
                         None
                     })
-                    .children(workspace.vi_cmd.as_ref().map(|cmd| {
-                        div()
-                            .px_1p5()
-                            .py(px(1.0))
-                            .rounded_sm()
-                            .text_size(px(11.0))
-                            .bg(gpui::rgb(0x1565c0))
-                            .text_color(gpui::rgb(0xffffff))
-                            .font_family(crate::widgets::mono_font_family())
-                            .child(cmd.clone())
-                    }))
             )
             .child(
                 div()
@@ -189,7 +178,77 @@ impl Render for StatusBar {
                             .rounded_sm()
                             .child(syntax)
                     )
-            )
+            );
+
+        if !vi_mode_enabled {
+            return div().w_full().child(status_row);
+        }
+
+        // --- Bottom Row: Vim Command Line & Feedback Message Area ---
+        let cmdline_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_bg), 0.95);
+        let cmdline_border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.15);
+
+        let cmdline_content = if let Some(ref cmd) = workspace.vi_cmd {
+            div()
+                .flex()
+                .items_center()
+                .gap_0p5()
+                .child(
+                    div()
+                        .font_family(crate::widgets::mono_font_family())
+                        .text_size(px(12.0))
+                        .text_color(led_color_to_gpui(theme.ui.status_bar_fg))
+                        .child(cmd.clone())
+                )
+                .child(
+                    div()
+                        .w(px(7.0))
+                        .h(px(14.0))
+                        .bg(led_color_to_gpui(theme.editor.cursor))
+                )
+        } else if let Some((ref msg, is_err)) = workspace.vi_message {
+            let msg_color = if is_err {
+                gpui::rgb(0xff5555)
+            } else {
+                led_color_to_gpui(theme.ui.status_bar_fg)
+            };
+            div()
+                .font_family(crate::widgets::mono_font_family())
+                .text_size(px(12.0))
+                .text_color(msg_color)
+                .child(msg.clone())
+        } else {
+            let hint = match editor.vi_mode {
+                zee_core::ViMode::Insert => "-- INSERT --",
+                zee_core::ViMode::Visual => "-- VISUAL --",
+                zee_core::ViMode::VisualLine => "-- VISUAL LINE --",
+                zee_core::ViMode::VisualBlock => "-- VISUAL BLOCK --",
+                zee_core::ViMode::Normal => "",
+            };
+            div()
+                .font_family(crate::widgets::mono_font_family())
+                .text_size(px(12.0))
+                .text_color(with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.7))
+                .child(hint)
+        };
+
+        let cmdline_row = div()
+            .h(px(22.0))
+            .w_full()
+            .flex()
+            .items_center()
+            .px_3()
+            .bg(cmdline_bg)
+            .border_t_1()
+            .border_color(cmdline_border)
+            .child(cmdline_content);
+
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(status_row)
+            .child(cmdline_row)
     }
 }
 

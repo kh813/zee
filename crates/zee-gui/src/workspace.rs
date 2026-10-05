@@ -22,6 +22,7 @@ pub struct Workspace {
     pub outline_nodes: Vec<OutlineNode>,
     pub plugin_manager: zee_core::plugin::PluginManager,
     pub vi_cmd: Option<String>,
+    pub vi_message: Option<(String, bool)>,
 }
 
 impl Workspace {
@@ -55,8 +56,10 @@ impl Workspace {
             outline_nodes: Vec::new(),
             plugin_manager,
             vi_cmd: None,
+            vi_message: None,
         }
     }
+
 
     pub fn set_root_path(&mut self, path: PathBuf) {
         self.file_tree.set_root(path);
@@ -405,7 +408,10 @@ mod tests {
 
         workspace.add_editor(Editor::new());
         assert_eq!(workspace.editors[2].vi_mode, zee_core::ViMode::Insert);
+        assert_eq!(workspace.vi_cmd, None);
+        assert_eq!(workspace.vi_message, None);
     }
+
 
     #[test]
     fn test_open_folder_reveals_sidebar_files_tab() {

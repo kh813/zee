@@ -5,6 +5,7 @@ pub struct Layout {
     pub tab_height: u16,
     pub panel_height: u16,
     pub status_height: u16,
+    pub cmdline_height: u16,
     pub sidebar_width: u16,
     pub gutter_width: u16,
     pub menu_bar_items: Vec<(String, u16, u16)>, // (label, col_start, col_end)
@@ -23,6 +24,7 @@ impl Layout {
             tab_height,
             panel_height: 0,
             status_height: 1,
+            cmdline_height: 0,
             sidebar_width: 0,
             gutter_width: 0,
             menu_bar_items: Vec::new(),
@@ -38,8 +40,11 @@ impl Layout {
         active_buffer_idx: usize,
         show_line_numbers: bool,
         show_sidebar: bool,
+        vi_mode: bool,
     ) {
+        self.cmdline_height = if vi_mode { 1 } else { 0 };
         self.tab_height = if self.height >= 12 { 3 } else { 1 };
+
         // Recompute menu items
         self.menu_bar_items.clear();
         let mut current_x = 1;
@@ -93,7 +98,8 @@ impl Layout {
             return (0, 0, 0, 0);
         }
         let y = self.menu_height + self.tab_height + self.panel_height;
-        let h = self.height.saturating_sub(y).saturating_sub(self.status_height);
+        let bottom_offset = self.status_height + self.cmdline_height;
+        let h = self.height.saturating_sub(y).saturating_sub(bottom_offset);
         (0, y, self.sidebar_width, h)
     }
 
@@ -101,7 +107,8 @@ impl Layout {
         let x = self.sidebar_width + self.gutter_width;
         let y = self.menu_height + self.tab_height + self.panel_height;
         let w = self.width.saturating_sub(self.sidebar_width + self.gutter_width);
-        let h = self.height.saturating_sub(y).saturating_sub(self.status_height);
+        let bottom_offset = self.status_height + self.cmdline_height;
+        let h = self.height.saturating_sub(y).saturating_sub(bottom_offset);
         (x, y, w, h)
     }
 
@@ -109,7 +116,8 @@ impl Layout {
         let x = self.sidebar_width;
         let y = self.menu_height + self.tab_height + self.panel_height;
         let w = self.gutter_width;
-        let h = self.height.saturating_sub(y).saturating_sub(self.status_height);
+        let bottom_offset = self.status_height + self.cmdline_height;
+        let h = self.height.saturating_sub(y).saturating_sub(bottom_offset);
         (x, y, w, h)
     }
 
@@ -126,7 +134,12 @@ impl Layout {
     }
 
     pub fn status_bounds(&self) -> (u16, u16, u16, u16) {
-        (0, self.height.saturating_sub(self.status_height), self.width, self.status_height)
+        let bottom_offset = self.status_height + self.cmdline_height;
+        (0, self.height.saturating_sub(bottom_offset), self.width, self.status_height)
+    }
+
+    pub fn cmdline_bounds(&self) -> (u16, u16, u16, u16) {
+        (0, self.height.saturating_sub(self.cmdline_height), self.width, self.cmdline_height)
     }
 
     pub fn dialog_bounds(&self, dims: (u16, u16)) -> (u16, u16, u16, u16) {
@@ -136,3 +149,4 @@ impl Layout {
         (x, y, dw, dh)
     }
 }
+

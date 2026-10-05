@@ -88,7 +88,228 @@ impl EditorView {
         led_color_to_gpui(color.unwrap_or(theme.editor.foreground))
     }
 
-    fn handle_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn execute_ex_command(cmd_raw: &str, workspace: &Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) {
+        let ex_cmd = zee_core::parse_ex_command(cmd_raw);
+        match ex_cmd {
+            zee_core::ExCommand::Write { path, force: _ } => {
+                workspace.update(cx, |w, cx| {
+                    let res = if let Some(ref p) = path {
+                        w.save_as_active_editor(p)
+                    } else {
+                        if let Some(ed) = w.active_editor() {
+                            if ed.path.is_none() {
+                                w.vi_message = Some(("E32: No file name".into(), true));
+                                cx.notify();
+                                return;
+                            }
+                        }
+                        w.save_active_editor()
+                    };
+                    match res {
+                        Ok(()) => {
+                            let name = path.as_deref().unwrap_or_else(|| {
+                                w.active_editor()
+                                    .and_then(|e| e.path.as_ref())
+                                    .and_then(|p| p.file_name())
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("file")
+                            });
+                            w.vi_message = Some((format!("\"{}\" written", name), false));
+                        }
+                        Err(e) => {
+                            w.vi_message = Some((format!("E212: Can't open file for writing: {}", e), true));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::Quit { force } => {
+                let is_modified = workspace.read(cx).active_editor().map(|e| e.is_modified()).unwrap_or(false);
+                if is_modified && !force {
+                    workspace.update(cx, |w, cx| {
+                        w.vi_message = Some(("E37: No write since last change (add ! to override)".into(), true));
+                        cx.notify();
+                    });
+                } else {
+                    window.dispatch_action(Box::new(crate::app::CloseTab {}), cx);
+                }
+            }
+            zee_core::ExCommand::WriteQuit { path, force: _ } => {
+                let mut write_ok = false;
+                workspace.update(cx, |w, cx| {
+                    let res = if let Some(ref p) = path {
+                        w.save_as_active_editor(p)
+                    } else {
+                        if let Some(ed) = w.active_editor() {
+                            if ed.path.is_none() {
+                                w.vi_message = Some(("E32: No file name".into(), true));
+                                cx.notify();
+                                return;
+                            }
+                        }
+                        w.save_active_editor()
+                    };
+                    match res {
+                        Ok(()) => {
+                            write_ok = true;
+                        }
+                        Err(e) => {
+                            w.vi_message = Some((format!("E212: Can't open file for writing: {}", e), true));
+                        }
+                    }
+                    cx.notify();
+                });
+                if write_ok {
+                    window.dispatch_action(Box::new(crate::app::CloseTab {}), cx);
+                }
+            }
+            zee_core::ExCommand::QuitAll { force } => {
+                let any_modified = workspace.read(cx).has_modified_buffers();
+                if any_modified && !force {
+                    workspace.update(cx, |w, cx| {
+                        w.vi_message = Some(("E37: No write since last change (add ! to override)".into(), true));
+                        cx.notify();
+                    });
+                } else {
+                    window.dispatch_action(Box::new(crate::app::Quit {}), cx);
+                }
+            }
+            zee_core::ExCommand::WriteQuitAll { force: _ } => {
+                let mut all_ok = true;
+                workspace.update(cx, |w, cx| {
+                    for ed in &mut w.editors {
+                        if ed.is_modified() {
+                            let trim = w.config.trim_trailing_whitespace;
+                            let ensure_nl = w.config.ensure_final_newline;
+                            ed.cleanup_on_save(trim, ensure_nl);
+                            if let Err(e) = ed.save() {
+                                w.vi_message = Some((format!("Error saving: {}", e), true));
+                                all_ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    cx.notify();
+                });
+                if all_ok {
+                    window.dispatch_action(Box::new(crate::app::Quit {}), cx);
+                }
+            }
+            zee_core::ExCommand::Edit { path, force } => {
+                if let Some(p) = path {
+                    match zee_core::buffer::Editor::from_file(&p) {
+                        Ok(ed) => {
+                            workspace.update(cx, |w, cx| {
+                                w.add_editor(ed);
+                                w.vi_message = Some((format!("\"{}\" opened", p), false));
+                                cx.notify();
+                            });
+                        }
+                        Err(e) => {
+                            workspace.update(cx, |w, cx| {
+                                w.vi_message = Some((format!("E484: Can't open file: {}", e), true));
+                                cx.notify();
+                            });
+                        }
+                    }
+                } else if force {
+                    workspace.update(cx, |w, cx| {
+                        if let Some(ed) = w.active_editor_mut() {
+                            match ed.reload_from_disk() {
+                                Ok(()) => {
+                                    w.vi_message = Some(("Reloaded from disk".into(), false));
+                                }
+                                Err(e) => {
+                                    w.vi_message = Some((format!("Failed to reload: {}", e), true));
+                                }
+                            }
+                        }
+                        cx.notify();
+                    });
+                }
+            }
+            zee_core::ExCommand::GoToLine(line_num) => {
+                workspace.update(cx, |w, cx| {
+                    let word_wrap = w.config.word_wrap;
+                    if let Some(editor) = w.active_editor_mut() {
+                        let max_line = editor.line_count().saturating_sub(1);
+                        let target_line = line_num.saturating_sub(1).min(max_line);
+                        editor.cursor = editor.line_col_to_char(target_line, 0);
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                        editor.ensure_cursor_visible(30, 80, word_wrap);
+                    }
+                    w.vi_message = None;
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::NoHighlight => {
+                workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.find_results.clear();
+                        editor.current_match_idx = None;
+                        editor.search_status = None;
+                    }
+                    w.vi_message = None;
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::BufferNext => {
+                workspace.update(cx, |w, cx| {
+                    w.next_tab();
+                    w.vi_message = None;
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::BufferPrev => {
+                workspace.update(cx, |w, cx| {
+                    w.prev_tab();
+                    w.vi_message = None;
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::Set { option, value: _ } => {
+                workspace.update(cx, |w, cx| {
+                    match option.as_str() {
+                        "nu" | "number" => {
+                            w.config.line_numbers = true;
+                            w.vi_message = Some(("number enabled".into(), false));
+                        }
+                        "nonu" | "nonumber" => {
+                            w.config.line_numbers = false;
+                            w.vi_message = Some(("number disabled".into(), false));
+                        }
+                        "wrap" => {
+                            w.config.word_wrap = true;
+                            w.vi_message = Some(("wrap enabled".into(), false));
+                        }
+                        "nowrap" => {
+                            w.config.word_wrap = false;
+                            w.vi_message = Some(("wrap disabled".into(), false));
+                        }
+                        _ => {
+                            w.vi_message = Some((format!("Unknown option: {}", option), true));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::Empty => {
+                workspace.update(cx, |w, cx| {
+                    w.vi_message = None;
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::Unknown(cmd) => {
+                workspace.update(cx, |w, cx| {
+                    w.vi_message = Some((format!("E492: Not an editor command: :{}", cmd), true));
+                    cx.notify();
+                });
+            }
+        }
+    }
+
+    fn handle_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let raw_key = &event.keystroke.key;
         let shift = event.keystroke.modifiers.shift;
         let control = event.keystroke.modifiers.control;
@@ -107,6 +328,18 @@ impl EditorView {
         };
         let key = &normalized_key;
 
+        // In vi mode (Normal or Visual), detect colon to enter command line
+        let is_colon_trigger = key == ":" || (raw_key == ";" && shift) || raw_key == ":" || key == "：";
+        if vi_mode_enabled && current_vi_mode != Some(zee_core::ViMode::Insert) && self.workspace.read(cx).vi_cmd.is_none() && is_colon_trigger && !control && !cmd {
+            self.ignore_next_text_input = true;
+            self.workspace.update(cx, |w, cx| {
+                w.vi_cmd = Some(":".into());
+                w.vi_message = None;
+                cx.notify();
+            });
+            return;
+        }
+
         if vi_mode_enabled {
             if self.workspace.read(cx).vi_cmd.is_some() {
                 match key.as_str() {
@@ -119,51 +352,13 @@ impl EditorView {
                     }
                     "enter" => {
                         let cmd_opt = self.workspace.read(cx).vi_cmd.clone();
-                        if let Some(cmd_raw) = cmd_opt {
-                            let cmd_normalized: String = cmd_raw.chars().map(zee_core::normalize_vi_char).collect();
-                            let cmd = cmd_normalized.trim();
-                            let inner = cmd.strip_prefix(':').unwrap_or(cmd).trim();
-                            if let Ok(line_num) = inner.parse::<usize>() {
-                                self.workspace.update(cx, |w, cx| {
-                                    if let Some(editor) = w.active_editor_mut() {
-                                        let max_line = editor.line_count().saturating_sub(1);
-                                        let target_line = line_num.saturating_sub(1).min(max_line);
-                                        editor.cursor = editor.line_col_to_char(target_line, 0);
-                                        editor.selection = None;
-                                        editor.selection_anchor = None;
-                                    }
-                                    cx.notify();
-                                });
-                            } else {
-                                match cmd {
-                                    ":w" => {
-                                        cx.dispatch_action(&crate::app::Save {});
-                                    }
-                                    ":q" => {
-                                        cx.dispatch_action(&crate::app::CloseTab {});
-                                    }
-                                    ":wq" | ":x" => {
-                                        cx.dispatch_action(&crate::app::Save {});
-                                        cx.dispatch_action(&crate::app::CloseTab {});
-                                    }
-                                    ":q!" => {
-                                        cx.dispatch_action(&crate::app::CloseTab {});
-                                    }
-                                    ":qa" => {
-                                        cx.dispatch_action(&crate::app::Quit {});
-                                    }
-                                    ":wqa" => {
-                                        cx.dispatch_action(&crate::app::Save {});
-                                        cx.dispatch_action(&crate::app::Quit {});
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
                         self.workspace.update(cx, |w, cx| {
                             w.vi_cmd = None;
                             cx.notify();
                         });
+                        if let Some(cmd_raw) = cmd_opt {
+                            Self::execute_ex_command(&cmd_raw, &self.workspace, window, cx);
+                        }
                         return;
                     }
                     "backspace" => {
@@ -180,19 +375,29 @@ impl EditorView {
                         return;
                     }
                     _ => {
-                        if key.chars().count() == 1 && !control && !cmd {
-                            self.workspace.update(cx, |w, cx| {
-                                if let Some(cmd) = &mut w.vi_cmd {
-                                    cmd.push_str(key);
-                                }
-                                cx.notify();
-                            });
-                            return;
+                        if !control && !cmd {
+                            let char_to_add = if key.as_str() == "space" {
+                                " "
+                            } else if key.chars().count() == 1 {
+                                key.as_str()
+                            } else {
+                                ""
+                            };
+                            if !char_to_add.is_empty() {
+                                self.workspace.update(cx, |w, cx| {
+                                    if let Some(cmd) = &mut w.vi_cmd {
+                                        cmd.push_str(char_to_add);
+                                    }
+                                    cx.notify();
+                                });
+                                return;
+                            }
                         }
                         return;
                     }
                 }
             }
+
 
             // Handle Ctrl+V / Cmd+V in Normal/Visual mode for Visual Block
             if (control || cmd) && key.as_str() == "v" {

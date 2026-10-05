@@ -75,6 +75,7 @@ pub struct App {
     pub sidebar: crate::widgets::sidebar::Sidebar,
     pub vi_cmd: String,
     pub is_vi_cmd_mode: bool,
+    pub vi_message: Option<(String, bool)>,
     pub pending_g: bool,
     pub pending_d: bool,
     pub pending_y: bool,
@@ -167,7 +168,7 @@ impl App {
         let menus = Self::build_menus(&i18n, &config, buffers.get(active_buffer), &themes, &syntax_defs);
 
         let mut layout = Layout::new(width, height);
-        layout.recompute(&menus, &buffers, active_buffer, config.line_numbers, config.sidebar);
+        layout.recompute(&menus, &buffers, active_buffer, config.line_numbers, config.sidebar, config.vi_mode);
 
         let root_dir = root_dir.unwrap_or_else(zee_core::file_tree::user_root_dir);
         let sidebar = crate::widgets::sidebar::Sidebar::new(root_dir, config.sidebar);
@@ -208,6 +209,7 @@ impl App {
             sidebar,
             vi_cmd: String::new(),
             is_vi_cmd_mode: false,
+            vi_message: None,
             pending_g: false,
             pending_d: false,
             pending_y: false,
@@ -458,8 +460,10 @@ impl App {
             self.active_buffer,
             self.config.line_numbers,
             self.sidebar.visible,
+            self.config.vi_mode,
         );
     }
+
 
     pub fn update_active_outline(&mut self) {
         if let Some(buffer) = self.buffers.get(self.active_buffer) {
@@ -1491,10 +1495,12 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char(':') => {
+            KeyCode::Char(':') | KeyCode::Char('：') => {
                 self.is_vi_cmd_mode = true;
                 self.vi_cmd = ":".to_string();
+                self.vi_message = None;
             }
+
             KeyCode::Char('g') => {
                 if self.pending_g {
                     if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -1735,7 +1741,13 @@ impl App {
                     buffer.vi_mode = zee_core::ViMode::Insert;
                 }
             }
+            KeyCode::Char(':') | KeyCode::Char('：') => {
+                self.is_vi_cmd_mode = true;
+                self.vi_cmd = ":".to_string();
+                self.vi_message = None;
+            }
             _ => {
+
                 match code {
                     KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down |
                     KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
@@ -1755,36 +1767,213 @@ impl App {
                 self.vi_cmd.clear();
             }
             KeyCode::Enter => {
-                let normalized_cmd: String = self.vi_cmd.chars().map(zee_core::normalize_vi_char).collect();
-                let cmd = normalized_cmd.trim();
-                let inner = cmd.strip_prefix(':').unwrap_or(cmd).trim();
-                if let Ok(line_num) = inner.parse::<usize>() {
-                    if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                        let max_line = buffer.line_count().saturating_sub(1);
-                        let target_line = line_num.saturating_sub(1).min(max_line);
-                        buffer.cursor = buffer.line_col_to_char(target_line, 0);
-                        buffer.selection = None;
-                        buffer.selection_anchor = None;
-                    }
-                } else {
-                    match cmd {
-                        ":w" => self.perform_action(Action::Save),
-                        ":q" => self.perform_action(Action::Exit),
-                        ":wq" | ":x" => {
-                            self.perform_action(Action::Save);
-                            self.perform_action(Action::Exit);
-                        }
-                        ":q!" => self.perform_action(Action::Exit),
-                        ":qa" => self.perform_action(Action::Exit),
-                        ":wqa" => {
-                            self.perform_action(Action::Save);
-                            self.perform_action(Action::Exit);
-                        }
-                        _ => {}
-                    }
-                }
+                let cmd_raw = self.vi_cmd.clone();
                 self.is_vi_cmd_mode = false;
                 self.vi_cmd.clear();
+
+                let ex_cmd = zee_core::parse_ex_command(&cmd_raw);
+                match ex_cmd {
+                    zee_core::ExCommand::Write { path, force: _ } => {
+                        if let Some(ref p) = path {
+                            if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                let trim = self.config.trim_trailing_whitespace;
+                                let ensure_nl = self.config.ensure_final_newline;
+                                buffer.cleanup_on_save(trim, ensure_nl);
+                                match buffer.save_as(p) {
+                                    Ok(()) => {
+                                        self.vi_message = Some((format!("\"{}\" [New] written", p), false));
+                                    }
+                                    Err(e) => {
+                                        self.vi_message = Some((format!("E212: Can't open file for writing: {}", e), true));
+                                    }
+                                }
+                            }
+                        } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                            if buffer.path.is_none() {
+                                self.vi_message = Some(("E32: No file name".into(), true));
+                            } else {
+                                let trim = self.config.trim_trailing_whitespace;
+                                let ensure_nl = self.config.ensure_final_newline;
+                                buffer.cleanup_on_save(trim, ensure_nl);
+                                match buffer.save() {
+                                    Ok(()) => {
+                                        let name = buffer.path.as_ref()
+                                            .and_then(|p| p.file_name())
+                                            .map(|s| s.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "file".to_string());
+                                        self.vi_message = Some((format!("\"{}\" written", name), false));
+                                    }
+                                    Err(e) => {
+                                        self.vi_message = Some((format!("E212: Can't open file for writing: {}", e), true));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    zee_core::ExCommand::Quit { force } => {
+                        let is_modified = self.buffers.get(self.active_buffer).map(|b| b.is_modified()).unwrap_or(false);
+                        if is_modified && !force {
+                            self.vi_message = Some(("E37: No write since last change (add ! to override)".into(), true));
+                        } else if self.buffers.len() <= 1 {
+                            self.running = false;
+                        } else {
+                            self.perform_action(Action::Close);
+                        }
+                    }
+                    zee_core::ExCommand::WriteQuit { path, force: _ } => {
+                        let mut write_ok = false;
+                        if let Some(ref p) = path {
+                            if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                let trim = self.config.trim_trailing_whitespace;
+                                let ensure_nl = self.config.ensure_final_newline;
+                                buffer.cleanup_on_save(trim, ensure_nl);
+                                if buffer.save_as(p).is_ok() {
+                                    write_ok = true;
+                                } else {
+                                    self.vi_message = Some((format!("E212: Can't open file for writing: {}", p), true));
+                                }
+                            }
+                        } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                            if buffer.path.is_none() {
+                                self.vi_message = Some(("E32: No file name".into(), true));
+                            } else {
+                                let trim = self.config.trim_trailing_whitespace;
+                                let ensure_nl = self.config.ensure_final_newline;
+                                buffer.cleanup_on_save(trim, ensure_nl);
+                                if buffer.save().is_ok() {
+                                    write_ok = true;
+                                } else {
+                                    self.vi_message = Some(("Error saving file".into(), true));
+                                }
+                            }
+                        }
+                        if write_ok {
+                            if self.buffers.len() <= 1 {
+                                self.running = false;
+                            } else {
+                                self.perform_action(Action::Close);
+                            }
+                        }
+                    }
+
+                    zee_core::ExCommand::QuitAll { force } => {
+                        let any_modified = self.buffers.iter().any(|b| b.is_modified());
+                        if any_modified && !force {
+                            self.vi_message = Some(("E37: No write since last change (add ! to override)".into(), true));
+                        } else {
+                            self.running = false;
+                        }
+                    }
+                    zee_core::ExCommand::WriteQuitAll { force: _ } => {
+                        let mut all_ok = true;
+                        for b in &mut self.buffers {
+                            if b.is_modified() {
+                                let trim = self.config.trim_trailing_whitespace;
+                                let ensure_nl = self.config.ensure_final_newline;
+                                b.cleanup_on_save(trim, ensure_nl);
+                                if b.save().is_err() {
+                                    self.vi_message = Some(("Error saving buffer".into(), true));
+                                    all_ok = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if all_ok {
+                            self.running = false;
+                        }
+                    }
+                    zee_core::ExCommand::Edit { path, force } => {
+                        if let Some(p) = path {
+                            let path_buf = std::path::PathBuf::from(&p);
+                            if let Ok(editor) = zee_core::buffer::Editor::from_file(&path_buf) {
+                                self.buffers.push(editor);
+                                self.active_buffer = self.buffers.len() - 1;
+                                self.recompute_layout();
+                                self.update_active_outline();
+                                self.vi_message = Some((format!("\"{}\" opened", p), false));
+                            } else {
+                                self.vi_message = Some((format!("E484: Can't open file: {}", p), true));
+                            }
+                        } else if force {
+                            if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                match buffer.reload_from_disk() {
+                                    Ok(()) => {
+                                        self.vi_message = Some(("Reloaded from disk".into(), false));
+                                    }
+                                    Err(e) => {
+                                        self.vi_message = Some((format!("Failed to reload: {}", e), true));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    zee_core::ExCommand::GoToLine(line_num) => {
+                        if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                            let max_line = buffer.line_count().saturating_sub(1);
+                            let target_line = line_num.saturating_sub(1).min(max_line);
+                            buffer.cursor = buffer.line_col_to_char(target_line, 0);
+                            buffer.selection = None;
+                            buffer.selection_anchor = None;
+                        }
+                        self.vi_message = None;
+                    }
+                    zee_core::ExCommand::NoHighlight => {
+                        if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                            buffer.find_results.clear();
+                            buffer.current_match_idx = None;
+                            buffer.search_status = None;
+                        }
+                        self.vi_message = None;
+                    }
+                    zee_core::ExCommand::BufferNext => {
+                        if !self.buffers.is_empty() {
+                            self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
+                            self.recompute_layout();
+                            self.update_active_outline();
+                        }
+                        self.vi_message = None;
+                    }
+                    zee_core::ExCommand::BufferPrev => {
+                        if !self.buffers.is_empty() {
+                            self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
+                            self.recompute_layout();
+                            self.update_active_outline();
+                        }
+                        self.vi_message = None;
+                    }
+
+                    zee_core::ExCommand::Set { option, value: _ } => {
+                        match option.as_str() {
+                            "nu" | "number" => {
+                                self.config.line_numbers = true;
+                                self.recompute_layout();
+                                self.vi_message = Some(("number enabled".into(), false));
+                            }
+                            "nonu" | "nonumber" => {
+                                self.config.line_numbers = false;
+                                self.recompute_layout();
+                                self.vi_message = Some(("number disabled".into(), false));
+                            }
+                            "wrap" => {
+                                self.config.word_wrap = true;
+                                self.vi_message = Some(("wrap enabled".into(), false));
+                            }
+                            "nowrap" => {
+                                self.config.word_wrap = false;
+                                self.vi_message = Some(("wrap disabled".into(), false));
+                            }
+                            _ => {
+                                self.vi_message = Some((format!("Unknown option: {}", option), true));
+                            }
+                        }
+                    }
+                    zee_core::ExCommand::Empty => {
+                        self.vi_message = None;
+                    }
+                    zee_core::ExCommand::Unknown(cmd) => {
+                        self.vi_message = Some((format!("E492: Not an editor command: :{}", cmd), true));
+                    }
+                }
             }
             KeyCode::Char(c) => {
                 self.vi_cmd.push(zee_core::normalize_vi_char(c));
@@ -1800,6 +1989,7 @@ impl App {
             _ => {}
         }
     }
+
 
     fn handle_editor_key(&mut self, key: KeyEvent) {
         let buffer = if let Some(b) = self.buffers.get_mut(self.active_buffer) {
@@ -2919,7 +3109,10 @@ impl App {
                 }
                 self.is_vi_cmd_mode = false;
                 self.vi_cmd.clear();
+                self.vi_message = None;
+                self.recompute_layout();
             }
+
             Action::ToggleTrimTrailingWhitespace => {
                 self.config.trim_trailing_whitespace = !self.config.trim_trailing_whitespace;
                 let _ = Config::write_key("trim_trailing_whitespace", &self.config.trim_trailing_whitespace.to_string());
@@ -3312,6 +3505,10 @@ impl App {
         }
         self.render_editor();
         self.render_status();
+        if self.config.vi_mode {
+            self.render_command_line();
+        }
+
 
         // Render open dropdowns
         self.dropdown_rects.clear();
@@ -4403,6 +4600,64 @@ impl App {
         }
     }
 
+    fn render_command_line(&mut self) {
+        let (x, y, w, h) = self.layout.cmdline_bounds();
+        if h == 0 {
+            return;
+        }
+
+        let bg = self.to_ct_color(self.theme.ui.status_bar_bg);
+        let fg = self.to_ct_color(self.theme.ui.status_bar_fg);
+
+        // Fill background
+        for dx in 0..w {
+            self.renderer.set_cell(x + dx, y, Cell { ch: ' ', bg, ..Default::default() });
+        }
+
+        if self.is_vi_cmd_mode {
+            let mut cur_x = x;
+            for c in self.vi_cmd.chars() {
+                if cur_x >= x + w { break; }
+                let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+                self.renderer.set_cell(cur_x, y, Cell { ch: c, bg, fg, width: cw as u8, ..Default::default() });
+                cur_x += cw as u16;
+            }
+            // Draw block cursor
+            if cur_x < x + w {
+                self.renderer.set_cell(cur_x, y, Cell { ch: ' ', bg: fg, fg: bg, ..Default::default() });
+            }
+        } else if let Some((ref msg, is_err)) = self.vi_message {
+            let msg_fg = if is_err {
+                crossterm::style::Color::Red
+            } else {
+                fg
+            };
+            let mut cur_x = x;
+            for c in msg.chars() {
+                if cur_x >= x + w { break; }
+                let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+                self.renderer.set_cell(cur_x, y, Cell { ch: c, bg, fg: msg_fg, width: cw as u8, ..Default::default() });
+                cur_x += cw as u16;
+            }
+        } else if let Some(buf) = self.buffers.get(self.active_buffer) {
+            let hint = match buf.vi_mode {
+                zee_core::ViMode::Insert => "-- INSERT --",
+                zee_core::ViMode::Visual => "-- VISUAL --",
+                zee_core::ViMode::VisualLine => "-- VISUAL LINE --",
+                zee_core::ViMode::VisualBlock => "-- VISUAL BLOCK --",
+                zee_core::ViMode::Normal => "",
+            };
+            let mut cur_x = x;
+            for c in hint.chars() {
+                if cur_x >= x + w { break; }
+                let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+                self.renderer.set_cell(cur_x, y, Cell { ch: c, bg, fg, width: cw as u8, ..Default::default() });
+                cur_x += cw as u16;
+            }
+        }
+    }
+
+
     fn render_too_small(&self, stdout: &mut Stdout) -> Result<()> {
         execute!(
             stdout,
@@ -4741,6 +4996,42 @@ mod tests {
         assert_eq!(app.buffers.len(), 1);
         assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert, "Initial buffer should be in Insert mode");
     }
+
+    #[test]
+    fn test_vi_mode_ex_commands() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.vi_mode = true;
+        app.recompute_layout();
+        app.buffers[0].vi_mode = zee_core::ViMode::Normal;
+        app.buffers[0].insert(0, "Line 1\nLine 2\nLine 3\nLine 4\nLine 5\n");
+
+        // 1. Jump to line via :3
+        app.handle_key(make_key(KeyCode::Char(':')));
+        assert!(app.is_vi_cmd_mode);
+        app.handle_key(make_key(KeyCode::Char('3')));
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(!app.is_vi_cmd_mode);
+        let (line, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line, 2); // 0-based index for line 3
+
+        // 2. Set number option via :set nu
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "set nu".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.config.line_numbers);
+        assert_eq!(app.vi_message, Some(("number enabled".into(), false)));
+
+        // 3. Unknown command feedback
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "foo".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.vi_message, Some(("E492: Not an editor command: :foo".into(), true)));
+    }
 }
+
 
 

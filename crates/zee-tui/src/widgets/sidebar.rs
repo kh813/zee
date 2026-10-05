@@ -77,8 +77,7 @@ impl Sidebar {
     }
 
     pub fn update_outline(&mut self, text: &str, lang_or_ext: &str) {
-        let nodes = self.plugin_manager.parse_outline(lang_or_ext, text)
-            .unwrap_or_else(|| outline::parse_markdown_outline(text));
+        let nodes = outline::extract_outline(Some(&mut self.plugin_manager), lang_or_ext, text);
         self.outline_nodes = nodes;
         let flat = self.flatten_outline();
         if !flat.is_empty() && self.selected_outline_idx >= flat.len() {

@@ -13,10 +13,22 @@ Whether launching `Zee.app` on your desktop or running `zee` over SSH in a termi
 ## Highlights & Features
 
 - **Dual GUI & TUI Experience**: Native hardware-accelerated desktop GUI (`zeeg` on macOS, Windows, and Linux) and terminal TUI (`zee`) sharing 100% feature and shortcut parity.
-- **Sidebar (File Tree & Outline)**:
-  - Collapsible sidebar with directory tree browser and code outline tree.
+- **Sidebar (File Tree & Multi-Language Outline)**:
+  - Collapsible sidebar with directory tree browser and code symbol outline tree.
+  - Multi-language outline navigation: **Markdown**, **Rust**, **Python**, **Go**, **JSON**, **HTML**, and **CSS** supported out of the box, with plugin extension support.
+  - Smooth vertical and horizontal scrolling across deep folder trees and complex symbol structures.
   - Position configurable on either the **left** or **right** side of the editor.
-  - Split sidebar panel showing active file properties (size, line count, encoding, line ending).
+- **Starter File Templates**:
+  - Quickly scaffold new projects via `File > New from Template` (Rust bin/lib, Python, Go, HTML5, Markdown, Shell).
+  - Built-in macro interpolation (`{filename}`, `{date}`, `{year}`, `{author}`, `{cursor}`).
+  - User-extensible template directory support (`~/.config/zee/templates/`).
+- **Mouse Rectangular & Column Selection**:
+  - Hold `Alt` (`Option` on macOS) + drag to select rectangular code blocks.
+  - Multi-line block copy, cut, paste, deletion, and simultaneous column editing.
+- **Productivity & Workflow Refinements**:
+  - Direct CLI line jumps: `zee file.rs:42` or `zee +42 file.rs`.
+  - In-app `Reload File` with unsaved change safety prompts (`⌘Shift+R` / `Ctrl+Shift+R`).
+  - Persistent `Open Recent` file history.
 - **Extensible WASM Plugin System**:
   - Sandboxed WebAssembly plugin runtime supporting text manipulation commands and custom outline providers.
   - Dedicated in-app **Plugin Manager** to install, inspect, and manage plugins.
@@ -104,9 +116,11 @@ cd zee
 ### Desktop GUI
 - **macOS**: Launch `Zee.app` from Applications or Spotlight.
 - **Windows / Linux**: Run `zeeg [FILE...]` or launch via application launcher.
+- **Direct Line Jump**: `zeeg src/main.rs:42` or `zeeg +42 src/main.rs`.
 
 ### Terminal TUI / Remote (SSH)
 - Run `zee [FILE...]` in any terminal emulator.
+- **Direct Line Jump**: `zee src/main.rs:42` or `zee +42 src/main.rs`.
 
 For a complete reference of keyboard shortcuts, menus, and configuration, see the [User Manual](MANUAL.md).
 

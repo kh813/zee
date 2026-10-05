@@ -121,8 +121,46 @@ zee file1.txt file2.txt  # Open multiple files in tabs
 | :--- | :--- |
 | `zee` | Opens with a single empty `[No Name]` buffer |
 | `zee myfile.txt` | Opens `myfile.txt`; if it does not exist, creates an empty buffer pre-named `myfile.txt` (not written to disk until you save) |
+| `zee myfile.txt:42` | Opens `myfile.txt` and jumps cursor directly to line 42 |
+| `zee +42 myfile.txt` | Alternative syntax to open `myfile.txt` and jump directly to line 42 |
 | `zee a.txt b.txt` | Opens both files in separate tabs; first tab is active |
 | `zee /some/dir` | Shows an error dialog (`"..." is a directory`) and opens an empty buffer |
+
+### Advanced File Operations
+
+- **Reload File (`⌘Shift+R` / `Ctrl+Shift+R`)**:
+  Reloads the active file from disk. If there are unsaved local modifications, a warning dialog prompts you to confirm discarding changes.
+- **Open Recent**:
+  Access recently opened files via `File > Open Recent`. File history is preserved in `~/.config/zee/recent_files.json`. Choose `Clear History` to purge the list.
+- **New from Template**:
+  Create new files instantly pre-populated with standard skeletons via `File > New from Template`.
+  - Built-in templates: Rust Binary, Rust Library, Python Script, Go Application, HTML5 Webpage, Markdown Document, Shell Script.
+  - Automatically expands `{filename}`, `{date}`, `{year}`, `{author}`, and sets initial cursor position at `{cursor}`.
+  - Custom templates: Place `.tmpl` or text files in `~/.config/zee/templates/` (or choose `File > New from Template > Open Templates Directory...`).
+
+### Sidebar: File Tree & Multi-Language Outline
+
+Toggle the sidebar with `View > [x] Sidebar` or `Ctrl+B` / `⌘B`:
+- **Files Tab**:
+  Interactive file tree explorer for the workspace directory. Supports folder expansion, click-to-open, and smooth vertical/horizontal scrolling.
+- **Outline Tab**:
+  Fast code symbol navigator. Automatically recognizes and extracts code structures:
+  - **Markdown**: Heading hierarchy (`#`, `##`, etc.).
+  - **Rust**: Modules (`mod`), structs, enums, impl blocks, and functions (`fn`).
+  - **Python**: Classes (`class`) and functions/methods (`def`).
+  - **Go**: Structs, interfaces (`type`), functions, and methods (`func`).
+  - **JSON**: Key hierarchy and nested objects/arrays.
+  - **HTML**: `<title>` and heading tags (`<h1>`–`<h6>`).
+  - **CSS**: `@media` rules and top-level selectors.
+  - *Extensible*: Additional language parsers or overrides can be loaded via WebAssembly plugins.
+
+### Mouse Block (Rectangular) Selection
+
+In the desktop GUI, hold the `Alt` key (Option on macOS) while dragging the mouse:
+- Initiates **Visual Block** rectangular selection across multiple lines and columns.
+- Supports multi-line block Copy (`⌘C` / `Ctrl+C`), Cut (`⌘X` / `Ctrl+X`), and Paste (`⌘V` / `Ctrl+V`).
+- Typing characters replaces the rectangular block across all selected lines simultaneously.
+- Pressing `Backspace` or `Delete` deletes the rectangular block.
 
 ### UI Layout
 
@@ -168,8 +206,11 @@ zee file1.txt file2.txt  # Open multiple files in tabs
 | Action | Shortcut |
 | :--- | :--- |
 | New Tab | `Ctrl+T` (`⌘T` on macOS) |
+| New from Template… | `File > New from Template` |
 | New Window (GUI) | `Ctrl+N` (`⌘N` on macOS) |
 | Open… | `Ctrl+O` (`⌘O` on macOS) |
+| Open Recent | `File > Open Recent` |
+| Reload File | `Ctrl+Shift+R` (`⌘Shift+R` on macOS) |
 | Save | `Ctrl+S` (`⌘S` on macOS) |
 | Save As… | `Ctrl+Shift+S` (`⌘Shift+S` on macOS) |
 | Close Tab | `Ctrl+W` (`⌘W` on macOS) |
@@ -259,6 +300,7 @@ Toggle Vi Mode with `Ctrl+I` (`⌘I` on macOS) or via `View > [x] Vi Mode`.
 | :--- | :--- |
 | Click | Move cursor |
 | Click + drag | Select text |
+| Alt (Option) + click + drag | Rectangular block selection (GUI) |
 | Double-click | Select word |
 | Triple-click | Select line |
 | Shift + click | Extend selection |

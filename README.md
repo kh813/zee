@@ -15,7 +15,7 @@ Whether launching `Zee.app` on your desktop or running `zee` over SSH in a termi
 - **Dual GUI & TUI Experience**: Native hardware-accelerated desktop GUI (`zeeg` on macOS, Windows, and Linux) and terminal TUI (`zee`) sharing 100% feature and shortcut parity.
 - **Sidebar (File Tree & Multi-Language Outline)**:
   - Collapsible sidebar with directory tree browser and code symbol outline tree.
-  - Multi-language outline navigation: **Markdown**, **Rust**, **Python**, **Go**, **JSON**, **HTML**, and **CSS** supported out of the box, with plugin extension support.
+  - Multi-language outline navigation: **Markdown**, **Rust**, **Python**, **Go**, **JSON**, **YAML**, **Shell (bash/sh)**, **HTML**, and **CSS** supported out of the box, with plugin extension support.
   - Smooth vertical and horizontal scrolling across deep folder trees and complex symbol structures.
   - Position configurable on either the **left** or **right** side of the editor.
 - **Starter File Templates**:
@@ -27,6 +27,7 @@ Whether launching `Zee.app` on your desktop or running `zee` over SSH in a termi
   - Multi-line block copy, cut, paste, deletion, and simultaneous column editing.
 - **Productivity & Workflow Refinements**:
   - Direct CLI line jumps: `zee file.rs:42` or `zee +42 file.rs`.
+  - Format & auto-cleanup on save: automatically trims trailing whitespace and ensures a single trailing newline (can be toggled on/off via the `Edit` menu).
   - In-app `Reload File` with unsaved change safety prompts (`⌘Shift+R` / `Ctrl+Shift+R`).
   - Persistent `Open Recent` file history.
 - **Extensible WASM Plugin System**:
@@ -47,7 +48,7 @@ Whether launching `Zee.app` on your desktop or running `zee` over SSH in a termi
 - **Internationalization (i18n)**:
   - English and Japanese (日本語) native UI translation.
 - **Fast Syntax Highlighting**:
-  - Highlighting for Rust, Markdown, Python, Go, JSON, TOML, YAML, HTML, CSS, JavaScript/TypeScript, and more.
+  - Highlighting for Rust, Markdown, Python, Go, JSON, TOML, YAML, HTML, CSS, JavaScript/TypeScript, Shell, and more.
 - **Optional Vi Mode**:
   - Modal editing (`Normal`, `Insert`, `Visual`, `VisualBlock`) for Vi/Vim power users.
 - **Remote SSH & OSC 52 Clipboard**:
@@ -63,10 +64,11 @@ Pre-compiled standalone packages and installers are available on the [Releases p
 
 | Platform | Type | File Name | Notes |
 | :--- | :--- | :--- | :--- |
-| **macOS (Apple Silicon)** | GUI App | `zeeg-macos-arm64.zip` | Extract and drag `Zee.app` to `/Applications` |
-| **macOS (Apple Silicon)** | Terminal TUI | `zee-macos-arm64.tar.gz` | Standalone `zee` terminal binary |
-| **Windows (x86-64)** | GUI & TUI | `zee-windows-x64.zip` | Contains `zeeg.exe` (GUI) and `zee.exe` (TUI) |
-| **Linux (x86-64)** | GUI & TUI | `zeeg-linux-x64.tar.gz` / `zee-linux-x64.tar.gz` | Linux 64-bit desktop GUI and terminal binaries |
+| **macOS (Apple Silicon)** | Native GUI App | `zeeg-macos-arm64.zip` | Extract and drag `Zee.app` to `/Applications` |
+| **Windows (x86-64)** | Native GUI App | `zeeg-windows-x64.zip` | Standalone `zeeg.exe` Windows 64-bit desktop GUI |
+| **Linux (x86-64)** | Terminal CLI / TUI | `zee-linux-x64.zip` | Standalone `zee` Linux 64-bit terminal binary |
+
+> **Note on Extended Support Builds**: Binaries for Linux GUI (`zeeg`), macOS Terminal CLI (`zee`), Windows ARM64 (`zeeg.exe`), and Linux ARM64 are available on-demand via GitHub Actions Extended Support Releases or buildable directly from source.
 
 #### macOS Gatekeeper Note
 On macOS, downloaded applications outside the App Store may show a warning: *"Zee.app cannot be opened because the developer cannot be verified"*.

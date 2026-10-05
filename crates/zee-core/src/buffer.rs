@@ -131,6 +131,41 @@ impl Editor {
         Ok(editor)
     }
 
+    pub fn reload_from_disk(&mut self) -> Result<()> {
+        let path = self.path.as_ref().ok_or_else(|| anyhow::anyhow!("Buffer has no associated file path"))?;
+        let mut file = File::open(path)?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+
+        let (encoding, content) = Self::decode_bytes(&bytes);
+
+        let line_ending = if content.contains("\r\n") {
+            LineEnding::Crlf
+        } else if content.contains('\r') {
+            LineEnding::Cr
+        } else {
+            LineEnding::Lf
+        };
+
+        self.rope = Rope::from_str(&content);
+        self.encoding = encoding;
+        self.line_ending = line_ending;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        self.saved_undo_len = 0;
+        self.modified_since_save = false;
+        self.cursor = self.cursor.min(self.rope.len_chars());
+        self.selection_anchor = None;
+        self.selection = None;
+
+        let line_count = self.line_count();
+        self.line_states = vec![crate::syntax::LineState::Normal; line_count];
+        self.line_tokens = vec![None; line_count];
+        self.update_line_states(0, line_count);
+
+        Ok(())
+    }
+
     pub fn detect_syntax(path: &Path) -> Option<crate::syntax::SyntaxHighlighter> {
         let ext = path.extension()?.to_str()?;
         let syntax_defs = crate::syntax::SyntaxDefinition::builtins();
@@ -2635,6 +2670,30 @@ mod tests {
                 assert_ne!(last_char, '（', "Line {} in pixel wrap must not end with '（'", i);
             }
         }
+    }
+
+    #[test]
+    fn test_editor_reload_from_disk() {
+        let temp_file = std::env::temp_dir().join("zee_test_reload.txt");
+        std::fs::write(&temp_file, "Initial disk content\nLine 2").unwrap();
+
+        let mut editor = Editor::from_file(&temp_file).unwrap();
+        assert_eq!(editor.rope.to_string(), "Initial disk content\nLine 2");
+        assert!(!editor.is_modified());
+
+        // Modify buffer in editor
+        editor.insert(0, "Changed: ");
+        assert!(editor.is_modified());
+
+        // Overwrite disk file from outside
+        std::fs::write(&temp_file, "External update from git\nNew line").unwrap();
+
+        // Reload
+        editor.reload_from_disk().unwrap();
+        assert_eq!(editor.rope.to_string(), "External update from git\nNew line");
+        assert!(!editor.is_modified());
+
+        let _ = std::fs::remove_file(temp_file);
     }
 }
 

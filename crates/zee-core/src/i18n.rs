@@ -84,6 +84,10 @@ impl I18n {
         m.insert("menu.file.new".to_string(), "New".to_string());
         m.insert("menu.file.open".to_string(), "Open…".to_string());
         m.insert("menu.file.open_folder".to_string(), "Open Folder…".to_string());
+        m.insert("menu.file.open_recent".to_string(), "Open Recent".to_string());
+        m.insert("menu.file.clear_recent".to_string(), "Clear Recent".to_string());
+        m.insert("menu.file.no_recent".to_string(), "No Recent Files".to_string());
+        m.insert("menu.file.reload".to_string(), "Reload File".to_string());
         m.insert("menu.file.save".to_string(), "Save".to_string());
         m.insert("menu.file.save_as".to_string(), "Save As…".to_string());
         m.insert("menu.file.close".to_string(), "Close".to_string());
@@ -246,6 +250,10 @@ impl I18n {
         m.insert("menu.file.new".to_string(), "新規作成".to_string());
         m.insert("menu.file.open".to_string(), "開く…".to_string());
         m.insert("menu.file.open_folder".to_string(), "フォルダを開く…".to_string());
+        m.insert("menu.file.open_recent".to_string(), "最近開いたファイル".to_string());
+        m.insert("menu.file.clear_recent".to_string(), "履歴を消去".to_string());
+        m.insert("menu.file.no_recent".to_string(), "履歴なし".to_string());
+        m.insert("menu.file.reload".to_string(), "ファイルを再読み込み".to_string());
         m.insert("menu.file.save".to_string(), "保存".to_string());
         m.insert("menu.file.save_as".to_string(), "名前を付けて保存…".to_string());
         m.insert("menu.file.close".to_string(), "閉じる".to_string());

@@ -28,6 +28,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-shift-s", SaveAs {}, None),
         #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-r", ReloadFile {}, None),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-w", CloseTab {}, None),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-q", Quit {}, None),
@@ -100,6 +102,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         KeyBinding::new("ctrl-s", Save {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-shift-s", SaveAs {}, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-r", ReloadFile {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-w", CloseTab {}, None),
         #[cfg(not(target_os = "macos"))]
@@ -332,10 +336,11 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
     app.activate(true);
 
     // Initial window or CLI argument paths
-    let cli_paths: Vec<std::path::PathBuf> = std::env::args().skip(1).map(std::path::PathBuf::from).collect();
-    if !cli_paths.is_empty() {
+    let raw_args: Vec<String> = std::env::args().skip(1).collect();
+    let cli_targets = zee_core::cli::parse_file_targets(&raw_args);
+    if !cli_targets.is_empty() {
         zee_core::session::UpdateSession::clear();
-        open_paths(cli_paths, config.clone(), i18n.clone(), app);
+        open_file_targets(cli_targets, config.clone(), i18n.clone(), app);
     } else if let Some(session) = zee_core::session::UpdateSession::load_and_clear() {
         restore_session_window(session, config.clone(), i18n.clone(), app);
     } else {
@@ -436,7 +441,7 @@ pub fn new_window(config: Config, i18n: I18n, cx: &mut App) {
     }).expect("Failed to open window");
 }
 
-pub fn open_paths(paths: Vec<std::path::PathBuf>, config: Config, i18n: I18n, cx: &mut App) {
+pub fn open_file_targets(targets: Vec<zee_core::cli::FileTarget>, config: Config, i18n: I18n, cx: &mut App) {
     cx.activate(true);
     let theme_to_use = if config.theme == "terminal-default" || config.theme.is_empty() {
         match cx.window_appearance() {
@@ -456,15 +461,15 @@ pub fn open_paths(paths: Vec<std::path::PathBuf>, config: Config, i18n: I18n, cx
         window.activate_window();
         let workspace = cx.new(|_| {
             let mut dir_root = None;
-            let mut files_to_open = Vec::new();
+            let mut targets_to_open = Vec::new();
 
-            for path in paths {
-                if path.is_dir() {
+            for target in targets {
+                if target.path.is_dir() {
                     if dir_root.is_none() {
-                        dir_root = Some(path);
+                        dir_root = Some(target.path);
                     }
                 } else {
-                    files_to_open.push(path);
+                    targets_to_open.push(target);
                 }
             }
 
@@ -472,9 +477,13 @@ pub fn open_paths(paths: Vec<std::path::PathBuf>, config: Config, i18n: I18n, cx
             w.theme = theme_to_use;
 
             let mut opened_any = false;
-            for path in files_to_open {
-                if let Ok(editor) = zee_core::buffer::Editor::from_file(&path) {
+            for target in targets_to_open {
+                if let Ok(editor) = zee_core::buffer::Editor::from_file(&target.path) {
                     w.add_editor(editor);
+                    if let Some(line) = target.line {
+                        let col = target.col.unwrap_or(1);
+                        w.jump_to_line_col(line.saturating_sub(1), col.saturating_sub(1));
+                    }
                     opened_any = true;
                 }
             }
@@ -485,6 +494,11 @@ pub fn open_paths(paths: Vec<std::path::PathBuf>, config: Config, i18n: I18n, cx
         });
         cx.new(|cx| WindowView::new(config, i18n, workspace, window, cx))
     }).expect("Failed to open window");
+}
+
+pub fn open_paths(paths: Vec<std::path::PathBuf>, config: Config, i18n: I18n, cx: &mut App) {
+    let targets = paths.into_iter().map(|p| zee_core::cli::FileTarget { path: p, line: None, col: None }).collect();
+    open_file_targets(targets, config, i18n, cx);
 }
 
 pub fn restore_session_window(session: zee_core::session::UpdateSession, config: Config, i18n: I18n, cx: &mut App) {
@@ -641,6 +655,19 @@ impl Action for ExecutePluginCommand {
     fn name_for_type() -> &'static str { "ExecutePluginCommand" }
 }
 
+#[derive(serde::Deserialize, PartialEq, Eq, Clone, Debug)]
+pub struct OpenRecent {
+    pub path: String,
+}
+
+impl Action for OpenRecent {
+    fn name(&self) -> &'static str { "OpenRecent" }
+    fn boxed_clone(&self) -> Box<dyn Action> { Box::new(self.clone()) }
+    fn build(v: gpui::private::serde_json::Value) -> Result<Box<dyn Action>> { Ok(Box::new(serde_json::from_value::<Self>(v)?)) }
+    fn partial_eq(&self, _other: &dyn Action) -> bool { false }
+    fn name_for_type() -> &'static str { "OpenRecent" }
+}
+
 #[cfg(target_os = "macos")]
 pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec<Menu> {
     let mut theme_items = Vec::new();
@@ -742,22 +769,47 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
         },
         Menu {
             name: i18n.get("menu.file").into(),
-            items: vec![
-                MenuItem::action(i18n.get("menu.file.new_tab"), NewTab {}),
-                MenuItem::action(i18n.get("menu.file.new_window"), NewWindow {}),
-                MenuItem::action(i18n.get("menu.file.open"), Open {}),
-                MenuItem::action(i18n.get("menu.file.open_folder"), OpenFolder {}),
-                MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.file.save"), Save {}),
-                MenuItem::action(i18n.get("menu.file.save_as"), SaveAs {}),
-                MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.file.export_config"), ExportConfig {}),
-                MenuItem::action(i18n.get("menu.file.import_config"), ImportConfig {}),
-                MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.file.close"), CloseTab {}),
-                MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.file.exit"), Exit {}),
-            ],
+            items: {
+                let recent = zee_core::recent::RecentFiles::load();
+                let mut recent_items = Vec::new();
+                if recent.files.is_empty() {
+                    recent_items.push(MenuItem::action(i18n.get("menu.file.no_recent"), NoOp {}));
+                } else {
+                    for p in &recent.files {
+                        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned());
+                        recent_items.push(MenuItem::action(
+                            name,
+                            OpenRecent { path: p.to_string_lossy().into_owned() },
+                        ));
+                    }
+                    recent_items.push(MenuItem::separator());
+                    recent_items.push(MenuItem::action(i18n.get("menu.file.clear_recent"), ClearRecent {}));
+                }
+
+                vec![
+                    MenuItem::action(i18n.get("menu.file.new_tab"), NewTab {}),
+                    MenuItem::action(i18n.get("menu.file.new_window"), NewWindow {}),
+                    MenuItem::action(i18n.get("menu.file.open"), Open {}),
+                    MenuItem::action(i18n.get("menu.file.open_folder"), OpenFolder {}),
+                    MenuItem::submenu(Menu {
+                        name: i18n.get("menu.file.open_recent").into(),
+                        items: recent_items,
+                        disabled: false,
+                    }),
+                    MenuItem::separator(),
+                    MenuItem::action(i18n.get("menu.file.reload"), ReloadFile {}),
+                    MenuItem::separator(),
+                    MenuItem::action(i18n.get("menu.file.save"), Save {}),
+                    MenuItem::action(i18n.get("menu.file.save_as"), SaveAs {}),
+                    MenuItem::separator(),
+                    MenuItem::action(i18n.get("menu.file.export_config"), ExportConfig {}),
+                    MenuItem::action(i18n.get("menu.file.import_config"), ImportConfig {}),
+                    MenuItem::separator(),
+                    MenuItem::action(i18n.get("menu.file.close"), CloseTab {}),
+                    MenuItem::separator(),
+                    MenuItem::action(i18n.get("menu.file.exit"), Exit {}),
+                ]
+            },
             disabled: false,
         },
         Menu {
@@ -858,6 +910,7 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
 actions!(zee, [
     // App/File
     About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, Save, SaveAs, CloseTab,
+    ReloadFile, ClearRecent,
     ExportConfig, ExportAll, ImportConfig, ManagePlugins, OpenPluginsFolder,
 
     // Edit

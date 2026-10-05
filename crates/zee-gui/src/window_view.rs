@@ -194,6 +194,9 @@ impl WindowView {
                         if let Some(editor) = w.active_editor_mut() {
                             let _ = editor.save();
                         }
+                        if intent == UnsavedChangesIntent::Reload {
+                            let _ = w.reload_active_editor();
+                        }
                         cx.notify();
                     });
                     this.dialog = None;
@@ -220,6 +223,7 @@ impl WindowView {
                                 match intent {
                                     UnsavedChangesIntent::Quit => cx.dispatch_action(&Quit {}),
                                     UnsavedChangesIntent::CloseTab => cx.dispatch_action(&CloseTab {}),
+                                    UnsavedChangesIntent::Reload => {},
                                 }
                             });
                         }
@@ -228,7 +232,11 @@ impl WindowView {
                 DialogEvent::DontSave(intent) => {
                     let intent = *intent;
                     this.workspace.update(cx, |w, cx| {
-                        w.close_active_editor();
+                        if intent == UnsavedChangesIntent::Reload {
+                            let _ = w.reload_active_editor();
+                        } else {
+                            w.close_active_editor();
+                        }
                         cx.notify();
                     });
                     this.dialog = None;
@@ -252,8 +260,10 @@ impl WindowView {
                                 }
                                 
                                 // Dispatch action
-                                if intent == UnsavedChangesIntent::Quit {
-                                    cx.dispatch_action(&Quit {});
+                                match intent {
+                                    UnsavedChangesIntent::Quit => cx.dispatch_action(&Quit {}),
+                                    UnsavedChangesIntent::CloseTab => {},
+                                    UnsavedChangesIntent::Reload => {},
                                 }
                             });
                         }
@@ -919,6 +929,46 @@ impl WindowView {
         }
     }
 
+    fn handle_reload_file(&mut self, _: &ReloadFile, window: &mut Window, cx: &mut Context<Self>) {
+        let is_modified = self.workspace.read(cx).active_editor().map(|e| e.is_modified()).unwrap_or(false);
+        let file_name = self.workspace.read(cx).active_editor().and_then(|e| e.path.as_ref()).map(|p| p.file_name().unwrap_or_default().to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".to_string());
+
+        if is_modified {
+            self.show_dialog(DialogType::UnsavedChanges { filename: file_name, intent: UnsavedChangesIntent::Reload }, Some(window), cx);
+        } else {
+            self.workspace.update(cx, |w, cx| {
+                let _ = w.reload_active_editor();
+                w.update_outline();
+                cx.notify();
+            });
+            cx.notify();
+        }
+    }
+
+    fn handle_open_recent(&mut self, action: &OpenRecent, _window: &mut Window, cx: &mut Context<Self>) {
+        let path = std::path::PathBuf::from(&action.path);
+        if path.exists() {
+            if let Ok(editor) = Editor::from_file(&path) {
+                self.workspace.update(cx, |w, cx| {
+                    w.add_editor(editor);
+                    w.update_outline();
+                    cx.notify();
+                });
+                #[cfg(target_os = "macos")]
+                cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+                cx.notify();
+            }
+        }
+    }
+
+    fn handle_clear_recent(&mut self, _: &ClearRecent, _window: &mut Window, cx: &mut Context<Self>) {
+        let mut recent = zee_core::recent::RecentFiles::load();
+        recent.clear();
+        #[cfg(target_os = "macos")]
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.notify();
+    }
+
     fn trigger_export(include_plugins: bool, _i18n: I18n, cx: &mut Context<Self>) {
         let default_name = if include_plugins { "zee-backup.zip" } else { "zee-config.zip" };
         let view_handle = cx.entity().clone();
@@ -1160,6 +1210,9 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_check_for_updates))
             .on_action(cx.listener(Self::handle_quit))
             .on_action(cx.listener(Self::handle_exit))
+            .on_action(cx.listener(Self::handle_reload_file))
+            .on_action(cx.listener(Self::handle_open_recent))
+            .on_action(cx.listener(Self::handle_clear_recent))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _window, cx| {
                 let mut opened_any = false;
                 let mut dir_to_open = None;
@@ -1378,7 +1431,8 @@ impl WindowView {
     }
 
     fn render_file_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let recent = zee_core::recent::RecentFiles::load();
+        let mut menu = div()
             .flex()
             .flex_col()
             .child(self.render_menu_item(self.i18n.get("menu.file.new_tab").to_string(), Some("Ctrl+T"), false, NewTab {}, fg, hover_bg, muted_fg, cx))
@@ -1386,6 +1440,28 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.file.open").to_string(), Some("Ctrl+O"), false, Open {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open_folder").to_string(), Some("Ctrl+Shift+O"), false, OpenFolder {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
+            .child(self.render_menu_item(self.i18n.get("menu.file.reload").to_string(), Some("Ctrl+Shift+R"), false, ReloadFile {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_sep(border));
+
+        if !recent.files.is_empty() {
+            for p in recent.files.iter().take(5) {
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned());
+                menu = menu.child(self.render_menu_item(
+                    format!("  {}", name),
+                    None,
+                    false,
+                    OpenRecent { path: p.to_string_lossy().into_owned() },
+                    fg,
+                    hover_bg,
+                    muted_fg,
+                    cx,
+                ));
+            }
+            menu = menu.child(self.render_menu_item(self.i18n.get("menu.file.clear_recent").to_string(), None, false, ClearRecent {}, fg, hover_bg, muted_fg, cx));
+            menu = menu.child(self.render_menu_sep(border));
+        }
+
+        menu
             .child(self.render_menu_item(self.i18n.get("menu.file.save").to_string(), Some("Ctrl+S"), false, Save {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.save_as").to_string(), Some("Ctrl+Shift+S"), false, SaveAs {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))

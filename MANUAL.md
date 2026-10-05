@@ -39,7 +39,8 @@ Download the appropriate binary from the [releases page] and place it in your `P
 **macOS / Linux quick install:**
 ```bash
 # Example: macOS Apple Silicon TUI
-curl -L https://github.com/yourname/zee/releases/latest/download/zee-mac-arm64 -o zee
+curl -L https://github.com/kh813/zee/releases/latest/download/zee-macos-arm64.tar.gz -o zee.tar.gz
+tar -xzf zee.tar.gz
 chmod +x zee
 sudo mv zee /usr/local/bin/zee
 ```

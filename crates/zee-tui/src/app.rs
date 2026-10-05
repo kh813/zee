@@ -34,6 +34,7 @@ pub enum PendingOp {
     SaveAs,
     Exit,
     Close,
+    Reload,
 }
 
 pub struct App {
@@ -82,7 +83,17 @@ pub struct App {
 }
 
 impl App {
+    #[allow(dead_code)]
     pub fn new(paths: Vec<PathBuf>) -> Result<Self> {
+        let targets = paths.into_iter().map(|path| zee_core::cli::FileTarget {
+            path,
+            line: None,
+            col: None,
+        }).collect();
+        Self::with_targets(targets)
+    }
+
+    pub fn with_targets(targets: Vec<zee_core::cli::FileTarget>) -> Result<Self> {
         let (width, height) = terminal::size().unwrap_or((80, 24));
         
         let mut config = Config::load();
@@ -97,21 +108,22 @@ impl App {
         let mut buffers = Vec::new();
         let mut errors = Vec::new();
         let mut root_dir = None;
+        let mut recent = zee_core::recent::RecentFiles::load();
 
-        if paths.is_empty() {
+        if targets.is_empty() {
             buffers.push(Editor::new());
         } else {
-            for path in paths {
-                if path.is_dir() {
+            for target in targets {
+                if target.path.is_dir() {
                     if root_dir.is_none() {
-                        root_dir = Some(path.clone());
+                        root_dir = Some(target.path.clone());
                     }
                     continue;
                 }
-                match Editor::from_file(&path) {
+                match Editor::from_file(&target.path) {
                     Ok(mut editor) => {
                         // Detect syntax
-                        let ext = path.extension().and_then(|e| e.to_str());
+                        let ext = target.path.extension().and_then(|e| e.to_str());
                         if let Some(ext) = ext {
                             if let Some(def) = syntax_defs.iter().find(|s| s.meta.extensions.iter().any(|e| e == ext)) {
                                 if let Ok(highlighter) = zee_core::syntax::SyntaxHighlighter::new(def.clone()) {
@@ -119,11 +131,24 @@ impl App {
                                 }
                             }
                         }
+                        if let Some(line) = target.line {
+                            let line_idx = line.saturating_sub(1);
+                            let col_idx = target.col.unwrap_or(1).saturating_sub(1);
+                            if line_idx < editor.line_count() {
+                                let line_start = editor.rope.line_to_char(line_idx);
+                                let line_slice = editor.rope.line(line_idx);
+                                let col = col_idx.min(line_slice.len_chars().saturating_sub(1));
+                                editor.cursor = line_start + col;
+                                editor.selection = None;
+                                editor.selection_anchor = None;
+                            }
+                        }
+                        recent.add(&target.path);
                         buffers.push(editor);
                     }
                     Err(e) => {
                         errors.push(i18n.get("error.failed_to_open")
-                            .replace("{path}", &path.display().to_string())
+                            .replace("{path}", &target.path.display().to_string())
                             .replace("{error}", &e.to_string()));
                     }
                 }
@@ -302,18 +327,44 @@ impl App {
             }
         }).collect();
 
+        let recent = zee_core::recent::RecentFiles::load();
+        let mut file_items = vec![
+            MenuItem::Action { label: i18n.get("menu.file.new").to_string(), action: Action::New, shortcut: Some("Ctrl+T".to_string()) },
+            MenuItem::Action { label: i18n.get("menu.file.open").to_string(), action: Action::Open, shortcut: Some("Ctrl+O".to_string()) },
+            MenuItem::Separator,
+            MenuItem::Action { label: i18n.get("menu.file.reload").to_string(), action: Action::ReloadFile, shortcut: Some("Ctrl+Shift+R".to_string()) },
+            MenuItem::Separator,
+        ];
+
+        let mut recent_items = Vec::new();
+        if recent.files.is_empty() {
+            recent_items.push(MenuItem::Action { label: i18n.get("menu.file.no_recent").to_string(), action: Action::NoOp, shortcut: None });
+        } else {
+            for p in &recent.files {
+                let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.to_string_lossy().into_owned());
+                recent_items.push(MenuItem::Action {
+                    label: name,
+                    action: Action::OpenRecent(p.clone()),
+                    shortcut: None,
+                });
+            }
+            recent_items.push(MenuItem::Separator);
+            recent_items.push(MenuItem::Action { label: i18n.get("menu.file.clear_recent").to_string(), action: Action::ClearRecent, shortcut: None });
+        }
+        file_items.push(MenuItem::Submenu {
+            label: i18n.get("menu.file.open_recent").to_string(),
+            menu: Menu::new("Recent", recent_items),
+        });
+        file_items.push(MenuItem::Separator);
+        file_items.push(MenuItem::Action { label: i18n.get("menu.file.save").to_string(), action: Action::Save, shortcut: Some("Ctrl+S".to_string()) });
+        file_items.push(MenuItem::Action { label: i18n.get("menu.file.save_as").to_string(), action: Action::SaveAs, shortcut: Some("Ctrl+Shift+S".to_string()) });
+        file_items.push(MenuItem::Separator);
+        file_items.push(MenuItem::Action { label: i18n.get("menu.file.close").to_string(), action: Action::Close, shortcut: Some("Ctrl+W".to_string()) });
+        file_items.push(MenuItem::Separator);
+        file_items.push(MenuItem::Action { label: i18n.get("menu.file.exit").to_string(), action: Action::Exit, shortcut: Some("Ctrl+Q".to_string()) });
+
         vec![
-            Menu::new(i18n.get("menu.file"), vec![
-                MenuItem::Action { label: i18n.get("menu.file.new").to_string(), action: Action::New, shortcut: Some("Ctrl+T".to_string()) },
-                MenuItem::Action { label: i18n.get("menu.file.open").to_string(), action: Action::Open, shortcut: Some("Ctrl+O".to_string()) },
-                MenuItem::Separator,
-                MenuItem::Action { label: i18n.get("menu.file.save").to_string(), action: Action::Save, shortcut: Some("Ctrl+S".to_string()) },
-                MenuItem::Action { label: i18n.get("menu.file.save_as").to_string(), action: Action::SaveAs, shortcut: Some("Ctrl+Shift+S".to_string()) },
-                MenuItem::Separator,
-                MenuItem::Action { label: i18n.get("menu.file.close").to_string(), action: Action::Close, shortcut: Some("Ctrl+W".to_string()) },
-                MenuItem::Separator,
-                MenuItem::Action { label: i18n.get("menu.file.exit").to_string(), action: Action::Exit, shortcut: Some("Ctrl+Q".to_string()) },
-            ]),
+            Menu::new(i18n.get("menu.file"), file_items),
             Menu::new(i18n.get("menu.edit"), vec![
                 MenuItem::Action { label: i18n.get("menu.edit.undo").to_string(), action: Action::Undo, shortcut: Some("Ctrl+Z".to_string()) },
                 MenuItem::Action { label: i18n.get("menu.edit.redo").to_string(), action: Action::Redo, shortcut: Some("Ctrl+Y".to_string()) },
@@ -665,6 +716,7 @@ impl App {
             match key.code {
                 KeyCode::Char('F') | KeyCode::Char('f') => { self.perform_action(Action::Replace); return; }
                 KeyCode::Char('S') | KeyCode::Char('s') => { self.perform_action(Action::SaveAs); return; }
+                KeyCode::Char('R') | KeyCode::Char('r') => { self.perform_action(Action::ReloadFile); return; }
                 KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('[') | KeyCode::Char('{') => {
                     self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
                     self.update_active_outline();
@@ -1976,6 +2028,14 @@ impl App {
                                     }
                                 }
                             }
+                            PendingOp::Reload => {
+                                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                    let _ = buffer.save();
+                                    let _ = buffer.reload_from_disk();
+                                    self.update_active_outline();
+                                    self.recompute_layout();
+                                }
+                            }
                             _ => {
                                 self.perform_action(Action::Save);
                             }
@@ -1985,6 +2045,13 @@ impl App {
                         let op = self.pending_op;
                         self.pending_op = PendingOp::None;
                         match op {
+                            PendingOp::Reload => {
+                                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                    let _ = buffer.reload_from_disk();
+                                    self.update_active_outline();
+                                    self.recompute_layout();
+                                }
+                            }
                             PendingOp::Exit => {
                                 self.buffers.remove(self.active_buffer);
                                 if self.buffers.is_empty() {
@@ -2452,6 +2519,55 @@ impl App {
         }
     }
 
+    pub fn open_path(&mut self, path: &std::path::Path) -> bool {
+        if let Some(idx) = self.buffers.iter().position(|b| b.path.as_deref() == Some(path)) {
+            self.active_buffer = idx;
+            self.update_active_outline();
+            self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+            self.recompute_layout();
+            return true;
+        }
+
+        match self.editor_from_file(path) {
+            Ok(mut buffer) => {
+                let syntax = self.detect_syntax(path);
+                buffer.update_syntax(syntax);
+
+                if self.buffers.len() == 1 {
+                    let first = &self.buffers[0];
+                    if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
+                        self.buffers[0] = buffer;
+                        self.active_buffer = 0;
+                        let mut recent = zee_core::recent::RecentFiles::load();
+                        recent.add(path);
+                        self.update_active_outline();
+                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                        self.recompute_layout();
+                        return true;
+                    }
+                }
+
+                self.buffers.push(buffer);
+                self.active_buffer = self.buffers.len() - 1;
+                let mut recent = zee_core::recent::RecentFiles::load();
+                recent.add(path);
+                self.update_active_outline();
+                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.recompute_layout();
+                true
+            }
+            Err(e) => {
+                self.focus = Focus::Dialog;
+                self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                    self.i18n.get("dialog.error").to_string(),
+                    format!("{}: {}", path.display(), e),
+                    vec![(self.i18n.get("dialog.ok").to_string(), dialog::Action::Cancel)],
+                )));
+                false
+            }
+        }
+    }
+
     fn perform_action(&mut self, action: Action) {
         match action {
             Action::New => {
@@ -2464,6 +2580,37 @@ impl App {
                 self.focus = Focus::Dialog;
                 self.pending_op = PendingOp::Open;
                 self.current_dialog = Some(Box::new(dialog::OpenDialog::new(&self.i18n)));
+            }
+            Action::ReloadFile => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if buffer.is_modified() {
+                        self.focus = Focus::Dialog;
+                        self.pending_op = PendingOp::Reload;
+                        let filename = buffer.path.as_ref().and_then(|p| p.file_name()).map(|f| f.to_string_lossy()).unwrap_or_else(|| std::borrow::Cow::Borrowed(self.i18n.get("status.no_name")));
+                        self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                            self.i18n.get("dialog.unsaved_changes_title").to_string(),
+                            self.i18n.get("dialog.unsaved_changes").replace("{filename}", &filename),
+                            vec![
+                                (self.i18n.get("dialog.save").to_string(), dialog::Action::Save),
+                                (self.i18n.get("dialog.dont_save").to_string(), dialog::Action::DontSave),
+                                (self.i18n.get("dialog.cancel").to_string(), dialog::Action::Cancel),
+                            ]
+                        )));
+                        return;
+                    } else {
+                        let _ = buffer.reload_from_disk();
+                        self.update_active_outline();
+                        self.recompute_layout();
+                    }
+                }
+            }
+            Action::OpenRecent(path) => {
+                self.open_path(&path);
+            }
+            Action::ClearRecent => {
+                let mut recent = zee_core::recent::RecentFiles::load();
+                recent.clear();
+                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
             }
             Action::Save => {
                 let needs_save_as = if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {

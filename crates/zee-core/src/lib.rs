@@ -10,12 +10,17 @@ pub mod plugin;
 pub mod component_plugin;
 pub mod selfupdate;
 pub mod session;
+pub mod cli;
+pub mod recent;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     // File
     New,
     Open,
+    ReloadFile,
+    OpenRecent(std::path::PathBuf),
+    ClearRecent,
     Save,
     SaveAs,
     Close,

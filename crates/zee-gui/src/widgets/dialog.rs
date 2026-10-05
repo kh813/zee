@@ -8,6 +8,7 @@ use crate::widgets::{led_color_to_gpui, ui_font_family, with_alpha};
 pub enum UnsavedChangesIntent {
     Quit,
     CloseTab,
+    Reload,
 }
 
 #[derive(Debug, Clone)]

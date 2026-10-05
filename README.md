@@ -1,28 +1,77 @@
 # zee (ZEpto Editor)
 
-**zee** is a modern and lightweight text editor built in Rust. It provides a native, hardware-accelerated **GUI** desktop experience (`zeeg`) alongside a feature-packed **TUI** (Terminal User Interface, `zee`) that shares the exact same shortcuts, menus, dialogs, and intuitive feel.
+[![CI](https://github.com/kh813/zee/actions/workflows/ci.yml/badge.svg)](https://github.com/kh813/zee/actions/workflows/ci.yml)
+[![Release](https://github.com/kh813/zee/actions/workflows/release.yml/badge.svg)](https://github.com/kh813/zee/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+**zee** is a lightweight, modern, and lightning-fast text editor built in Rust. It provides a native GPU-accelerated **GUI** desktop experience (`zeeg` / `Zee.app`) alongside a feature-packed **TUI** (Terminal User Interface, `zee`) that share the exact same shortcuts, menus, dialogs, and intuitive feel.
 
 Whether launching `Zee.app` on your desktop or running `zee` over SSH in a terminal, **zee** gives you a consistent, distraction-free editing workflow.
 
-## Features
+---
 
-- **Dual GUI & TUI Experience**: Native GPU-accelerated desktop GUI (`zeeg` on macOS, Windows, and Linux [Experimental]) and a responsive terminal TUI (`zee`) sharing identical workflows and shortcuts.
-- **Modern Aesthetics & Themes**: High-contrast, beautifully themed UI with customizable colors.
-- **Menu & Dialog Driven**: Intuitive top-level menu bar, dropdowns, and modal dialogs (Goto line, Open, Save As, Settings).
-- **Find & Replace Panel**: Interactive search with match counting, regex, case sensitivity, and whole word support.
-- **Tabs Support**: Open and switch between multiple files with tabs.
-- **Internationalization (i18n)**: Full English and Japanese support out of the box.
-- **Syntax Highlighting**: Fast syntax highlighting for Rust, Markdown, Python, JSON, TOML, YAML, JavaScript/TypeScript, and more.
-- **Vi Mode**: Optional Vi modal editing for power users.
-- **OSC 52 Clipboard**: Seamless system clipboard support locally and over remote SSH sessions.
+## Highlights & Features
+
+- **Dual GUI & TUI Experience**: Native hardware-accelerated desktop GUI (`zeeg` on macOS, Windows, and Linux) and terminal TUI (`zee`) sharing 100% feature and shortcut parity.
+- **Sidebar (File Tree & Outline)**:
+  - Collapsible sidebar with directory tree browser and code outline tree.
+  - Position configurable on either the **left** or **right** side of the editor.
+  - Split sidebar panel showing active file properties (size, line count, encoding, line ending).
+- **Extensible WASM Plugin System**:
+  - Sandboxed WebAssembly plugin runtime supporting text manipulation commands and custom outline providers.
+  - Dedicated in-app **Plugin Manager** to install, inspect, and manage plugins.
+  - [Plugin Development Guide](docs/plugin_development_guide.md) available for creating custom extensions.
+- **In-App Self-Update with Session Restoration**:
+  - One-click update check (`Help` → `Check for Updates...`) that downloads and swaps binaries in place.
+  - Automatically restores open tabs, cursor positions, scroll offsets, and sidebar state after relaunch.
+- **Backup & Portability**:
+  - Built-in export and import of all user configuration and installed plugins into a portable archive (`.zip` / `.tar.gz`).
+- **Modern Aesthetics & Built-in Themes**:
+  - Beautiful built-in themes: Tokyo Night, Catppuccin Latte, Dracula, Monokai, Nord, Gruvbox, Solarized, and more.
+- **Interactive Find & Replace**:
+  - Real-time search panel with match count, regex, case sensitivity, and whole-word matching.
+- **Multi-Tab Workspace**:
+  - Open, switch, close, and navigate multiple files effortlessly.
+- **Internationalization (i18n)**:
+  - English and Japanese (日本語) native UI translation.
+- **Fast Syntax Highlighting**:
+  - Highlighting for Rust, Markdown, Python, Go, JSON, TOML, YAML, HTML, CSS, JavaScript/TypeScript, and more.
+- **Optional Vi Mode**:
+  - Modal editing (`Normal`, `Insert`, `Visual`, `VisualBlock`) for Vi/Vim power users.
+- **Remote SSH & OSC 52 Clipboard**:
+  - Seamless system clipboard synchronization locally and over SSH terminal connections.
+
+---
 
 ## Installation
 
+### Download Pre-built Binaries
+
+Pre-compiled standalone packages and installers are available on the [Releases page](https://github.com/kh813/zee/releases).
+
+| Platform | Type | File Name | Notes |
+| :--- | :--- | :--- | :--- |
+| **macOS (Apple Silicon)** | GUI App | `zeeg-macos-arm64.zip` | Extract and drag `Zee.app` to `/Applications` |
+| **macOS (Apple Silicon)** | Terminal TUI | `zee-macos-arm64.tar.gz` | Standalone `zee` terminal binary |
+| **Windows (x86-64)** | GUI & TUI | `zee-windows-x64.zip` | Contains `zeeg.exe` (GUI) and `zee.exe` (TUI) |
+| **Linux (x86-64)** | GUI & TUI | `zeeg-linux-x64.tar.gz` / `zee-linux-x64.tar.gz` | Linux 64-bit desktop GUI and terminal binaries |
+
+#### macOS Gatekeeper Note
+On macOS, downloaded applications outside the App Store may show a warning: *"Zee.app cannot be opened because the developer cannot be verified"*.
+To resolve this:
+- **Option 1**: Right-click (or Control-click) `Zee.app` in Finder, select **Open**, and click **Open** in the prompt.
+- **Option 2**: Run the following command in Terminal:
+  ```bash
+  xattr -cr /Applications/Zee.app
+  ```
+
+---
+
 ### Build from Source
 
-**Requirements**: Rust toolchain (`rustup`), C compiler / build-essential
+**Prerequisites**: Rust toolchain (1.80+), standard C build tools.
 
-#### Using Make (macOS / Linux):
+#### macOS & Linux (Make)
 ```bash
 git clone https://github.com/kh813/zee.git
 cd zee
@@ -30,58 +79,76 @@ cd zee
 # Build both GUI and TUI binaries into dist/
 make
 
-# Or build individual components:
-make gui    # Builds zeeg (and dist/Zee.app on macOS)
-make tui    # Builds TUI binary (dist/zee)
+# Or build individually:
+make gui      # Desktop GUI: dist/zeeg (and dist/Zee.app on macOS)
+make tui      # Terminal TUI: dist/zee
 
 # Install to system (~/.local/bin and ~/Applications on macOS)
 make install
 ```
 
-#### On Windows (PowerShell):
+#### Windows (PowerShell)
 ```powershell
-# Using the make.ps1 build script (no make required)
-.\make.ps1           # Builds Windows GUI into dist/zeeg.exe
-.\make.ps1 tui       # Builds Windows TUI into dist/zee.exe
-.\make.ps1 test      # Runs tests
-.\make.ps1 package   # Creates dist/zee-windows-x64.zip
+git clone https://github.com/kh813/zee.git
+cd zee
 
-# Or directly with Cargo:
-cargo build --release -p zee-gui   # Windows GUI: target/release/zeeg.exe
-cargo build --release -p zee-tui   # Terminal TUI: target/release/zee.exe
+.\make.ps1         # Builds Windows GUI into dist/zeeg.exe
+.\make.ps1 tui     # Builds Windows TUI into dist/zee.exe
+.\make.ps1 test    # Runs workspace test suite
 ```
+
+---
 
 ## Usage
 
 ### Desktop GUI
-- **macOS**: Launch `dist/Zee.app` (or open from Launchpad / Applications folder).
-- **Windows**: Launch `zeeg.exe [FILE...]`.
-- **Linux (Experimental)**: Launch **zee** from your Desktop Application Menu, or run `zeeg [FILE...]` from terminal.
+- **macOS**: Launch `Zee.app` from Applications or Spotlight.
+- **Windows / Linux**: Run `zeeg [FILE...]` or launch via application launcher.
 
 ### Terminal TUI / Remote (SSH)
-- **All Platforms**: Run `zee [FILE...]` in your terminal.
+- Run `zee [FILE...]` in any terminal emulator.
 
-For complete shortcut references and configuration guides, see the [User Manual](MANUAL.md).
+For a complete reference of keyboard shortcuts, menus, and configuration, see the [User Manual](MANUAL.md).
+
+---
 
 ## Configuration
 
-Configuration is stored in `~/.config/zee/config.toml` and shared across both GUI and TUI:
+Settings are saved in `~/.config/zee/config.toml` (or `%APPDATA%\zee\config.toml` on Windows) and automatically synced between GUI and TUI:
+
 ```toml
-theme = "default_dark"
-tab_size = 4
+language = "en"               # "en" or "ja"
+theme = "tokyo-night"         # "tokyo-night", "catppuccin-latte", "dracula", "nord", etc.
 line_numbers = true
-language = "en"  # "en" or "ja"
+word_wrap = true
+vi_mode = false
+tab_size = 4
+expand_tab = false
+sidebar = false               # Open sidebar by default
+sidebar_position = "right"    # "right" or "left"
+font_size = 13.0              # GUI editor font size
+line_height = 20.0
 ```
+
+---
+
+## Plugin Development
+
+Want to extend **zee** with custom text manipulation utilities or outline providers?  
+Check out our comprehensive [Plugin Development Guide](docs/plugin_development_guide.md) to build WebAssembly plugins using Rust.
+
+---
 
 ## Remote Usage (SSH)
 
-zee's TUI works great over SSH. To prevent `Ctrl+S` (Save) from triggering terminal software flow control, add the following to your shell profile (`~/.bashrc` or `~/.zshrc`):
+When running **zee** over SSH, prevent `Ctrl+S` from pausing terminal transmission by adding this line to your `~/.bashrc` or `~/.zshrc`:
 
 ```bash
 stty -ixon
 ```
 
+---
+
 ## License
 
-MIT
-
+This project is licensed under the [MIT License](LICENSE).

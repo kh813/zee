@@ -138,14 +138,29 @@ impl Workspace {
     }
 
     pub fn jump_to_line(&mut self, line: usize) {
+        self.jump_to_line_col(line, 0);
+    }
+
+    pub fn jump_to_line_col(&mut self, line: usize, col: usize) {
         if let Some(editor) = self.active_editor_mut() {
             let line_count = editor.line_count();
             let target_line = line.min(line_count.saturating_sub(1));
-            editor.cursor = editor.rope.line_to_char(target_line);
+            let line_start_char = editor.rope.line_to_char(target_line);
+            let line_slice = editor.rope.line(target_line);
+            let line_len = line_slice.len_chars().saturating_sub(if line_slice.to_string().ends_with('\n') { 1 } else { 0 });
+            editor.cursor = line_start_char + col.min(line_len);
             editor.selection = None;
             editor.selection_anchor = None;
             editor.scroll_row = target_line.saturating_sub(5);
         }
+    }
+
+    pub fn reload_active_editor(&mut self) -> anyhow::Result<()> {
+        if let Some(editor) = self.active_editor_mut() {
+            editor.reload_from_disk()?;
+        }
+        self.update_outline();
+        Ok(())
     }
 
     pub fn active_editor(&self) -> Option<&Editor> {
@@ -171,6 +186,9 @@ impl Workspace {
     pub fn add_editor(&mut self, mut editor: Editor) {
         editor.vi_mode = if self.config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
         if let Some(path) = &editor.path {
+            let mut recent = zee_core::recent::RecentFiles::load();
+            recent.add(path);
+
             if let Some(idx) = self.editors.iter().position(|e| e.path.as_ref() == Some(path)) {
                 self.active_editor_index = idx;
                 return;

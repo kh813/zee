@@ -36,6 +36,12 @@ pub enum DialogType {
     PluginManager,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsDropdown {
+    Theme,
+    Font,
+}
+
 pub struct Dialog {
     workspace: Entity<Workspace>,
     i18n: I18n,
@@ -51,6 +57,8 @@ pub struct Dialog {
     button_idx: usize,
     // Update dialog state
     update_status: Option<UpdateStatus>,
+    // Settings dropdown state
+    settings_dropdown: Option<SettingsDropdown>,
 }
 
 #[derive(Clone)]
@@ -98,6 +106,7 @@ impl Dialog {
             show_hidden: false,
             button_idx: 0,
             update_status: if is_update { Some(UpdateStatus::Checking) } else { None },
+            settings_dropdown: None,
         };
         this.refresh_files();
         if is_update {
@@ -316,7 +325,11 @@ impl Dialog {
                 }
             }
             "escape" => {
-                self.close(cx);
+                if self.settings_dropdown.is_some() {
+                    self.settings_dropdown = None;
+                } else {
+                    self.close(cx);
+                }
             }
             k if k.len() == 1 => {
                 self.input_text.push_str(k);
@@ -1085,6 +1098,35 @@ impl Dialog {
             DialogType::Settings => {
                 let themes = zee_core::theme::Theme::load_all();
                 let current_theme_name = workspace.theme.meta.name.clone();
+                let is_theme_open = self.settings_dropdown == Some(SettingsDropdown::Theme);
+                let is_font_open = self.settings_dropdown == Some(SettingsDropdown::Font);
+
+                let current_font_label = match &workspace.config.font_family {
+                    Some(f) if !f.is_empty() => f.clone(),
+                    _ => "System Default".to_string(),
+                };
+
+                let mut font_options: Vec<(Option<String>, String)> = vec![
+                    (None, "System Default".to_string()),
+                    (Some("Menlo".to_string()), "Menlo".to_string()),
+                    (Some("SF Mono".to_string()), "SF Mono".to_string()),
+                    (Some("Monaco".to_string()), "Monaco".to_string()),
+                    (Some("Fira Code".to_string()), "Fira Code".to_string()),
+                    (Some("JetBrains Mono".to_string()), "JetBrains Mono".to_string()),
+                    (Some("Cascadia Code".to_string()), "Cascadia Code".to_string()),
+                    (Some("Consolas".to_string()), "Consolas".to_string()),
+                    (Some("Courier New".to_string()), "Courier New".to_string()),
+                    (Some("Inconsolata".to_string()), "Inconsolata".to_string()),
+                    (Some("Source Code Pro".to_string()), "Source Code Pro".to_string()),
+                    (Some("Hack".to_string()), "Hack".to_string()),
+                    (Some("Ubuntu Mono".to_string()), "Ubuntu Mono".to_string()),
+                ];
+                if let Some(ref cf) = workspace.config.font_family {
+                    if !cf.is_empty() && !font_options.iter().any(|(opt, _)| opt.as_deref() == Some(cf.as_str())) {
+                        font_options.push((Some(cf.clone()), format!("Custom ({})", cf)));
+                    }
+                }
+
                 let font_size = workspace.config.font_size;
                 let line_height = workspace.config.line_height;
                 let ui_font_size = workspace.config.ui_font_size;
@@ -1123,7 +1165,7 @@ impl Dialog {
                                     .child("✕")
                             )
                     )
-                    // Theme section
+                    // Theme dropdown section
                     .child(
                         div()
                             .flex()
@@ -1136,47 +1178,103 @@ impl Dialog {
                                     .text_color(with_alpha(fg, 0.75))
                                     .child(self.i18n.get("dialog.settings.theme").to_string())
                             )
+                            // Dropdown trigger button
                             .child(
                                 div()
+                                    .h(px(32.0))
+                                    .w_full()
+                                    .px_3()
                                     .flex()
-                                    .flex_wrap()
-                                    .gap_1p5()
-                                    .children(themes.into_iter().map(|t| {
-                                        let is_active = t.meta.name == current_theme_name;
-                                        let t_name = t.meta.name.clone();
-                                        let t_slug = t_name.to_lowercase().replace(' ', "-");
-                                        let bg_color = if is_active { chip_active_bg } else { chip_bg };
-                                        let border_c = if is_active { accent } else { chip_border };
-                                        
-                                        div()
-                                            .h(px(26.0))
-                                            .px_2p5()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(border_c)
-                                            .bg(bg_color)
-                                            .text_size(px(11.5))
-                                            .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                                            .cursor_pointer()
-                                            .hover(|s| s.opacity(0.85))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                this.workspace.update(cx, |w, cx| {
-                                                    if let Some(theme) = zee_core::theme::Theme::find_by_name(&t_slug) {
-                                                        w.theme = theme;
-                                                        let _ = zee_core::config::Config::write_key("theme", &t_slug);
-                                                        cx.notify();
-                                                    }
-                                                });
-                                                cx.notify();
-                                            }))
-                                            .child(t_name)
+                                    .items_center()
+                                    .justify_between()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(if is_theme_open { accent } else { chip_border })
+                                    .bg(input_bg)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                        this.settings_dropdown = if this.settings_dropdown == Some(SettingsDropdown::Theme) {
+                                            None
+                                        } else {
+                                            Some(SettingsDropdown::Theme)
+                                        };
+                                        cx.notify();
                                     }))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(current_theme_name.clone())
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(with_alpha(fg, 0.6))
+                                            .child(if is_theme_open { "▲" } else { "▼" })
+                                    )
                             )
+                            // Dropdown list
+                            .children(if is_theme_open {
+                                Some(
+                                    div()
+                                        .id("settings-theme-dropdown-list")
+                                        .w_full()
+                                        .max_h(px(160.0))
+                                        .overflow_y_scroll()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(accent)
+                                        .bg(input_bg)
+                                        .p_1()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .children(themes.into_iter().map(|t| {
+                                            let is_active = t.meta.name == current_theme_name;
+                                            let t_name = t.meta.name.clone();
+                                            let t_slug = t_name.to_lowercase().replace(' ', "-");
+                                            
+                                            div()
+                                                .h(px(28.0))
+                                                .px_2p5()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .rounded_sm()
+                                                .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(with_alpha(fg, 0.12)))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                    this.workspace.update(cx, |w, cx| {
+                                                        if let Some(theme) = zee_core::theme::Theme::find_by_name(&t_slug) {
+                                                            w.theme = theme;
+                                                            let _ = zee_core::config::Config::write_key("theme", &t_slug);
+                                                            cx.notify();
+                                                        }
+                                                    });
+                                                    this.settings_dropdown = None;
+                                                    cx.notify();
+                                                }))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(12.0))
+                                                        .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                                        .child(t_name)
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.0))
+                                                        .text_color(accent)
+                                                        .child(if is_active { "✓" } else { "" })
+                                                )
+                                        }))
+                                )
+                            } else {
+                                None
+                            })
                     )
-                    // Font Family section
+                    // Font Family dropdown section
                     .child(
                         div()
                             .flex()
@@ -1189,52 +1287,102 @@ impl Dialog {
                                     .text_color(with_alpha(fg, 0.75))
                                     .child(self.i18n.get("dialog.settings.font_family").to_string())
                             )
+                            // Dropdown trigger button
                             .child(
                                 div()
+                                    .h(px(32.0))
+                                    .w_full()
+                                    .px_3()
                                     .flex()
-                                    .flex_wrap()
-                                    .gap_1p5()
-                                    .children(vec![
-                                        (None, "System Default"),
-                                        (Some("Menlo"), "Menlo"),
-                                        (Some("SF Mono"), "SF Mono"),
-                                        (Some("Fira Code"), "Fira Code"),
-                                        (Some("JetBrains Mono"), "JetBrains Mono"),
-                                        (Some("Courier New"), "Courier New"),
-                                    ].into_iter().map(|(font_opt, label)| {
-                                        let is_active = match (font_opt, &workspace.config.font_family) {
-                                            (None, None) => true,
-                                            (Some(a), Some(b)) => a == b.as_str(),
-                                            _ => false,
+                                    .items_center()
+                                    .justify_between()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(if is_font_open { accent } else { chip_border })
+                                    .bg(input_bg)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                        this.settings_dropdown = if this.settings_dropdown == Some(SettingsDropdown::Font) {
+                                            None
+                                        } else {
+                                            Some(SettingsDropdown::Font)
                                         };
-                                        let bg_color = if is_active { chip_active_bg } else { chip_bg };
-                                        let border_c = if is_active { accent } else { chip_border };
-
-                                        div()
-                                            .h(px(26.0))
-                                            .px_2p5()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded_md()
-                                            .border_1()
-                                            .border_color(border_c)
-                                            .bg(bg_color)
-                                            .text_size(px(11.5))
-                                            .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                                            .cursor_pointer()
-                                            .hover(|s| s.opacity(0.85))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                this.workspace.update(cx, |w, cx| {
-                                                    w.config.font_family = font_opt.map(|s| s.to_string());
-                                                    let _ = zee_core::config::Config::write_key("font_family", font_opt.unwrap_or(""));
-                                                    cx.notify();
-                                                });
-                                                cx.notify();
-                                            }))
-                                            .child(label)
+                                        cx.notify();
                                     }))
+                                    .child(
+                                        div()
+                                            .text_size(px(12.5))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(current_font_label)
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(with_alpha(fg, 0.6))
+                                            .child(if is_font_open { "▲" } else { "▼" })
+                                    )
                             )
+                            // Dropdown list
+                            .children(if is_font_open {
+                                Some(
+                                    div()
+                                        .id("settings-font-dropdown-list")
+                                        .w_full()
+                                        .max_h(px(160.0))
+                                        .overflow_y_scroll()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(accent)
+                                        .bg(input_bg)
+                                        .p_1()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_0p5()
+                                        .children(font_options.into_iter().map(|(font_opt, label)| {
+                                            let is_active = match (&font_opt, &workspace.config.font_family) {
+                                                (None, None) => true,
+                                                (Some(a), Some(b)) => a == b,
+                                                _ => false,
+                                            };
+                                            let font_val = font_opt.clone();
+                                            
+                                            div()
+                                                .h(px(28.0))
+                                                .px_2p5()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .rounded_sm()
+                                                .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(with_alpha(fg, 0.12)))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                    this.workspace.update(cx, |w, cx| {
+                                                        w.config.font_family = font_val.clone();
+                                                        let _ = zee_core::config::Config::write_key("font_family", font_val.as_deref().unwrap_or(""));
+                                                        cx.notify();
+                                                    });
+                                                    this.settings_dropdown = None;
+                                                    cx.notify();
+                                                }))
+                                                .child(
+                                                    div()
+                                                        .text_size(px(12.0))
+                                                        .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                                        .child(label)
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_size(px(11.0))
+                                                        .text_color(accent)
+                                                        .child(if is_active { "✓" } else { "" })
+                                                )
+                                        }))
+                                )
+                            } else {
+                                None
+                            })
                     )
                     // Steppers (Font Size, Line Height, UI Size)
                     .child(
@@ -1778,6 +1926,7 @@ impl Dialog {
                                     .cursor_pointer()
                                     .hover(move |s| s.bg(button_hover))
                                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                        this.settings_dropdown = None;
                                         this.workspace.update(cx, |w, cx| {
                                             w.config.font_family = None;
                                             w.config.font_size = 12.0;

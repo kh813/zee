@@ -29,6 +29,8 @@ pub struct SyntaxDefinition {
 impl SyntaxDefinition {
     pub fn builtins() -> Vec<Self> {
         let files = [
+            include_str!("../../../assets/syntax/c.toml"),
+            include_str!("../../../assets/syntax/cpp.toml"),
             include_str!("../../../assets/syntax/css.toml"),
             include_str!("../../../assets/syntax/go.toml"),
             include_str!("../../../assets/syntax/html.toml"),
@@ -39,9 +41,12 @@ impl SyntaxDefinition {
             include_str!("../../../assets/syntax/python.toml"),
             include_str!("../../../assets/syntax/rust.toml"),
             include_str!("../../../assets/syntax/shell.toml"),
+            include_str!("../../../assets/syntax/sql.toml"),
             include_str!("../../../assets/syntax/swift.toml"),
             include_str!("../../../assets/syntax/toml.toml"),
+            include_str!("../../../assets/syntax/typescript.toml"),
             include_str!("../../../assets/syntax/xml.toml"),
+            include_str!("../../../assets/syntax/yaml.toml"),
         ];
 
         files

@@ -376,8 +376,86 @@ pub fn parse_css_outline(content: &str) -> Vec<OutlineNode> {
     build_tree_from_levels(items)
 }
 
+/// Parses Shell script content and extracts function definitions.
+pub fn parse_shell_outline(content: &str) -> Vec<OutlineNode> {
+    let mut items = Vec::new();
+
+    for (line_idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+
+        // 1. function name [()] { ... }
+        if trimmed.starts_with("function ") {
+            let rest = trimmed[9..].trim();
+            let name = rest.split(&['(', '{', ' ', '\t'][..]).next().unwrap_or("").trim();
+            if !name.is_empty() {
+                items.push((1, format!("function {}()", name), line_idx));
+                continue;
+            }
+        }
+
+        // 2. name() { ... }
+        if let Some(pos) = trimmed.find("()") {
+            let prefix = trimmed[..pos].trim();
+            if !prefix.is_empty()
+                && !prefix.contains(' ')
+                && !prefix.contains('\t')
+                && !prefix.contains('$')
+                && !prefix.starts_with('-')
+            {
+                let after = trimmed[pos + 2..].trim();
+                if after.is_empty() || after.starts_with('{') {
+                    items.push((1, format!("{}()", prefix), line_idx));
+                }
+            }
+        }
+    }
+
+    build_tree_from_levels(items)
+}
+
+/// Parses YAML content and extracts mapping keys and section hierarchies.
+pub fn parse_yaml_outline(content: &str) -> Vec<OutlineNode> {
+    let mut items = Vec::new();
+
+    for (line_idx, line) in content.lines().enumerate() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') || trimmed.starts_with("---") || trimmed.starts_with("...") || trimmed.is_empty() {
+            continue;
+        }
+
+        // Find key ending with colon
+        if let Some(colon_pos) = trimmed.find(':') {
+            let key_part = trimmed[..colon_pos].trim();
+            let after_colon = trimmed[colon_pos + 1..].trim();
+
+            if (key_part.starts_with('"') && !key_part.ends_with('"'))
+                || (key_part.starts_with('\'') && !key_part.ends_with('\''))
+            {
+                continue;
+            }
+
+            let clean_key = key_part.trim_start_matches('-').trim();
+            if !clean_key.is_empty() && !clean_key.contains('\n') {
+                let leading_spaces = line.len() - trimmed.len();
+                let level = (leading_spaces / 2) + 1;
+                let display = if after_colon.is_empty() {
+                    format!("{}:", clean_key)
+                } else {
+                    format!("{}: {}", clean_key, after_colon)
+                };
+                items.push((level, display, line_idx));
+            }
+        }
+    }
+
+    build_tree_from_levels(items)
+}
+
 /// Extracts outline for a given language / extension, utilizing installed WASM plugins
-/// first, with built-in fallbacks for Markdown, Rust, Python, Go, JSON, HTML, and CSS.
+/// first, with built-in fallbacks for Markdown, Rust, Python, Go, JSON, HTML, CSS, Shell, and YAML.
 pub fn extract_outline(
     plugin_manager: Option<&mut crate::plugin::PluginManager>,
     lang_or_ext: &str,
@@ -400,6 +478,8 @@ pub fn extract_outline(
         "json" => parse_json_outline(content),
         "html" | "htm" => parse_html_outline(content),
         "css" => parse_css_outline(content),
+        "sh" | "bash" | "zsh" | "shell" => parse_shell_outline(content),
+        "yaml" | "yml" => parse_yaml_outline(content),
         _ => Vec::new(),
     }
 }
@@ -587,6 +667,42 @@ func (s *Server) Start() error {
         assert_eq!(css_nodes.len(), 2);
         assert_eq!(css_nodes[0].title, "@media (max-width: 600px)");
         assert_eq!(css_nodes[1].title, ".button");
+    }
+
+    #[test]
+    fn test_shell_and_yaml_outline_parsing() {
+        let sh = r#"
+#!/usr/bin/env bash
+
+function deploy_app() {
+    echo "deploy"
+}
+
+build_assets() {
+    npm run build
+}
+"#;
+        let sh_nodes = parse_shell_outline(sh);
+        assert_eq!(sh_nodes.len(), 2);
+        assert_eq!(sh_nodes[0].title, "function deploy_app()");
+        assert_eq!(sh_nodes[1].title, "build_assets()");
+
+        let yaml = r#"
+name: CI
+on:
+  push:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+"#;
+        let yml_nodes = parse_yaml_outline(yaml);
+        assert!(!yml_nodes.is_empty());
+        let titles: Vec<&str> = yml_nodes.iter().map(|n| n.title.as_str()).collect();
+        assert!(titles.contains(&"name: CI"));
+        assert!(titles.contains(&"on:"));
+        assert!(titles.contains(&"jobs:"));
     }
 }
 

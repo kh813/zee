@@ -1,6 +1,6 @@
 [meta]
 name = "JavaScript"
-extensions = ["js", "jsx", "ts", "tsx"]
+extensions = ["js", "mjs", "cjs", "jsx"]
 
 [[rule]]
 token = "keyword"

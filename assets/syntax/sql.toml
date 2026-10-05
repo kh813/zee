@@ -1,0 +1,48 @@
+[meta]
+name = "SQL"
+extensions = ["sql"]
+
+[[rule]]
+token = "keyword"
+pattern = "(?i)select|from|where|insert|into|values|update|set|delete|create|table|drop|alter|add|column|index|view|trigger|database|schema|join|inner|left|right|full|outer|cross|on|group|by|order|asc|desc|having|limit|offset|union|all|distinct|as|and|or|not|in|between|like|is|null|exists|case|when|then|else|end|cast|primary|key|foreign|references|check|default|unique|constraint"
+word_boundary = true
+
+[[rule]]
+token = "type_name"
+pattern = "(?i)int|integer|tinyint|smallint|bigint|decimal|numeric|float|real|double|char|varchar|nvarchar|text|boolean|date|datetime|timestamp|time|blob|json|uuid"
+word_boundary = true
+
+[[rule]]
+token = "constant"
+pattern = "(?i)true|false|null"
+word_boundary = true
+
+[[rule]]
+token = "number"
+pattern = "[0-9]+(\\.[0-9]+)?"
+word_boundary = true
+
+[[rule]]
+token = "string"
+pattern = "'.*?'"
+
+[[rule]]
+token = "string"
+pattern = "\".*?\""
+
+[[rule]]
+token = "comment"
+pattern = "--.*"
+
+[[rule]]
+token = "comment"
+start = "/\\*"
+end = "\\*/"
+
+[[rule]]
+token = "function"
+pattern = "(?i)[a-zA-Z_][a-zA-Z0-9_]*\\s*\\("
+
+[[rule]]
+token = "operator"
+pattern = "<=|>=|<>|!=|=|<|>|\\+|-|\\*|/|%|\\|\\|"

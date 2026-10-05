@@ -834,6 +834,15 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
                     MenuItem::action(i18n.get("menu.file.save"), Save {}),
                     MenuItem::action(i18n.get("menu.file.save_as"), SaveAs {}),
                     MenuItem::separator(),
+                    MenuItem::action(
+                        format!("{} {}", if config.trim_trailing_whitespace { "✓" } else { " " }, i18n.get("menu.file.trim_trailing_whitespace")),
+                        ToggleTrimTrailingWhitespace {},
+                    ),
+                    MenuItem::action(
+                        format!("{} {}", if config.ensure_final_newline { "✓" } else { " " }, i18n.get("menu.file.ensure_final_newline")),
+                        ToggleEnsureFinalNewline {},
+                    ),
+                    MenuItem::separator(),
                     MenuItem::action(i18n.get("menu.file.export_config"), ExportConfig {}),
                     MenuItem::action(i18n.get("menu.file.import_config"), ImportConfig {}),
                     MenuItem::separator(),
@@ -943,6 +952,7 @@ actions!(zee, [
     // App/File
     About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, Save, SaveAs, CloseTab,
     ReloadFile, ClearRecent,
+    ToggleTrimTrailingWhitespace, ToggleEnsureFinalNewline,
     ExportConfig, ExportAll, ImportConfig, ManagePlugins, OpenPluginsFolder, OpenTemplatesFolder,
 
     // Edit

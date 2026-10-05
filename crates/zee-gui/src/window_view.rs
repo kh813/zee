@@ -191,9 +191,7 @@ impl WindowView {
                 DialogEvent::Save(intent) => {
                     let intent = *intent;
                     this.workspace.update(cx, |w, cx| {
-                        if let Some(editor) = w.active_editor_mut() {
-                            let _ = editor.save();
-                        }
+                        let _ = w.save_active_editor();
                         if intent == UnsavedChangesIntent::Reload {
                             let _ = w.reload_active_editor();
                         }
@@ -392,9 +390,7 @@ impl WindowView {
         }
         if let Some(_path) = path_opt {
             workspace.update(cx, |w, cx| {
-                if let Some(editor) = w.active_editor_mut() {
-                    let _ = editor.save();
-                }
+                let _ = w.save_active_editor();
                 cx.notify();
             });
         } else {
@@ -408,9 +404,7 @@ impl WindowView {
                         let path = file.path().to_path_buf();
                         cx.update(|cx| {
                             workspace.update(cx, |w, cx| {
-                                if let Some(editor) = w.active_editor_mut() {
-                                    let _ = editor.save_as(&path);
-                                }
+                                let _ = w.save_as_active_editor(&path);
                                 cx.notify();
                             });
                         });
@@ -436,9 +430,7 @@ impl WindowView {
                     let path = file.path().to_path_buf();
                     cx.update(|cx| {
                         workspace.update(cx, |w, cx| {
-                            if let Some(editor) = w.active_editor_mut() {
-                                let _ = editor.save_as(&path);
-                            }
+                            let _ = w.save_as_active_editor(&path);
                             cx.notify();
                         });
                     });
@@ -683,6 +675,32 @@ impl WindowView {
                 editor.selection = None;
                 editor.selection_anchor = None;
             }
+            cx.notify();
+        });
+        #[cfg(target_os = "macos")]
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.notify();
+    }
+
+    fn handle_toggle_trim_trailing_whitespace(&mut self, _: &ToggleTrimTrailingWhitespace, _window: &mut Window, cx: &mut Context<Self>) {
+        self.config.trim_trailing_whitespace = !self.config.trim_trailing_whitespace;
+        let val = self.config.trim_trailing_whitespace;
+        let _ = Config::write_key("trim_trailing_whitespace", &val.to_string());
+        self.workspace.update(cx, |w, cx| {
+            w.config.trim_trailing_whitespace = val;
+            cx.notify();
+        });
+        #[cfg(target_os = "macos")]
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.notify();
+    }
+
+    fn handle_toggle_ensure_final_newline(&mut self, _: &ToggleEnsureFinalNewline, _window: &mut Window, cx: &mut Context<Self>) {
+        self.config.ensure_final_newline = !self.config.ensure_final_newline;
+        let val = self.config.ensure_final_newline;
+        let _ = Config::write_key("ensure_final_newline", &val.to_string());
+        self.workspace.update(cx, |w, cx| {
+            w.config.ensure_final_newline = val;
             cx.notify();
         });
         #[cfg(target_os = "macos")]
@@ -1208,6 +1226,8 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_toggle_line_numbers))
             .on_action(cx.listener(Self::handle_toggle_word_wrap))
             .on_action(cx.listener(Self::handle_toggle_vi_mode))
+            .on_action(cx.listener(Self::handle_toggle_trim_trailing_whitespace))
+            .on_action(cx.listener(Self::handle_toggle_ensure_final_newline))
             .on_action(cx.listener(Self::handle_set_encoding_utf8))
             .on_action(cx.listener(Self::handle_set_encoding_utf8_bom))
             .on_action(cx.listener(Self::handle_set_encoding_utf16_le))
@@ -1510,6 +1530,9 @@ impl WindowView {
         menu
             .child(self.render_menu_item(self.i18n.get("menu.file.save").to_string(), Some("Ctrl+S"), false, Save {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.save_as").to_string(), Some("Ctrl+Shift+S"), false, SaveAs {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_sep(border))
+            .child(self.render_menu_item(self.i18n.get("menu.file.trim_trailing_whitespace").to_string(), None, self.config.trim_trailing_whitespace, ToggleTrimTrailingWhitespace {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.ensure_final_newline").to_string(), None, self.config.ensure_final_newline, ToggleEnsureFinalNewline {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.file.export_config").to_string(), None, false, ExportConfig {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.import_config").to_string(), None, false, ImportConfig {}, fg, hover_bg, muted_fg, cx))

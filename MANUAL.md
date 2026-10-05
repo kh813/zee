@@ -16,6 +16,7 @@ It provides a native hardware-accelerated desktop application (`Zee.app` / `zeeg
 7. [Internationalization (i18n)](#7-internationalization-i18n)
 8. [SSH Usage Notes](#8-ssh-usage-notes)
 9. [Troubleshooting](#9-troubleshooting)
+10. [Roadmap & Future Plans](#10-roadmap--future-plans)
 
 ---
 
@@ -360,6 +361,12 @@ tab_size = 4
 # already in the file are always preserved as-is on disk regardless of this setting.
 expand_tab = false
 
+# Auto-cleanup on save (can also be toggled directly via File menu)
+# Automatically trim trailing spaces and tabs from lines when saving.
+trim_trailing_whitespace = true
+# Ensure file ends with a trailing newline character (\n) when saving.
+ensure_final_newline = true
+
 # GUI Font & Spacing Settings (zeeg only; ignored by zee-tui)
 # font_family = "Menlo"      # Editor monospace font family (null = system monospace)
 font_size = 14.0             # Editor font size in pixels (default: 14.0)
@@ -491,6 +498,13 @@ All other keys default to reasonable fallback values derived from `editor.foregr
 
 Syntax definition files live in `~/.config/zee/syntax/*.toml`.  
 They map **file extensions** to a set of **regex-based token rules**.
+
+### Built-in Languages (18 Languages)
+
+**zee** includes built-in syntax definitions for:
+- **Programming & Scripting**: Rust, Python, JavaScript, TypeScript, Go, C, C++, Shell Script (Bash/Zsh/sh), SQL
+- **Markup & Data**: HTML, CSS, Markdown, JSON, YAML, TOML
+- **Config & DevOps**: Dockerfile, Makefile, Diff / Patch
 
 ### Full Schema
 
@@ -763,3 +777,26 @@ Ensure your SSH client passes through mouse escape sequences. In PuTTY, enable "
 
 ### Undo clears the unsaved-changes indicator
 This is expected behavior. When you undo all changes since the last save, the file is back to its saved state and `[+]` is removed from the tab and status bar.
+
+---
+
+## 10. Roadmap & Future Plans
+
+The following features and improvements are planned for upcoming releases:
+
+### 1. Keybinding Customization System
+- Configuration-based keybindings in `~/.config/zee/keybindings.toml` (or inside `config.toml`).
+- Remappable shortcuts for all core actions, menu items, and plugin commands.
+- Support for multi-stroke key sequences and mode-specific bindings (GUI, TUI, Vi mode).
+
+### 2. Everyday Line Editing Operations
+In coordination with the keybinding customization system, convenient everyday line operations will be added:
+- **Duplicate Line / Selection**: Quick duplication of the current line or selection (e.g. `Ctrl+Shift+D` / `Cmd+Shift+D`).
+- **Move Line Up / Down**: Move current line or block of lines up or down (e.g. `Alt+Up` / `Alt+Down`).
+- **Delete Line**: Instantly delete the current line without leaving an empty line (e.g. `Ctrl+Shift+K` / `Cmd+Shift+K`).
+- **Toggle Line Comment**: Language-aware single line / block commenting (e.g. `Ctrl+/` / `Cmd+/`).
+- **Join Lines**: Join current line with the line below (`Ctrl+J` or Vi `J`).
+
+### 3. Native GUI Multi-Tab Drag & Drop
+- Rearrange editor tabs via native mouse drag and drop.
+- Detach tabs into separate windows.

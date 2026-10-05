@@ -372,9 +372,7 @@ impl Dialog {
                     });
                 } else {
                     self.workspace.update(cx, |w, _| {
-                        if let Some(editor) = w.active_editor_mut() {
-                            let _ = editor.save_as(&path);
-                        }
+                        let _ = w.save_as_active_editor(&path);
                     });
                 }
             }

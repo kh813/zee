@@ -385,6 +385,19 @@ impl App {
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.save").to_string(), action: Action::Save, shortcut: Some("Ctrl+S".to_string()) });
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.save_as").to_string(), action: Action::SaveAs, shortcut: Some("Ctrl+Shift+S".to_string()) });
         file_items.push(MenuItem::Separator);
+        file_items.push(MenuItem::Toggle {
+            label: i18n.get("menu.file.trim_trailing_whitespace").to_string(),
+            action: Action::ToggleTrimTrailingWhitespace,
+            checked: config.trim_trailing_whitespace,
+            is_radio: false,
+        });
+        file_items.push(MenuItem::Toggle {
+            label: i18n.get("menu.file.ensure_final_newline").to_string(),
+            action: Action::ToggleEnsureFinalNewline,
+            checked: config.ensure_final_newline,
+            is_radio: false,
+        });
+        file_items.push(MenuItem::Separator);
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.close").to_string(), action: Action::Close, shortcut: Some("Ctrl+W".to_string()) });
         file_items.push(MenuItem::Separator);
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.exit").to_string(), action: Action::Exit, shortcut: Some("Ctrl+Q".to_string()) });
@@ -1999,19 +2012,19 @@ impl App {
                                     )));
                                     return;
                                 }
-                                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                                    if let Some(enc) = enc {
+                                if let Some(enc) = enc {
+                                    if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                                         buffer.encoding = enc;
                                     }
-                                    if let Err(e) = buffer.save_as(&path) {
-                                        if let Some(ref mut dialog) = self.current_dialog {
-                                            dialog.set_error(format!("Error: {}", e));
-                                        }
-                                        return;
-                                    }
-                                    self.menus = Self::build_menus(&self.i18n, &self.config, Some(buffer), &self.themes, &self.syntax_defs);
-                                    self.recompute_layout();
                                 }
+                                if let Err(e) = self.save_as_buffer(self.active_buffer, &path) {
+                                    if let Some(ref mut dialog) = self.current_dialog {
+                                        dialog.set_error(format!("Error: {}", e));
+                                    }
+                                    return;
+                                }
+                                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                self.recompute_layout();
                             }
                             _ => {}
                         }
@@ -2030,37 +2043,33 @@ impl App {
                         self.pending_op = PendingOp::None;
                         match op {
                             PendingOp::Close | PendingOp::Exit => {
-                                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                                    if let Ok(()) = buffer.save() {
-                                        if op == PendingOp::Exit {
-                                            self.perform_action(Action::Exit);
-                                        } else {
-                                            self.buffers.remove(self.active_buffer);
-                                            if self.buffers.is_empty() {
-                                                self.buffers.push(self.new_editor());
-                                            }
-                                            self.active_buffer = self.active_buffer.min(self.buffers.len() - 1);
-                                            self.update_active_outline();
-                                            self.recompute_layout();
+                                if let Ok(()) = self.save_buffer(self.active_buffer) {
+                                    if op == PendingOp::Exit {
+                                        self.perform_action(Action::Exit);
+                                    } else {
+                                        self.buffers.remove(self.active_buffer);
+                                        if self.buffers.is_empty() {
+                                            self.buffers.push(self.new_editor());
                                         }
+                                        self.active_buffer = self.active_buffer.min(self.buffers.len() - 1);
+                                        self.update_active_outline();
+                                        self.recompute_layout();
                                     }
                                 }
                             }
                             PendingOp::SaveAs => {
                                 if let Some(path) = self.target_path.take() {
-                                    if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                                        let _ = buffer.save_as(&path);
-                                        self.recompute_layout();
-                                    }
+                                    let _ = self.save_as_buffer(self.active_buffer, &path);
+                                    self.recompute_layout();
                                 }
                             }
                             PendingOp::Reload => {
+                                let _ = self.save_buffer(self.active_buffer);
                                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                                    let _ = buffer.save();
                                     let _ = buffer.reload_from_disk();
-                                    self.update_active_outline();
-                                    self.recompute_layout();
                                 }
+                                self.update_active_outline();
+                                self.recompute_layout();
                             }
                             _ => {
                                 self.perform_action(Action::Save);
@@ -2594,6 +2603,24 @@ impl App {
         }
     }
 
+    pub fn save_buffer(&mut self, idx: usize) -> anyhow::Result<()> {
+        if let Some(buffer) = self.buffers.get_mut(idx) {
+            buffer.cleanup_on_save(self.config.trim_trailing_whitespace, self.config.ensure_final_newline);
+            buffer.save()
+        } else {
+            anyhow::bail!("Buffer not found")
+        }
+    }
+
+    pub fn save_as_buffer(&mut self, idx: usize, path: &std::path::Path) -> anyhow::Result<()> {
+        if let Some(buffer) = self.buffers.get_mut(idx) {
+            buffer.cleanup_on_save(self.config.trim_trailing_whitespace, self.config.ensure_final_newline);
+            buffer.save_as(path)
+        } else {
+            anyhow::bail!("Buffer not found")
+        }
+    }
+
     fn perform_action(&mut self, action: Action) {
         match action {
             Action::New => {
@@ -2683,18 +2710,15 @@ impl App {
                 self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
             }
             Action::Save => {
-                let needs_save_as = if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    if buffer.path.is_some() {
-                        let _ = buffer.save();
-                        false
-                    } else {
-                        true
-                    }
+                let needs_save_as = if let Some(buffer) = self.buffers.get(self.active_buffer) {
+                    buffer.path.is_none()
                 } else {
                     false
                 };
                 if needs_save_as {
                     self.perform_action(Action::SaveAs);
+                } else {
+                    let _ = self.save_buffer(self.active_buffer);
                 }
             }
             Action::SaveAs => {
@@ -2895,6 +2919,16 @@ impl App {
                 }
                 self.is_vi_cmd_mode = false;
                 self.vi_cmd.clear();
+            }
+            Action::ToggleTrimTrailingWhitespace => {
+                self.config.trim_trailing_whitespace = !self.config.trim_trailing_whitespace;
+                let _ = Config::write_key("trim_trailing_whitespace", &self.config.trim_trailing_whitespace.to_string());
+                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+            }
+            Action::ToggleEnsureFinalNewline => {
+                self.config.ensure_final_newline = !self.config.ensure_final_newline;
+                let _ = Config::write_key("ensure_final_newline", &self.config.ensure_final_newline.to_string());
+                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
             }
             Action::About => {
                 self.focus = Focus::Dialog;

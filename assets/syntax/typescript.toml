@@ -1,0 +1,57 @@
+[meta]
+name = "TypeScript"
+extensions = ["ts", "tsx", "jsx", "mts", "cts"]
+
+[[rule]]
+token = "keyword"
+pattern = "as|async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|enum|export|extends|false|finally|for|from|function|get|if|implements|import|in|instanceof|interface|let|new|null|of|package|private|protected|public|readonly|return|set|static|super|switch|this|throw|true|try|type|typeof|var|void|while|with|yield|declare|namespace|module|abstract|is|keyof|override|satisfies"
+word_boundary = true
+
+[[rule]]
+token = "type_name"
+pattern = "string|number|boolean|any|unknown|never|symbol|bigint|object|void|Record|Array|Promise|Partial|Required|Readonly|Pick|Omit|Exclude|Extract|NonNullable|Parameters|ReturnType|InstanceType"
+word_boundary = true
+
+[[rule]]
+token = "constant"
+pattern = "true|false|null|undefined|NaN|Infinity"
+word_boundary = true
+
+[[rule]]
+token = "number"
+pattern = "[0-9]+(\\.[0-9]+)?"
+word_boundary = true
+
+[[rule]]
+token = "string"
+pattern = "\".*?\""
+
+[[rule]]
+token = "string"
+pattern = "'.*?'"
+
+[[rule]]
+token = "string"
+start = "`"
+end = "`"
+
+[[rule]]
+token = "comment"
+pattern = "//.*"
+
+[[rule]]
+token = "comment"
+start = "/\\*"
+end = "\\*/"
+
+[[rule]]
+token = "attribute"
+pattern = "@[a-zA-Z_][a-zA-Z0-9_]*"
+
+[[rule]]
+token = "function"
+pattern = "[a-zA-Z_][a-zA-Z0-9_]*\\s*\\("
+
+[[rule]]
+token = "operator"
+pattern = "=>|===|!==|==|!=|<=|>=|&&|\\|\\||\\?\\?|\\?\\.|[+\\-*/%&|^!~=<>?:]"

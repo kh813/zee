@@ -1503,6 +1503,63 @@ impl Editor {
         }
     }
 
+    /// Cleans up trailing whitespace on each line and/or ensures the document ends with a newline character.
+    /// Returns true if the buffer was modified.
+    pub fn cleanup_on_save(&mut self, trim_trailing_whitespace: bool, ensure_final_newline: bool) -> bool {
+        let mut modified = false;
+        let orig_cursor = self.cursor;
+
+        if trim_trailing_whitespace {
+            let num_lines = self.rope.len_lines();
+            // Process lines from bottom to top to keep character indices of earlier lines intact
+            for line_idx in (0..num_lines).rev() {
+                let line_start_char = self.rope.line_to_char(line_idx);
+                let line_slice = self.rope.line(line_idx);
+                let line_str = line_slice.to_string();
+
+                let trimmed_end = line_str.trim_end_matches(['\r', '\n']);
+                let without_ws = trimmed_end.trim_end_matches([' ', '\t']);
+
+                if without_ws.len() < trimmed_end.len() {
+                    let ws_chars_count = trimmed_end.chars().count() - without_ws.chars().count();
+                    let del_start = line_start_char + without_ws.chars().count();
+                    let del_end = del_start + ws_chars_count;
+                    self.rope.remove(del_start..del_end);
+                    modified = true;
+                }
+            }
+        }
+
+        if ensure_final_newline && self.rope.len_chars() > 0 {
+            let last_char = self.rope.char(self.rope.len_chars() - 1);
+            if last_char != '\n' && last_char != '\r' {
+                let nl = match self.line_ending {
+                    LineEnding::Lf => "\n",
+                    LineEnding::Crlf => "\r\n",
+                    LineEnding::Cr => "\r",
+                };
+                self.rope.insert(self.rope.len_chars(), nl);
+                modified = true;
+            }
+        }
+
+        if modified {
+            self.cursor = orig_cursor.min(self.rope.len_chars());
+            if let Some(ref mut sel) = self.selection {
+                sel.start = sel.start.min(self.rope.len_chars());
+                sel.end = sel.end.min(self.rope.len_chars());
+            }
+            if let Some(ref mut anchor) = self.selection_anchor {
+                *anchor = (*anchor).min(self.rope.len_chars());
+            }
+            let num_lines = self.rope.len_lines();
+            self.update_line_states(0, num_lines);
+            self.modified_since_save = true;
+        }
+
+        modified
+    }
+
     pub fn save(&mut self) -> Result<()> {
         if let Some(path) = self.path.clone() {
             self.save_as(path)
@@ -2012,6 +2069,41 @@ mod tests {
         assert!(editor.syntax_highlighter.is_some());
         assert_eq!(editor.syntax_highlighter.as_ref().unwrap().def.meta.name, "Shell");
         let _ = std::fs::remove_file(&bin_script);
+    }
+
+    #[test]
+    fn test_syntax_detection_all_new_languages() {
+        let temp_dir = std::env::temp_dir();
+
+        let yaml_file = temp_dir.join("config.yaml");
+        std::fs::write(&yaml_file, "name: zee\nversion: 0.1.9\n").unwrap();
+        let ed_yaml = Editor::from_file(&yaml_file).unwrap();
+        assert_eq!(ed_yaml.syntax_highlighter.as_ref().unwrap().def.meta.name, "YAML");
+        let _ = std::fs::remove_file(&yaml_file);
+
+        let ts_file = temp_dir.join("app.tsx");
+        std::fs::write(&ts_file, "const App: React.FC = () => <div>Hello</div>;\n").unwrap();
+        let ed_ts = Editor::from_file(&ts_file).unwrap();
+        assert_eq!(ed_ts.syntax_highlighter.as_ref().unwrap().def.meta.name, "TypeScript");
+        let _ = std::fs::remove_file(&ts_file);
+
+        let c_file = temp_dir.join("main.c");
+        std::fs::write(&c_file, "int main() { return 0; }\n").unwrap();
+        let ed_c = Editor::from_file(&c_file).unwrap();
+        assert_eq!(ed_c.syntax_highlighter.as_ref().unwrap().def.meta.name, "C");
+        let _ = std::fs::remove_file(&c_file);
+
+        let cpp_file = temp_dir.join("main.cpp");
+        std::fs::write(&cpp_file, "#include <iostream>\nint main() { std::cout << \"Hi\"; }\n").unwrap();
+        let ed_cpp = Editor::from_file(&cpp_file).unwrap();
+        assert_eq!(ed_cpp.syntax_highlighter.as_ref().unwrap().def.meta.name, "C++");
+        let _ = std::fs::remove_file(&cpp_file);
+
+        let sql_file = temp_dir.join("query.sql");
+        std::fs::write(&sql_file, "SELECT id, name FROM users WHERE active = true;\n").unwrap();
+        let ed_sql = Editor::from_file(&sql_file).unwrap();
+        assert_eq!(ed_sql.syntax_highlighter.as_ref().unwrap().def.meta.name, "SQL");
+        let _ = std::fs::remove_file(&sql_file);
     }
 
     #[test]
@@ -2778,6 +2870,41 @@ mod tests {
         assert!(!editor.is_modified());
 
         let _ = std::fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_cleanup_on_save() {
+        let mut editor = Editor::new();
+        editor.insert(0, "hello   \nworld\t\t \nfoo");
+        
+        // Trim trailing whitespace and ensure newline
+        let modified = editor.cleanup_on_save(true, true);
+        assert!(modified);
+        assert_eq!(editor.rope.to_string(), "hello\nworld\nfoo\n");
+
+        // Second cleanup does nothing
+        let modified2 = editor.cleanup_on_save(true, true);
+        assert!(!modified2);
+        assert_eq!(editor.rope.to_string(), "hello\nworld\nfoo\n");
+
+        // Test with flag off
+        let mut editor2 = Editor::new();
+        editor2.insert(0, "line 1   \nline 2");
+        let modified_off = editor2.cleanup_on_save(false, false);
+        assert!(!modified_off);
+        assert_eq!(editor2.rope.to_string(), "line 1   \nline 2");
+
+        // Test only trim whitespace
+        let mut editor3 = Editor::new();
+        editor3.insert(0, "abc   \ndef   ");
+        editor3.cleanup_on_save(true, false);
+        assert_eq!(editor3.rope.to_string(), "abc\ndef");
+
+        // Test only ensure newline
+        let mut editor4 = Editor::new();
+        editor4.insert(0, "abc");
+        editor4.cleanup_on_save(false, true);
+        assert_eq!(editor4.rope.to_string(), "abc\n");
     }
 }
 

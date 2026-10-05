@@ -92,6 +92,8 @@ impl I18n {
         m.insert("menu.file.reload".to_string(), "Reload File".to_string());
         m.insert("menu.file.save".to_string(), "Save".to_string());
         m.insert("menu.file.save_as".to_string(), "Save As…".to_string());
+        m.insert("menu.file.trim_trailing_whitespace".to_string(), "Trim Trailing Whitespace on Save".to_string());
+        m.insert("menu.file.ensure_final_newline".to_string(), "Ensure Final Newline on Save".to_string());
         m.insert("menu.file.close".to_string(), "Close".to_string());
         m.insert("menu.file.exit".to_string(), "Exit".to_string());
 
@@ -261,6 +263,8 @@ impl I18n {
         m.insert("menu.file.reload".to_string(), "ファイルを再読み込み".to_string());
         m.insert("menu.file.save".to_string(), "保存".to_string());
         m.insert("menu.file.save_as".to_string(), "名前を付けて保存…".to_string());
+        m.insert("menu.file.trim_trailing_whitespace".to_string(), "保存時に行末の空白を削除".to_string());
+        m.insert("menu.file.ensure_final_newline".to_string(), "保存時に末尾改行を付与".to_string());
         m.insert("menu.file.close".to_string(), "閉じる".to_string());
         m.insert("menu.file.exit".to_string(), "終了".to_string());
 

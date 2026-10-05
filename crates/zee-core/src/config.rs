@@ -14,6 +14,8 @@ pub struct Config {
     pub sidebar_position: String,
     pub tab_size: usize,
     pub expand_tab: bool,
+    pub trim_trailing_whitespace: bool,
+    pub ensure_final_newline: bool,
     // GUI specific customization (CLI ignores font settings)
     pub font_family: Option<String>,
     pub font_size: f32,
@@ -34,6 +36,8 @@ impl Default for Config {
             sidebar_position: "right".to_string(),
             tab_size: 4,
             expand_tab: false,
+            trim_trailing_whitespace: true,
+            ensure_final_newline: true,
             font_family: None,
             font_size: 12.0,
             line_height: 19.0,
@@ -80,6 +84,8 @@ impl Config {
                     },
                     "tab_size" => if let Some(i) = v.as_integer() { config.tab_size = i as usize; },
                     "expand_tab" => if let Some(b) = v.as_bool() { config.expand_tab = b; },
+                    "trim_trailing_whitespace" => if let Some(b) = v.as_bool() { config.trim_trailing_whitespace = b; },
+                    "ensure_final_newline" => if let Some(b) = v.as_bool() { config.ensure_final_newline = b; },
                     "font_family" => if let Some(s) = v.as_str() { config.font_family = Some(s.to_string()); },
                     "font_size" => {
                         if let Some(f) = v.as_float() {

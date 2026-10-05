@@ -171,6 +171,28 @@ impl Workspace {
         self.editors.get_mut(self.active_editor_index)
     }
 
+    pub fn save_active_editor(&mut self) -> anyhow::Result<()> {
+        let trim = self.config.trim_trailing_whitespace;
+        let ensure_nl = self.config.ensure_final_newline;
+        if let Some(editor) = self.active_editor_mut() {
+            editor.cleanup_on_save(trim, ensure_nl);
+            editor.save()
+        } else {
+            anyhow::bail!("No active editor")
+        }
+    }
+
+    pub fn save_as_active_editor<P: AsRef<std::path::Path>>(&mut self, path: P) -> anyhow::Result<()> {
+        let trim = self.config.trim_trailing_whitespace;
+        let ensure_nl = self.config.ensure_final_newline;
+        if let Some(editor) = self.active_editor_mut() {
+            editor.cleanup_on_save(trim, ensure_nl);
+            editor.save_as(path)
+        } else {
+            anyhow::bail!("No active editor")
+        }
+    }
+
     #[allow(dead_code)]
     pub fn find_editor_by_path(&self, path: &std::path::Path) -> Option<usize> {
         self.editors.iter().position(|e| e.path.as_ref() == Some(&path.to_path_buf()))

@@ -26,6 +26,8 @@ pub enum Action {
     ClearRecent,
     Save,
     SaveAs,
+    ToggleTrimTrailingWhitespace,
+    ToggleEnsureFinalNewline,
     Close,
     Exit,
 

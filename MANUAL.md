@@ -250,16 +250,40 @@ In the desktop GUI, hold the `Alt` key (Option on macOS) while dragging the mous
 
 ### Vi / Vim Mode Commands (Normal, Visual, Visual Line & Visual Block Modes)
 
-Toggle Vi Mode with `Ctrl+I` (`⌘I` on macOS) or via `View > [x] Vi Mode`.
+Toggle Vi Mode with `Ctrl+I` (`⌘I` on macOS) or via `View > [x] Vi Mode`. When active, a Vim-standard 2-row bottom bar appears across both GUI and TUI: the upper row displays status indicators, while the bottom row serves as a dedicated command line (`:`) and message feedback area.
+
+#### Ex Commands (`:`)
+Press `:` in Normal or Visual mode (or `Shift+;` on US keyboards / full-width `：` with IME on) to enter the command line:
+
+| Command | Action | Notes |
+| :--- | :--- | :--- |
+| `:w` / `:w!` | Save buffer | Shows `"[filename]" written` |
+| `:w <path>` / `:w! <path>` | Save As / write to path | Shows `"[filename]" [New] written` |
+| `:q` / `:q!` | Close active tab | Warns `E37: No write since last change` if unsaved (`!` overrides) |
+| `:wq [path]` / `:x` | Save and close tab | Combines write and close |
+| `:qa` / `:qa!` | Quit all tabs | Warns if any tab has unsaved changes (`!` overrides) |
+| `:wqa` | Save all tabs and quit | Writes all modified buffers before quitting |
+| `:e [path]` / `:e!` | Open or reload file | `:e path` opens file in a new tab; `:e!` reloads current buffer from disk |
+| `:<number>` (e.g. `:42`) | Jump to line | Moves cursor to the specified line number (1-based) |
+| `:noh` / `:nohlsearch` | Clear search highlight | Clears active find match indicators |
+| `:bn` / `:bnext` | Next tab | Switches to the next open tab |
+| `:bp` / `:bprev` | Previous tab | Switches to the previous open tab |
+| `:set nu` / `:set number` | Enable line numbers | Turns line numbers on |
+| `:set nonu` / `:set nonumber`| Disable line numbers | Turns line numbers off |
+| `:set wrap` / `:set nowrap` | Toggle word wrap | Enables or disables line wrapping |
+| `Esc` | Cancel command line | Clears pending command without executing |
 
 #### Normal Mode
 - **Motions**: `h` / `j` / `k` / `l` (left/down/up/right), `w` / `b` / `e` (word forward/backward/end), `0` / `^` (line start/first non-blank), `$` (line end), `gg` / `G` (document start/end).
+- **Inline Character Search**: `f<char>` (forward find), `F<char>` (backward find), `t<char>` (until char forward), `T<char>` (until char backward), `;` (repeat last inline find).
+- **Indentation**: `>>` (indent line), `<<` (unindent line).
+- **Bracket Matching**: `%` (jump to matching bracket `()`, `{}`, `[]`).
 - **Mode Switching**: 
   - `i` (insert at cursor), `I` (insert at line start), `a` (append after cursor), `A` (append at line end), `o` (open newline below), `O` (open newline above).
   - `v` (Visual character mode), `V` (Visual Line mode), `Ctrl+V` / `⌘V` (Visual Block / rectangular selection mode).
   - `Esc` (clear selection/pending operator).
 - **Operators & Deletion**:
-  - `x` (delete character), `r<char>` (replace character).
+  - `x` (delete character), `r<char>` (replace character with `<char>`), `~` (toggle case at cursor).
   - `dw` (delete word), `de` (delete to word end), `db` (delete to word start), `d$` / `D` (delete to line end), `d0` / `d^` (delete to line start), `dd` (delete line).
 - **Change**:
   - `cw` / `ce` / `cb` / `c$` / `c0` / `c^` (change motion to Insert mode), `C` (change to line end), `cc` / `S` (change whole line), `s` (substitute character).
@@ -267,10 +291,11 @@ Toggle Vi Mode with `Ctrl+I` (`⌘I` on macOS) or via `View > [x] Vi Mode`.
   - `yw` / `ye` / `yb` / `y$` / `y0` / `y^` (yank motion), `yy` / `Y` (yank whole line).
   - `p` (paste after cursor / below line), `P` (paste before cursor / above line).
 - **Other**: `u` (undo), `J` (join next line).
+- **IME Transparency**: Japanese IME keystrokes are automatically normalized in Normal mode (e.g., `っ` triggers `dd`, `い` triggers `i`, full-width numbers/symbols trigger motions).
 
 #### Visual & Visual Line Modes (`v` / `V`)
 - **Navigation & Selection**: `h` / `j` / `k` / `l`, `w` / `b` / `e`, `0`, `$` to expand/contract selection.
-- **Operations on Selection**: `y` (yank), `d` / `x` (cut), `c` / `s` (cut and enter Insert mode), `p` (replace selection with clipboard), `Esc` (return to Normal mode).
+- **Operations on Selection**: `y` (yank), `d` / `x` (cut), `c` / `s` (cut and enter Insert mode), `p` (replace selection with clipboard), `:` (enter Ex command line for selection), `Esc` (return to Normal mode).
 
 #### Visual Block Mode (Rectangular Selection / `Ctrl+V` or `⌘V`)
 - **Navigation**: `h` / `j` / `k` / `l`, `0`, `$` to select a rectangular column area across multiple lines.

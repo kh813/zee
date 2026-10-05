@@ -39,6 +39,8 @@
 - [x] **Plugins Menu in Menu Bar**:
   - [x] Top-level "Plugins" menu dynamically listing active plugins and their commands
   - [x] Execution of plugin transforms on active buffer or selection with undo/redo support
+- [x] **Plugin Development Guide**:
+  - [x] Comprehensive developer tutorial and boilerplate reference documented in `docs/plugin_development_guide.md`
 
 ### Editing & Selection Enhancements
 - [ ] **Rectangular / Column Selection (矩形選択 - 今後予定)**:

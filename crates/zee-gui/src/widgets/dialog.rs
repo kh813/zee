@@ -1142,6 +1142,12 @@ impl Dialog {
                     .flex()
                     .flex_col()
                     .gap_3p5()
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                        if this.settings_dropdown.is_some() {
+                            this.settings_dropdown = None;
+                            cx.notify();
+                        }
+                    }))
                     .child(
                         div()
                             .flex()
@@ -1166,6 +1172,8 @@ impl Dialog {
                     // Theme dropdown section
                     .child(
                         div()
+                            .relative()
+                            
                             .flex()
                             .flex_col()
                             .gap_1p5()
@@ -1176,105 +1184,120 @@ impl Dialog {
                                     .text_color(with_alpha(fg, 0.75))
                                     .child(self.i18n.get("dialog.settings.theme").to_string())
                             )
-                            // Dropdown trigger button
+                            // Anchor container for trigger and floating popup
                             .child(
                                 div()
-                                    .h(px(32.0))
+                                    .relative()
                                     .w_full()
-                                    .px_3()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(if is_theme_open { accent } else { chip_border })
-                                    .bg(input_bg)
-                                    .cursor_pointer()
-                                    .hover(|s| s.opacity(0.9))
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.settings_dropdown = if this.settings_dropdown == Some(SettingsDropdown::Theme) {
-                                            None
-                                        } else {
-                                            Some(SettingsDropdown::Theme)
-                                        };
-                                        cx.notify();
-                                    }))
                                     .child(
+                                        // Dropdown trigger button
                                         div()
-                                            .text_size(px(12.5))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(current_theme_name.clone())
+                                            .h(px(32.0))
+                                            .w_full()
+                                            .px_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(if is_theme_open { accent } else { chip_border })
+                                            .bg(input_bg)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.settings_dropdown = if this.settings_dropdown == Some(SettingsDropdown::Theme) {
+                                                    None
+                                                } else {
+                                                    Some(SettingsDropdown::Theme)
+                                                };
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.5))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(current_theme_name.clone())
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .text_color(with_alpha(fg, 0.6))
+                                                    .child(if is_theme_open { "▲" } else { "▼" })
+                                            )
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.0))
-                                            .text_color(with_alpha(fg, 0.6))
-                                            .child(if is_theme_open { "▲" } else { "▼" })
-                                    )
-                            )
-                            // Dropdown list
-                            .children(if is_theme_open {
-                                Some(
-                                    div()
-                                        .id("settings-theme-dropdown-list")
-                                        .w_full()
-                                        .max_h(px(160.0))
-                                        .overflow_y_scroll()
-                                        .rounded_md()
-                                        .border_1()
-                                        .border_color(accent)
-                                        .bg(input_bg)
-                                        .p_1()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_0p5()
-                                        .children(themes.into_iter().map(|t| {
-                                            let is_active = t.meta.name == current_theme_name;
-                                            let t_name = t.meta.name.clone();
-                                            let t_slug = t_name.to_lowercase().replace(' ', "-");
-                                            
+                                    // Floating dropdown popup
+                                    .children(if is_theme_open {
+                                        Some(
                                             div()
-                                                .h(px(28.0))
-                                                .px_2p5()
+                                                .id("settings-theme-dropdown-list")
+                                                .absolute()
+                                                .top(px(36.0))
+                                                .left_0()
+                                                .right_0()
+                                                .w_full()
+                                                .max_h(px(200.0))
+                                                .overflow_y_scroll()
+                                                .rounded_md()
+                                                .border_1()
+                                                .border_color(accent)
+                                                .bg(input_bg)
+                                                .shadow_2xl()
+                                                .p_1()
                                                 .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .rounded_sm()
-                                                .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
-                                                .cursor_pointer()
-                                                .hover(|s| s.bg(with_alpha(fg, 0.12)))
-                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                    this.workspace.update(cx, |w, cx| {
-                                                        if let Some(theme) = zee_core::theme::Theme::find_by_name(&t_slug) {
-                                                            w.theme = theme;
-                                                            let _ = zee_core::config::Config::write_key("theme", &t_slug);
+                                                .flex_col()
+                                                .gap_0p5()
+                                                .children(themes.into_iter().map(|t| {
+                                                    let is_active = t.meta.name == current_theme_name;
+                                                    let t_name = t.meta.name.clone();
+                                                    let t_slug = t_name.to_lowercase().replace(' ', "-");
+                                                    
+                                                    div()
+                                                        .h(px(28.0))
+                                                        .px_2p5()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .rounded_sm()
+                                                        .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.bg(with_alpha(fg, 0.12)))
+                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            this.workspace.update(cx, |w, cx| {
+                                                                if let Some(theme) = zee_core::theme::Theme::find_by_name(&t_slug) {
+                                                                    w.theme = theme;
+                                                                    let _ = zee_core::config::Config::write_key("theme", &t_slug);
+                                                                    cx.notify();
+                                                                }
+                                                            });
+                                                            this.settings_dropdown = None;
                                                             cx.notify();
-                                                        }
-                                                    });
-                                                    this.settings_dropdown = None;
-                                                    cx.notify();
+                                                        }))
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(12.0))
+                                                                .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                                                .child(t_name)
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(11.0))
+                                                                .text_color(accent)
+                                                                .child(if is_active { "✓" } else { "" })
+                                                        )
                                                 }))
-                                                .child(
-                                                    div()
-                                                        .text_size(px(12.0))
-                                                        .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                                                        .child(t_name)
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.0))
-                                                        .text_color(accent)
-                                                        .child(if is_active { "✓" } else { "" })
-                                                )
-                                        }))
-                                )
-                            } else {
-                                None
-                            })
+                                        )
+                                    } else {
+                                        None
+                                    })
+                            )
                     )
                     // Font Family dropdown section
                     .child(
                         div()
+                            .relative()
+                            
                             .flex()
                             .flex_col()
                             .gap_1p5()
@@ -1285,102 +1308,115 @@ impl Dialog {
                                     .text_color(with_alpha(fg, 0.75))
                                     .child(self.i18n.get("dialog.settings.font_family").to_string())
                             )
-                            // Dropdown trigger button
+                            // Anchor container for trigger and floating popup
                             .child(
                                 div()
-                                    .h(px(32.0))
+                                    .relative()
                                     .w_full()
-                                    .px_3()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(if is_font_open { accent } else { chip_border })
-                                    .bg(input_bg)
-                                    .cursor_pointer()
-                                    .hover(|s| s.opacity(0.9))
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        this.settings_dropdown = if this.settings_dropdown == Some(SettingsDropdown::Font) {
-                                            None
-                                        } else {
-                                            Some(SettingsDropdown::Font)
-                                        };
-                                        cx.notify();
-                                    }))
                                     .child(
+                                        // Dropdown trigger button
                                         div()
-                                            .text_size(px(12.5))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .child(current_font_label)
+                                            .h(px(32.0))
+                                            .w_full()
+                                            .px_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(if is_font_open { accent } else { chip_border })
+                                            .bg(input_bg)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.settings_dropdown = if this.settings_dropdown == Some(SettingsDropdown::Font) {
+                                                    None
+                                                } else {
+                                                    Some(SettingsDropdown::Font)
+                                                };
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.5))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(current_font_label)
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .text_color(with_alpha(fg, 0.6))
+                                                    .child(if is_font_open { "▲" } else { "▼" })
+                                            )
                                     )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.0))
-                                            .text_color(with_alpha(fg, 0.6))
-                                            .child(if is_font_open { "▲" } else { "▼" })
-                                    )
-                            )
-                            // Dropdown list
-                            .children(if is_font_open {
-                                Some(
-                                    div()
-                                        .id("settings-font-dropdown-list")
-                                        .w_full()
-                                        .max_h(px(160.0))
-                                        .overflow_y_scroll()
-                                        .rounded_md()
-                                        .border_1()
-                                        .border_color(accent)
-                                        .bg(input_bg)
-                                        .p_1()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_0p5()
-                                        .children(font_options.into_iter().map(|(font_opt, label)| {
-                                            let is_active = match (&font_opt, &workspace.config.font_family) {
-                                                (None, None) => true,
-                                                (Some(a), Some(b)) => a == b,
-                                                _ => false,
-                                            };
-                                            let font_val = font_opt.clone();
-                                            
+                                    // Floating dropdown popup
+                                    .children(if is_font_open {
+                                        Some(
                                             div()
-                                                .h(px(28.0))
-                                                .px_2p5()
+                                                .id("settings-font-dropdown-list")
+                                                .absolute()
+                                                .top(px(36.0))
+                                                .left_0()
+                                                .right_0()
+                                                .w_full()
+                                                .max_h(px(200.0))
+                                                .overflow_y_scroll()
+                                                .rounded_md()
+                                                .border_1()
+                                                .border_color(accent)
+                                                .bg(input_bg)
+                                                .shadow_2xl()
+                                                .p_1()
                                                 .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .rounded_sm()
-                                                .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
-                                                .cursor_pointer()
-                                                .hover(|s| s.bg(with_alpha(fg, 0.12)))
-                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                    this.workspace.update(cx, |w, cx| {
-                                                        w.config.font_family = font_val.clone();
-                                                        let _ = zee_core::config::Config::write_key("font_family", font_val.as_deref().unwrap_or(""));
-                                                        cx.notify();
-                                                    });
-                                                    this.settings_dropdown = None;
-                                                    cx.notify();
+                                                .flex_col()
+                                                .gap_0p5()
+                                                .children(font_options.into_iter().map(|(font_opt, label)| {
+                                                    let is_active = match (&font_opt, &workspace.config.font_family) {
+                                                        (None, None) => true,
+                                                        (Some(a), Some(b)) => a == b,
+                                                        _ => false,
+                                                    };
+                                                    let font_val = font_opt.clone();
+                                                    
+                                                    div()
+                                                        .h(px(28.0))
+                                                        .px_2p5()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .rounded_sm()
+                                                        .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.bg(with_alpha(fg, 0.12)))
+                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            this.workspace.update(cx, |w, cx| {
+                                                                w.config.font_family = font_val.clone();
+                                                                let _ = zee_core::config::Config::write_key("font_family", font_val.as_deref().unwrap_or(""));
+                                                                cx.notify();
+                                                            });
+                                                            this.settings_dropdown = None;
+                                                            cx.notify();
+                                                        }))
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(12.0))
+                                                                .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                                                .child(label)
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(11.0))
+                                                                .text_color(accent)
+                                                                .child(if is_active { "✓" } else { "" })
+                                                        )
                                                 }))
-                                                .child(
-                                                    div()
-                                                        .text_size(px(12.0))
-                                                        .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                                                        .child(label)
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_size(px(11.0))
-                                                        .text_color(accent)
-                                                        .child(if is_active { "✓" } else { "" })
-                                                )
-                                        }))
-                                )
-                            } else {
-                                None
-                            })
+                                        )
+                                    } else {
+                                        None
+                                    })
+                            )
                     )
                     // Steppers (Font Size, Line Height, UI Size)
                     .child(

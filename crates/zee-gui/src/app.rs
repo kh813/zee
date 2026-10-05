@@ -668,6 +668,19 @@ impl Action for OpenRecent {
     fn name_for_type() -> &'static str { "OpenRecent" }
 }
 
+#[derive(serde::Deserialize, PartialEq, Eq, Clone, Debug)]
+pub struct ApplyTemplate {
+    pub id: String,
+}
+
+impl Action for ApplyTemplate {
+    fn name(&self) -> &'static str { "ApplyTemplate" }
+    fn boxed_clone(&self) -> Box<dyn Action> { Box::new(self.clone()) }
+    fn build(v: gpui::private::serde_json::Value) -> Result<Box<dyn Action>> { Ok(Box::new(serde_json::from_value::<Self>(v)?)) }
+    fn partial_eq(&self, _other: &dyn Action) -> bool { false }
+    fn name_for_type() -> &'static str { "ApplyTemplate" }
+}
+
 #[cfg(target_os = "macos")]
 pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec<Menu> {
     let mut theme_items = Vec::new();
@@ -786,8 +799,27 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
                     recent_items.push(MenuItem::action(i18n.get("menu.file.clear_recent"), ClearRecent {}));
                 }
 
+                let templates = zee_core::template::Template::load_all();
+                let mut template_items = Vec::new();
+                for tpl in &templates {
+                    template_items.push(MenuItem::action(
+                        tpl.name.clone(),
+                        ApplyTemplate { id: tpl.id.clone() },
+                    ));
+                }
+                template_items.push(MenuItem::separator());
+                template_items.push(MenuItem::action(
+                    i18n.get("menu.file.open_templates_folder"),
+                    OpenTemplatesFolder {},
+                ));
+
                 vec![
                     MenuItem::action(i18n.get("menu.file.new_tab"), NewTab {}),
+                    MenuItem::submenu(Menu {
+                        name: i18n.get("menu.file.new_from_template").into(),
+                        items: template_items,
+                        disabled: false,
+                    }),
                     MenuItem::action(i18n.get("menu.file.new_window"), NewWindow {}),
                     MenuItem::action(i18n.get("menu.file.open"), Open {}),
                     MenuItem::action(i18n.get("menu.file.open_folder"), OpenFolder {}),
@@ -911,7 +943,7 @@ actions!(zee, [
     // App/File
     About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, Save, SaveAs, CloseTab,
     ReloadFile, ClearRecent,
-    ExportConfig, ExportAll, ImportConfig, ManagePlugins, OpenPluginsFolder,
+    ExportConfig, ExportAll, ImportConfig, ManagePlugins, OpenPluginsFolder, OpenTemplatesFolder,
 
     // Edit
     Undo, Redo, Cut, Copy, Paste, Find, Replace, SelectAll,

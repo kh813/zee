@@ -12,11 +12,14 @@ pub mod selfupdate;
 pub mod session;
 pub mod cli;
 pub mod recent;
+pub mod template;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     // File
     New,
+    NewFromTemplate(String),
+    OpenTemplatesFolder,
     Open,
     ReloadFile,
     OpenRecent(std::path::PathBuf),

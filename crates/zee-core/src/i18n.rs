@@ -82,6 +82,8 @@ impl I18n {
         m.insert("menu.file.new_tab".to_string(), "New Tab".to_string());
         m.insert("menu.file.new_window".to_string(), "New Window".to_string());
         m.insert("menu.file.new".to_string(), "New".to_string());
+        m.insert("menu.file.new_from_template".to_string(), "New from Template…".to_string());
+        m.insert("menu.file.open_templates_folder".to_string(), "Open Templates Folder".to_string());
         m.insert("menu.file.open".to_string(), "Open…".to_string());
         m.insert("menu.file.open_folder".to_string(), "Open Folder…".to_string());
         m.insert("menu.file.open_recent".to_string(), "Open Recent".to_string());
@@ -168,6 +170,7 @@ impl I18n {
         m.insert("dialog.discard_reopen_prompt".to_string(), "Discard unsaved changes and reopen?".to_string());
         m.insert("dialog.reopen_file".to_string(), "Reopen File".to_string());
         m.insert("dialog.open_file".to_string(), "Open File…".to_string());
+        m.insert("dialog.new_from_template".to_string(), "New from Template".to_string());
         m.insert("dialog.save_as".to_string(), "Save As…".to_string());
         m.insert("dialog.go_to_line".to_string(), "Go to Line".to_string());
         m.insert("dialog.about".to_string(), "About".to_string());
@@ -248,6 +251,8 @@ impl I18n {
         m.insert("menu.file.new_tab".to_string(), "新規タブ".to_string());
         m.insert("menu.file.new_window".to_string(), "新規ウィンドウ".to_string());
         m.insert("menu.file.new".to_string(), "新規作成".to_string());
+        m.insert("menu.file.new_from_template".to_string(), "テンプレートから新規作成…".to_string());
+        m.insert("menu.file.open_templates_folder".to_string(), "テンプレートフォルダを開く".to_string());
         m.insert("menu.file.open".to_string(), "開く…".to_string());
         m.insert("menu.file.open_folder".to_string(), "フォルダを開く…".to_string());
         m.insert("menu.file.open_recent".to_string(), "最近開いたファイル".to_string());
@@ -334,6 +339,7 @@ impl I18n {
         m.insert("dialog.discard_reopen_prompt".to_string(), "変更を破棄して再読み込みしますか？".to_string());
         m.insert("dialog.reopen_file".to_string(), "再読み込み".to_string());
         m.insert("dialog.open_file".to_string(), "ファイルを開く…".to_string());
+        m.insert("dialog.new_from_template".to_string(), "テンプレートから新規作成".to_string());
         m.insert("dialog.save_as".to_string(), "名前を付けて保存…".to_string());
         m.insert("dialog.go_to_line".to_string(), "行移動".to_string());
         m.insert("dialog.about".to_string(), "バージョン情報".to_string());

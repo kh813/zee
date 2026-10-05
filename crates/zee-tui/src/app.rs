@@ -327,9 +327,29 @@ impl App {
             }
         }).collect();
 
+        let templates = zee_core::template::Template::load_all();
+        let mut template_items = Vec::new();
+        for tpl in &templates {
+            template_items.push(MenuItem::Action {
+                label: tpl.name.clone(),
+                action: Action::NewFromTemplate(tpl.id.clone()),
+                shortcut: None,
+            });
+        }
+        template_items.push(MenuItem::Separator);
+        template_items.push(MenuItem::Action {
+            label: i18n.get("menu.file.open_templates_folder").to_string(),
+            action: Action::OpenTemplatesFolder,
+            shortcut: None,
+        });
+
         let recent = zee_core::recent::RecentFiles::load();
         let mut file_items = vec![
             MenuItem::Action { label: i18n.get("menu.file.new").to_string(), action: Action::New, shortcut: Some("Ctrl+T".to_string()) },
+            MenuItem::Submenu {
+                label: i18n.get("menu.file.new_from_template").to_string(),
+                menu: Menu::new("Templates", template_items),
+            },
             MenuItem::Action { label: i18n.get("menu.file.open").to_string(), action: Action::Open, shortcut: Some("Ctrl+O".to_string()) },
             MenuItem::Separator,
             MenuItem::Action { label: i18n.get("menu.file.reload").to_string(), action: Action::ReloadFile, shortcut: Some("Ctrl+Shift+R".to_string()) },
@@ -2575,6 +2595,50 @@ impl App {
                 self.active_buffer = self.buffers.len() - 1;
                 self.update_active_outline();
                 self.recompute_layout();
+            }
+            Action::NewFromTemplate(id) => {
+                let templates = zee_core::template::Template::load_all();
+                if let Some(tpl) = templates.iter().find(|t| t.id == id) {
+                    let (content, cursor_offset) = tpl.expand(None);
+                    let mut buffer = self.new_editor();
+                    buffer.insert(0, &content);
+                    buffer.cursor = cursor_offset.min(buffer.rope.len_chars());
+                    buffer.selection = None;
+                    buffer.selection_anchor = None;
+
+                    if !tpl.extension.is_empty() {
+                        let ext_clean = tpl.extension.trim_start_matches('.');
+                        if let Some(def) = self.syntax_defs.iter().find(|s| s.meta.extensions.iter().any(|e| e == ext_clean)) {
+                            if let Ok(highlighter) = zee_core::syntax::SyntaxHighlighter::new(def.clone()) {
+                                buffer.update_syntax(Some(highlighter));
+                            }
+                        }
+                    }
+
+                    if self.buffers.len() == 1 {
+                        let first = &self.buffers[0];
+                        if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
+                            self.buffers[0] = buffer;
+                            self.active_buffer = 0;
+                            self.update_active_outline();
+                            self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                            self.recompute_layout();
+                            return;
+                        }
+                    }
+
+                    self.buffers.push(buffer);
+                    self.active_buffer = self.buffers.len() - 1;
+                    self.update_active_outline();
+                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.recompute_layout();
+                }
+            }
+            Action::OpenTemplatesFolder => {
+                if let Some(dir) = zee_core::template::Template::templates_dir() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = zee_core::selfupdate::open_url(&dir.to_string_lossy());
+                }
             }
             Action::Open => {
                 self.focus = Focus::Dialog;

@@ -183,6 +183,42 @@ impl Workspace {
         self.active_editor_index = self.editors.len() - 1;
     }
 
+    pub fn new_from_template(&mut self, template_id: &str) {
+        let templates = zee_core::template::Template::load_all();
+        if let Some(tpl) = templates.iter().find(|t| t.id == template_id) {
+            let (content, cursor_offset) = tpl.expand(None);
+            let mut editor = Editor::new();
+            editor.vi_mode = if self.config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+            editor.insert(0, &content);
+            editor.cursor = cursor_offset.min(editor.rope.len_chars());
+            editor.selection = None;
+            editor.selection_anchor = None;
+
+            if !tpl.extension.is_empty() {
+                let ext_clean = tpl.extension.trim_start_matches('.');
+                let syntax_defs = zee_core::syntax::SyntaxDefinition::builtins();
+                if let Some(def) = syntax_defs.iter().find(|s| s.meta.extensions.iter().any(|e| e == ext_clean)) {
+                    if let Ok(highlighter) = zee_core::syntax::SyntaxHighlighter::new(def.clone()) {
+                        editor.update_syntax(Some(highlighter));
+                    }
+                }
+            }
+
+            if self.editors.len() == 1 {
+                let first = &self.editors[0];
+                if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
+                    self.editors[0] = editor;
+                    self.active_editor_index = 0;
+                    return;
+                }
+            }
+
+            self.add_editor(editor);
+        } else {
+            self.new_tab();
+        }
+    }
+
     pub fn add_editor(&mut self, mut editor: Editor) {
         editor.vi_mode = if self.config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
         if let Some(path) = &editor.path {
@@ -516,6 +552,23 @@ mod tests {
 
         editor.delete_visual_block();
         assert_eq!(editor.rope.to_string(), "AEF\n156\nAKL\n".replace("AKL", "GKL"));
+    }
+
+    #[test]
+    fn test_workspace_new_from_template() {
+        let mut workspace = Workspace::new(Config::default());
+        // Clean initial untitled buffer
+        assert_eq!(workspace.editors.len(), 1);
+
+        workspace.new_from_template("rust_bin");
+        // Replaces clean initial buffer with rust template
+        assert_eq!(workspace.editors.len(), 1);
+        let editor = workspace.active_editor().unwrap();
+        let content = editor.rope.to_string();
+        assert!(content.contains("fn main()"));
+        assert!(content.contains("println!(\"Hello, world!\");"));
+        assert!(!content.contains("{cursor}"));
+        assert_eq!(editor.syntax_highlighter.as_ref().map(|h| h.def.meta.name.as_str()), Some("Rust"));
     }
 }
 

@@ -981,6 +981,22 @@ impl WindowView {
         cx.notify();
     }
 
+    fn handle_apply_template(&mut self, action: &ApplyTemplate, _window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |w, cx| {
+            w.new_from_template(&action.id);
+            w.update_outline();
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    fn handle_open_templates_folder(&mut self, _: &OpenTemplatesFolder, _window: &mut Window, _cx: &mut Context<Self>) {
+        if let Some(dir) = zee_core::template::Template::templates_dir() {
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = zee_core::selfupdate::open_url(&dir.to_string_lossy());
+        }
+    }
+
     fn trigger_export(include_plugins: bool, _i18n: I18n, cx: &mut Context<Self>) {
         let default_name = if include_plugins { "zee-backup.zip" } else { "zee-config.zip" };
         let view_handle = cx.entity().clone();
@@ -1225,6 +1241,8 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_reload_file))
             .on_action(cx.listener(Self::handle_open_recent))
             .on_action(cx.listener(Self::handle_clear_recent))
+            .on_action(cx.listener(Self::handle_apply_template))
+            .on_action(cx.listener(Self::handle_open_templates_folder))
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _window, cx| {
                 let mut opened_any = false;
                 let mut dir_to_open = None;
@@ -1444,10 +1462,26 @@ impl WindowView {
 
     fn render_file_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
         let recent = zee_core::recent::RecentFiles::load();
+        let templates = zee_core::template::Template::load_all();
         let mut menu = div()
             .flex()
             .flex_col()
-            .child(self.render_menu_item(self.i18n.get("menu.file.new_tab").to_string(), Some("Ctrl+T"), false, NewTab {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.new_tab").to_string(), Some("Ctrl+T"), false, NewTab {}, fg, hover_bg, muted_fg, cx));
+
+        for tpl in templates.iter().take(4) {
+            menu = menu.child(self.render_menu_item(
+                format!("  + {}", tpl.name),
+                None,
+                false,
+                ApplyTemplate { id: tpl.id.clone() },
+                fg,
+                hover_bg,
+                muted_fg,
+                cx,
+            ));
+        }
+
+        menu = menu
             .child(self.render_menu_item(self.i18n.get("menu.file.new_window").to_string(), Some("Ctrl+N"), false, NewWindow {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open").to_string(), Some("Ctrl+O"), false, Open {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open_folder").to_string(), Some("Ctrl+Shift+O"), false, OpenFolder {}, fg, hover_bg, muted_fg, cx))

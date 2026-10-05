@@ -509,8 +509,13 @@ impl WindowView {
     fn handle_cut(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
         let mut text_to_copy = None;
         self.workspace.update(cx, |w, cx| {
+            let vi_mode = w.config.vi_mode;
             if let Some(editor) = w.active_editor_mut() {
-                if let Some(range) = editor.selection.clone() {
+                if editor.vi_mode == zee_core::ViMode::VisualBlock {
+                    text_to_copy = Some(editor.get_visual_block_text());
+                    editor.delete_visual_block();
+                    editor.vi_mode = if vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+                } else if let Some(range) = editor.selection.clone() {
                     text_to_copy = Some(editor.rope.slice(range.clone()).to_string());
                     editor.delete(range);
                 }
@@ -525,7 +530,10 @@ impl WindowView {
     fn handle_copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.read(cx);
         if let Some(editor) = workspace.active_editor() {
-            if let Some(range) = editor.selection.clone() {
+            if editor.vi_mode == zee_core::ViMode::VisualBlock {
+                let text = editor.get_visual_block_text();
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            } else if let Some(range) = editor.selection.clone() {
                 let text = editor.rope.slice(range).to_string();
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
@@ -537,8 +545,12 @@ impl WindowView {
             if let Some(text) = item.text() {
                 let text = text.clone();
                 self.workspace.update(cx, |w, cx| {
+                    let vi_mode = w.config.vi_mode;
                     if let Some(editor) = w.active_editor_mut() {
-                        if let Some(range) = editor.selection.clone() {
+                        if editor.vi_mode == zee_core::ViMode::VisualBlock {
+                            editor.delete_visual_block();
+                            editor.vi_mode = if vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+                        } else if let Some(range) = editor.selection.clone() {
                             editor.delete(range);
                         }
                         editor.insert(editor.cursor, &text);

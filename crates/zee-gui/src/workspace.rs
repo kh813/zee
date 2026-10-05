@@ -494,5 +494,28 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_workspace_visual_block_selection_and_copy() {
+        let mut workspace = Workspace::new(Config::default());
+        let mut editor = Editor::new();
+        editor.insert(0, "ABCDEF\n123456\nGHIJKL\n");
+        workspace.add_editor(editor);
+
+        let editor = workspace.active_editor_mut().unwrap();
+        // Simulate Alt+Drag: anchor at (0, 1) 'B', cursor at (2, 3) 'J'
+        editor.vi_mode = zee_core::ViMode::VisualBlock;
+        let anchor = editor.line_col_to_char(0, 1);
+        let cursor = editor.line_col_to_char(2, 3);
+        editor.selection_anchor = Some(anchor);
+        editor.cursor = cursor;
+        editor.selection = Some(anchor..cursor);
+
+        let block_text = editor.get_visual_block_text();
+        assert_eq!(block_text, "BCD\n234\nHIJ");
+
+        editor.delete_visual_block();
+        assert_eq!(editor.rope.to_string(), "AEF\n156\nAKL\n".replace("AKL", "GKL"));
+    }
 }
 

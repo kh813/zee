@@ -379,6 +379,7 @@ impl EditorView {
             let max_w = self.last_wrap_width_px;
             let ascii_w = self.ascii_width_px;
             let cjk_w = self.cjk_width_px;
+            let vi_mode_enabled = w.config.vi_mode;
             let editor = match w.active_editor_mut() {
                 Some(e) => e,
                 None => return,
@@ -432,14 +433,20 @@ impl EditorView {
                     editor.insert(editor.cursor, &text);
                 }
                 "backspace" => {
-                    if let Some(range) = editor.selection.clone() {
+                    if editor.vi_mode == zee_core::ViMode::VisualBlock {
+                        editor.delete_visual_block();
+                        editor.vi_mode = if vi_mode_enabled { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+                    } else if let Some(range) = editor.selection.clone() {
                         editor.delete(range);
                     } else if editor.cursor > 0 {
                         editor.delete(editor.cursor - 1..editor.cursor);
                     }
                 }
                 "delete" => {
-                    if let Some(range) = editor.selection.clone() {
+                    if editor.vi_mode == zee_core::ViMode::VisualBlock {
+                        editor.delete_visual_block();
+                        editor.vi_mode = if vi_mode_enabled { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+                    } else if let Some(range) = editor.selection.clone() {
                         editor.delete(range);
                     } else if editor.cursor < editor.rope.len_chars() {
                         editor.delete(editor.cursor..editor.cursor + 1);
@@ -1898,6 +1905,7 @@ impl EditorView {
         let is_gutter_click = event.position.x >= sidebar_width && event.position.x < (sidebar_width + gutter_width);
 
         self.workspace.update(cx, |w, cx| {
+            let vi_mode_enabled = w.config.vi_mode;
             let editor = match w.active_editor_mut() {
                 Some(e) => e,
                 None => return,
@@ -1905,7 +1913,16 @@ impl EditorView {
             if is_gutter_click {
                 let (line, _) = editor.char_to_line_col(char_pos);
                 editor.select_line(line);
+            } else if event.modifiers.alt {
+                // Alt + Drag: Visual Block (Rectangular) selection
+                editor.vi_mode = zee_core::ViMode::VisualBlock;
+                editor.cursor = char_pos;
+                editor.selection_anchor = Some(char_pos);
+                editor.selection = Some(char_pos..char_pos);
             } else {
+                if editor.vi_mode == zee_core::ViMode::VisualBlock {
+                    editor.vi_mode = if vi_mode_enabled { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+                }
                 match self.click_count {
                     1 => {
                         editor.cursor = char_pos;
@@ -1975,8 +1992,20 @@ impl EditorView {
     fn handle_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         self.is_mouse_down = false;
         self.workspace.update(cx, |w, cx| {
+            let vi_mode_enabled = w.config.vi_mode;
             if let Some(editor) = w.active_editor_mut() {
-                if editor.selection.is_none() {
+                if editor.vi_mode == zee_core::ViMode::VisualBlock {
+                    if let Some(anchor) = editor.selection_anchor {
+                        if anchor == editor.cursor {
+                            // Clicked without dragging: clear block selection
+                            editor.selection = None;
+                            editor.selection_anchor = None;
+                            editor.vi_mode = if vi_mode_enabled { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+                        }
+                    } else {
+                        editor.vi_mode = if vi_mode_enabled { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+                    }
+                } else if editor.selection.is_none() {
                     editor.selection_anchor = None;
                 }
             }
@@ -2134,11 +2163,16 @@ impl EntityInputHandler for EditorView {
 
         self.workspace.update(cx, |w, cx| {
             let word_wrap = w.config.word_wrap;
+            let vi_mode_enabled = w.config.vi_mode;
             let editor = match w.active_editor_mut() {
                 Some(e) => e,
                 None => return,
             };
-            if let Some(range) = replacement_range {
+            if editor.vi_mode == zee_core::ViMode::VisualBlock {
+                editor.delete_visual_block();
+                editor.vi_mode = if vi_mode_enabled { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+                editor.insert(editor.cursor, text);
+            } else if let Some(range) = replacement_range {
                 editor.delete(range);
                 editor.insert(editor.cursor, text);
             } else if let Some(range) = editor.selection.clone() {
@@ -2638,7 +2672,7 @@ impl EditorView {
 
         let global_selection = if editor.vi_mode == zee_core::ViMode::VisualBlock {
             let ranges = editor.get_visual_block_ranges();
-            ranges.into_iter().find(|r| r.start >= v_start_char && r.start <= v_end_char)
+            ranges.into_iter().find(|r| (r.start < v_end_char && r.end > v_start_char) || (r.start >= v_start_char && r.start <= v_end_char))
         } else {
             editor.selection.clone()
         };

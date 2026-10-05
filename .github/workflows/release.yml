@@ -20,49 +20,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 1. macOS: Apple Silicon GUI (Zee.app)
           - name: macos-arm64
             os: macos-14
             target: aarch64-apple-darwin
             is_macos: true
             platform: macos-arm64
+          # 2. Linux: x86_64 CLI (zee) - Ultra-fast build without GUI dependencies
           - name: linux-x64
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             is_linux: true
             platform: linux-x64
-          - name: linux-arm64
-            os: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            is_linux: true
-            platform: linux-arm64
+          # 3. Windows: x86_64 GUI (zeeg.exe)
           - name: windows-x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
             is_windows: true
             platform: windows-x64
-          - name: windows-arm64
-            os: windows-latest
-            target: aarch64-pc-windows-msvc
-            is_windows: true
-            platform: windows-arm64
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Install Linux system dependencies
-        if: matrix.is_linux
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwayland-dev \
-            wayland-protocols \
-            libxkbcommon-dev \
-            libx11-xcb-dev \
-            libvulkan-dev \
-            libasound2-dev \
-            libfontconfig1-dev \
-            pkg-config
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -72,21 +51,7 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      # --- macOS Builds (CLI as 'zee', GUI as 'Zee.app') ---
-      - name: Build macOS CLI (zee)
-        if: matrix.is_macos
-        run: |
-          TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
-          ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
-          cargo build --release -p zee-tui --target ${{ matrix.target }}
-          codesign --force --sign - "target/${{ matrix.target }}/release/zee" || true
-          mkdir -p "dist/${ARCHIVE_NAME}"
-          cp "target/${{ matrix.target }}/release/zee" "dist/${ARCHIVE_NAME}/"
-          cp README.md MANUAL.md LICENSE* "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
-          cd dist
-          zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
-          cd ..
-
+      # --- macOS: GUI only (Zee.app) ---
       - name: Build & Package macOS GUI (Zee.app)
         if: matrix.is_macos
         run: |
@@ -149,17 +114,14 @@ jobs:
           zip -r "${GUI_ARCHIVE_NAME}.zip" Zee.app
           cd ..
 
-      # --- Linux Builds (CLI as 'zee', GUI as 'zeeg') ---
-      - name: Build Linux (CLI & GUI)
+      # --- Linux: CLI only (zee) ---
+      - name: Build Linux CLI (zee)
         if: matrix.is_linux
         run: |
           TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
           ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
-          GUI_ARCHIVE_NAME="zeeg-${TAG_NAME}-${{ matrix.platform }}"
           cargo build --release -p zee-tui --target ${{ matrix.target }}
-          cargo build --release -p zee-gui --target ${{ matrix.target }}
           
-          # Package CLI (zee)
           mkdir -p "dist/${ARCHIVE_NAME}"
           cp "target/${{ matrix.target }}/release/zee" "dist/${ARCHIVE_NAME}/"
           cp README.md MANUAL.md LICENSE* "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
@@ -167,15 +129,7 @@ jobs:
           zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
           cd ..
 
-          # Package GUI (zeeg)
-          mkdir -p "dist/${GUI_ARCHIVE_NAME}"
-          cp "target/${{ matrix.target }}/release/zeeg" "dist/${GUI_ARCHIVE_NAME}/"
-          cp README.md MANUAL.md LICENSE* "dist/${GUI_ARCHIVE_NAME}/" 2>/dev/null || true
-          cd dist
-          zip -r "${GUI_ARCHIVE_NAME}.zip" "${GUI_ARCHIVE_NAME}"
-          cd ..
-
-      # --- Windows Builds (GUI only as 'zeeg') ---
+      # --- Windows: GUI only (zeeg.exe) ---
       - name: Build Windows GUI (zeeg.exe)
         if: matrix.is_windows
         shell: bash
@@ -184,7 +138,6 @@ jobs:
           GUI_ARCHIVE_NAME="zeeg-${TAG_NAME}-${{ matrix.platform }}"
           cargo build --release -p zee-gui --target ${{ matrix.target }}
 
-          # Package GUI (zeeg)
           mkdir -p "dist/${GUI_ARCHIVE_NAME}"
           cp "target/${{ matrix.target }}/release/zeeg.exe" "dist/${GUI_ARCHIVE_NAME}/zeeg.exe"
           cp README.md MANUAL.md LICENSE* "dist/${GUI_ARCHIVE_NAME}/" 2>/dev/null || true

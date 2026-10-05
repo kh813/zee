@@ -28,14 +28,11 @@ Download the appropriate binary from the [releases page] and place it in your `P
 
 | Platform | Binary | Notes |
 | :--- | :--- | :--- |
-| macOS Apple Silicon (TUI) | `zee-v0.1.0-macos-arm64.tar.gz` | Terminal TUI binary (`zee`). |
-| macOS Apple Silicon (GUI) | `zeeg-v0.1.0-macos-arm64.zip` | macOS App Bundle (`Zee.app`). |
-| Windows x86-64 | `zee-v0.1.0-windows-x64.zip` | Windows 64-bit binaries (`zee.exe` & `zeeg.exe`). |
-| Windows ARM64 | `zee-v0.1.0-windows-arm64.zip` | Windows ARM64 binaries (`zee.exe` & `zeeg.exe`). |
-| Linux x86-64 *(Experimental)* | `zee-v0.1.0-linux-x64.tar.gz` (TUI), `zeeg-v0.1.0-linux-x64.tar.gz` (GUI) | Linux 64-bit TUI and GUI binaries (Experimental). |
-| Linux ARM64 *(Experimental)* | `zee-v0.1.0-linux-arm64.tar.gz` (TUI), `zeeg-v0.1.0-linux-arm64.tar.gz` (GUI) | Linux ARM64 TUI and GUI binaries (Experimental). |
+| **macOS Apple Silicon (GUI)** | `zeeg-v0.1.x-macos-arm64.zip` | macOS Native App Bundle (`Zee.app`). |
+| **Windows x86-64 (GUI)** | `zeeg-v0.1.x-windows-x64.zip` | Windows 64-bit Native GUI (`zeeg.exe`). |
+| **Linux x86-64 (CLI)** | `zee-v0.1.x-linux-x64.zip` | Linux 64-bit Terminal CLI / TUI (`zee`). |
 
-> **Note on Linux support**: Linux builds are currently provided on an **Experimental** basis as a dedicated Linux physical test environment is not maintained. Community feedback and issues are welcome.
+> **Note on Extended Builds**: Extended support binaries (Linux GUI `zeeg`, macOS CLI `zee`, Windows ARM64 `zeeg.exe`, Linux ARM64) are available on-demand via GitHub Actions Extended Support Releases or buildable directly from source.
 
 **macOS / Linux quick install:**
 ```bash

@@ -1,0 +1,191 @@
+name: Extended Support Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Target Release Tag (e.g. v0.1.11). Leave empty to use latest git tag."
+        required: false
+        default: ""
+      build_linux_gui:
+        description: "Build Linux x64 GUI (zeeg)"
+        type: boolean
+        default: true
+      build_macos_cli:
+        description: "Build macOS Apple Silicon CLI (zee)"
+        type: boolean
+        default: true
+      build_windows_arm64:
+        description: "Build Windows ARM64 GUI (zeeg.exe)"
+        type: boolean
+        default: false
+      build_linux_arm64:
+        description: "Build Linux ARM64 (CLI & GUI)"
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  determine-tag:
+    name: Determine Target Tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.get_tag.outputs.tag }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve Tag
+        id: get_tag
+        run: |
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            TAG="${{ inputs.release_tag }}"
+          else
+            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "Target tag: ${TAG}"
+
+  build-linux-gui:
+    name: Build Linux x64 GUI
+    if: inputs.build_linux_gui
+    needs: determine-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwayland-dev wayland-protocols libxkbcommon-dev libx11-xcb-dev \
+            libvulkan-dev libasound2-dev libfontconfig1-dev pkg-config
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build & Package Linux GUI (zeeg)
+        run: |
+          TAG="${{ needs.determine-tag.outputs.tag }}"
+          GUI_ARCHIVE="zeeg-${TAG}-linux-x64"
+          cargo build --release -p zee-gui --target x86_64-unknown-linux-gnu
+          mkdir -p "dist/${GUI_ARCHIVE}"
+          cp "target/x86_64-unknown-linux-gnu/release/zeeg" "dist/${GUI_ARCHIVE}/"
+          cp README.md MANUAL.md LICENSE* "dist/${GUI_ARCHIVE}/" 2>/dev/null || true
+          cd dist
+          zip -r "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.determine-tag.outputs.tag }}
+          files: dist/*.zip
+
+  build-macos-cli:
+    name: Build macOS ARM64 CLI
+    if: inputs.build_macos_cli
+    needs: determine-tag
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build & Package macOS CLI (zee)
+        run: |
+          TAG="${{ needs.determine-tag.outputs.tag }}"
+          CLI_ARCHIVE="zee-${TAG}-macos-arm64"
+          cargo build --release -p zee-tui --target aarch64-apple-darwin
+          codesign --force --sign - "target/aarch64-apple-darwin/release/zee" || true
+          mkdir -p "dist/${CLI_ARCHIVE}"
+          cp "target/aarch64-apple-darwin/release/zee" "dist/${CLI_ARCHIVE}/"
+          cp README.md MANUAL.md LICENSE* "dist/${CLI_ARCHIVE}/" 2>/dev/null || true
+          cd dist
+          zip -r "${CLI_ARCHIVE}.zip" "${CLI_ARCHIVE}"
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.determine-tag.outputs.tag }}
+          files: dist/*.zip
+
+  build-windows-arm64:
+    name: Build Windows ARM64 GUI
+    if: inputs.build_windows_arm64
+    needs: determine-tag
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build & Package Windows ARM64 GUI
+        shell: bash
+        run: |
+          TAG="${{ needs.determine-tag.outputs.tag }}"
+          GUI_ARCHIVE="zeeg-${TAG}-windows-arm64"
+          cargo build --release -p zee-gui --target aarch64-pc-windows-msvc
+          mkdir -p "dist/${GUI_ARCHIVE}"
+          cp "target/aarch64-pc-windows-msvc/release/zeeg.exe" "dist/${GUI_ARCHIVE}/zeeg.exe"
+          cp README.md MANUAL.md LICENSE* "dist/${GUI_ARCHIVE}/" 2>/dev/null || true
+          cd dist
+          7z a "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.determine-tag.outputs.tag }}
+          files: dist/*.zip
+
+  build-linux-arm64:
+    name: Build Linux ARM64 (CLI & GUI)
+    if: inputs.build_linux_arm64
+    needs: determine-tag
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwayland-dev wayland-protocols libxkbcommon-dev libx11-xcb-dev \
+            libvulkan-dev libasound2-dev libfontconfig1-dev pkg-config
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build & Package Linux ARM64
+        run: |
+          TAG="${{ needs.determine-tag.outputs.tag }}"
+          CLI_ARCHIVE="zee-${TAG}-linux-arm64"
+          GUI_ARCHIVE="zeeg-${TAG}-linux-arm64"
+          cargo build --release -p zee-tui --target aarch64-unknown-linux-gnu
+          cargo build --release -p zee-gui --target aarch64-unknown-linux-gnu
+          mkdir -p "dist/${CLI_ARCHIVE}"
+          cp "target/aarch64-unknown-linux-gnu/release/zee" "dist/${CLI_ARCHIVE}/"
+          mkdir -p "dist/${GUI_ARCHIVE}"
+          cp "target/aarch64-unknown-linux-gnu/release/zeeg" "dist/${GUI_ARCHIVE}/"
+          cd dist
+          zip -r "${CLI_ARCHIVE}.zip" "${CLI_ARCHIVE}"
+          zip -r "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.determine-tag.outputs.tag }}
+          files: dist/*.zip

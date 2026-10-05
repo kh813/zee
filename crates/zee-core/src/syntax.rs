@@ -38,6 +38,7 @@ impl SyntaxDefinition {
             include_str!("../../../assets/syntax/plain-text.toml"),
             include_str!("../../../assets/syntax/python.toml"),
             include_str!("../../../assets/syntax/rust.toml"),
+            include_str!("../../../assets/syntax/shell.toml"),
             include_str!("../../../assets/syntax/swift.toml"),
             include_str!("../../../assets/syntax/toml.toml"),
             include_str!("../../../assets/syntax/xml.toml"),
@@ -324,6 +325,21 @@ mod tests {
         assert!(has_number);
         assert!(has_const);
         assert!(has_punct);
+    }
+
+    #[test]
+    fn test_shell_syntax_highlighting() {
+        let builtins = SyntaxDefinition::builtins();
+        let shell_def = builtins.into_iter().find(|b| b.meta.name == "Shell").unwrap();
+        let highlighter = SyntaxHighlighter::new(shell_def).unwrap();
+
+        let line = r#"if [ $ENV = "production" ]; then # check env"#;
+        let spans = highlighter.highlight_line(line, LineState::Normal);
+        assert!(!spans.is_empty());
+        assert!(spans.iter().any(|s| s.token == TokenType::Keyword));
+        assert!(spans.iter().any(|s| s.token == TokenType::Attribute)); // $ENV
+        assert!(spans.iter().any(|s| s.token == TokenType::String)); // "production"
+        assert!(spans.iter().any(|s| s.token == TokenType::Comment)); // # check env
     }
 }
 

@@ -124,7 +124,12 @@ impl Editor {
             line_tokens: vec![None; line_count],
         };
 
-        if let Some(highlighter) = Self::detect_syntax(&path) {
+        let first_line = if editor.rope.len_lines() > 0 {
+            Some(editor.rope.line(0).to_string())
+        } else {
+            None
+        };
+        if let Some(highlighter) = Self::detect_syntax_with_content(&path, first_line.as_deref()) {
             editor.update_syntax(Some(highlighter));
         }
 
@@ -132,8 +137,8 @@ impl Editor {
     }
 
     pub fn reload_from_disk(&mut self) -> Result<()> {
-        let path = self.path.as_ref().ok_or_else(|| anyhow::anyhow!("Buffer has no associated file path"))?;
-        let mut file = File::open(path)?;
+        let path = self.path.clone().ok_or_else(|| anyhow::anyhow!("Buffer has no associated file path"))?;
+        let mut file = File::open(&path)?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
 
@@ -163,14 +168,71 @@ impl Editor {
         self.line_tokens = vec![None; line_count];
         self.update_line_states(0, line_count);
 
+        if self.syntax_highlighter.is_none() {
+            let first_line = if self.rope.len_lines() > 0 {
+                Some(self.rope.line(0).to_string())
+            } else {
+                None
+            };
+            if let Some(highlighter) = Self::detect_syntax_with_content(&path, first_line.as_deref()) {
+                self.update_syntax(Some(highlighter));
+            }
+        }
+
         Ok(())
     }
 
     pub fn detect_syntax(path: &Path) -> Option<crate::syntax::SyntaxHighlighter> {
-        let ext = path.extension()?.to_str()?;
+        Self::detect_syntax_with_content(path, None)
+    }
+
+    pub fn detect_syntax_with_content(path: &Path, content: Option<&str>) -> Option<crate::syntax::SyntaxHighlighter> {
         let syntax_defs = crate::syntax::SyntaxDefinition::builtins();
-        let def = syntax_defs.into_iter().find(|s| s.meta.extensions.iter().any(|e| e.eq_ignore_ascii_case(ext)))?;
-        crate::syntax::SyntaxHighlighter::new(def).ok()
+
+        // 1. Check file extension (e.g. .sh, .bash, .py, .rs)
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            if let Some(def) = syntax_defs.iter().find(|s| s.meta.extensions.iter().any(|e| e.eq_ignore_ascii_case(ext))) {
+                if let Ok(hl) = crate::syntax::SyntaxHighlighter::new(def.clone()) {
+                    return Some(hl);
+                }
+            }
+        }
+
+        // 2. Check filename without leading dot (e.g. .bashrc -> bashrc, .zshrc -> zshrc)
+        if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
+            let clean_name = file_name.trim_start_matches('.');
+            if let Some(def) = syntax_defs.iter().find(|s| s.meta.extensions.iter().any(|e| e.eq_ignore_ascii_case(clean_name))) {
+                if let Ok(hl) = crate::syntax::SyntaxHighlighter::new(def.clone()) {
+                    return Some(hl);
+                }
+            }
+        }
+
+        // 3. Check Shebang from content first line
+        if let Some(first_line) = content.and_then(|c| c.lines().next()) {
+            if first_line.starts_with("#!") {
+                let lower = first_line.to_lowercase();
+                let matched_name = if lower.contains("bash") || lower.contains("/sh") || lower.contains("zsh") {
+                    Some("Shell")
+                } else if lower.contains("python") {
+                    Some("Python")
+                } else if lower.contains("node") || lower.contains("deno") || lower.contains("bun") {
+                    Some("JavaScript")
+                } else {
+                    None
+                };
+
+                if let Some(name) = matched_name {
+                    if let Some(def) = syntax_defs.iter().find(|s| s.meta.name.eq_ignore_ascii_case(name)) {
+                        if let Ok(hl) = crate::syntax::SyntaxHighlighter::new(def.clone()) {
+                            return Some(hl);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     pub fn update_syntax(&mut self, highlighter: Option<crate::syntax::SyntaxHighlighter>) {
@@ -1928,6 +1990,28 @@ mod tests {
         assert_eq!(editor.line_tokens.len(), 1);
         assert!(!editor.line_tokens[0].as_ref().unwrap().is_empty());
         let _ = std::fs::remove_file(&json_file);
+    }
+
+    #[test]
+    fn test_syntax_detection_shell_script() {
+        let temp_dir = std::env::temp_dir();
+
+        // 1. With .sh extension
+        let sh_file = temp_dir.join("deploy.sh");
+        std::fs::write(&sh_file, "if [ \"$1\" = \"prod\" ]; then\n  echo \"deploying\"\nfi\n").unwrap();
+        let editor = Editor::from_file(&sh_file).unwrap();
+        assert!(editor.syntax_highlighter.is_some());
+        assert_eq!(editor.syntax_highlighter.as_ref().unwrap().def.meta.name, "Shell");
+        assert!(!editor.line_tokens[0].as_ref().unwrap().is_empty());
+        let _ = std::fs::remove_file(&sh_file);
+
+        // 2. Extensionless file with shebang
+        let bin_script = temp_dir.join("my-custom-cli");
+        std::fs::write(&bin_script, "#!/usr/bin/env bash\nVAR=\"test\"\necho $VAR\n").unwrap();
+        let editor = Editor::from_file(&bin_script).unwrap();
+        assert!(editor.syntax_highlighter.is_some());
+        assert_eq!(editor.syntax_highlighter.as_ref().unwrap().def.meta.name, "Shell");
+        let _ = std::fs::remove_file(&bin_script);
     }
 
     #[test]

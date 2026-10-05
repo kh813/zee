@@ -267,9 +267,15 @@ impl App {
     }
 
     fn detect_syntax(&self, path: &std::path::Path) -> Option<zee_core::syntax::SyntaxHighlighter> {
-        let ext = path.extension()?.to_str()?;
-        let def = self.syntax_defs.iter().find(|s| s.meta.extensions.iter().any(|e| e == ext))?;
-        zee_core::syntax::SyntaxHighlighter::new(def.clone()).ok()
+        let first_line = if let Ok(mut f) = std::fs::File::open(path) {
+            use std::io::Read;
+            let mut buf = [0u8; 256];
+            let n = f.read(&mut buf).unwrap_or(0);
+            std::str::from_utf8(&buf[..n]).ok().and_then(|s| s.lines().next().map(|l| l.to_string()))
+        } else {
+            None
+        };
+        Editor::detect_syntax_with_content(path, first_line.as_deref())
     }
 
     fn build_menus(

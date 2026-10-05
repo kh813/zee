@@ -1,0 +1,53 @@
+[meta]
+name = "Shell"
+extensions = ["sh", "bash", "zsh", "ksh", "csh", "tcsh", "command", "bashrc", "zshrc", "bash_profile", "profile", "zprofile"]
+
+[[rule]]
+token = "keyword"
+pattern = "if|then|else|elif|fi|case|esac|for|select|while|until|do|done|in|function|time|coproc|return|exit|set|unset|export|local|readonly|declare|typeset|alias|unalias|source|eval|exec|shift|trap|wait|break|continue"
+word_boundary = true
+
+[[rule]]
+token = "constant"
+pattern = "true|false"
+word_boundary = true
+
+[[rule]]
+token = "attribute"
+pattern = "^#!.*"
+
+[[rule]]
+token = "comment"
+pattern = "#.*"
+
+# Single-quoted string (no variable interpolation)
+[[rule]]
+token = "string"
+pattern = "'.*?'"
+
+[[rule]]
+token = "string"
+pattern = "\\$'.*?'"
+
+# Variables ($VAR, ${VAR}, $1, $?)
+[[rule]]
+token = "attribute"
+pattern = "\\$\\{[a-zA-Z0-9_#?:@!*\\-\\.]+\\}|\\$[a-zA-Z_][a-zA-Z0-9_]*|\\$[0-9]|\\$[@*#?$!-]"
+
+# Double-quoted string (can enclose variables)
+[[rule]]
+token = "string"
+pattern = "\".*?\""
+
+[[rule]]
+token = "number"
+pattern = "[0-9]+"
+word_boundary = true
+
+[[rule]]
+token = "function"
+pattern = "[a-zA-Z_][a-zA-Z0-9_-]*\\s*\\(\\)"
+
+[[rule]]
+token = "operator"
+pattern = "\\|\\||&&|;;|<<|>>|[|&;><=]"

@@ -771,5 +771,33 @@ mod tests {
         }
         assert_eq!(editor.rope.to_string(), "Mango Banana Mango Orange Mango");
     }
+
+    #[test]
+    fn test_native_menus_and_language_localization() {
+        #[cfg(target_os = "macos")]
+        {
+            use zee_core::i18n::I18n;
+            let mut config = Config::default();
+            config.language = "ja".to_string();
+            let i18n_ja = I18n::load("ja");
+            let menus_ja = crate::app::build_native_menus(&i18n_ja, &config);
+
+            assert_eq!(menus_ja[0].name.as_ref(), "zee");
+            assert_eq!(menus_ja[1].name.as_ref(), "ファイル");
+            assert_eq!(menus_ja[2].name.as_ref(), "編集");
+            assert_eq!(menus_ja[3].name.as_ref(), "表示");
+            assert_eq!(menus_ja[4].name.as_ref(), "タブ");
+
+            // English
+            config.language = "en".to_string();
+            let i18n_en = I18n::load("en");
+            let menus_en = crate::app::build_native_menus(&i18n_en, &config);
+            assert_eq!(menus_en[0].name.as_ref(), "zee");
+            assert_eq!(menus_en[1].name.as_ref(), "File");
+            assert_eq!(menus_en[2].name.as_ref(), "Edit");
+            assert_eq!(menus_en[3].name.as_ref(), "View");
+            assert_eq!(menus_en[4].name.as_ref(), "Tabs");
+        }
+    }
 }
 

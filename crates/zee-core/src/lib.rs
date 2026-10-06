@@ -60,6 +60,7 @@ pub enum Action {
     SetLineEnding(LineEnding),
     SetTheme(String),
     SetSyntax(String),
+    SetLanguage(String),
 
     // Help
     About,

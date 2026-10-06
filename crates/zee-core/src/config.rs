@@ -27,7 +27,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            language: "en".to_string(),
+            language: "auto".to_string(),
             theme: "terminal-default".to_string(),
             line_numbers: true,
             vi_mode: false,
@@ -153,18 +153,31 @@ impl Config {
             "# zee configuration file\n\n".to_string()
         };
 
+        // Ensure string values are quoted for valid TOML
+        let formatted_val = match key {
+            "language" | "theme" | "font_family" | "ui_font_family" | "sidebar_position" => {
+                let trimmed = value.trim();
+                if trimmed.starts_with('"') && trimmed.ends_with('"') {
+                    trimmed.to_string()
+                } else {
+                    format!("\"{}\"", trimmed)
+                }
+            }
+            _ => value.to_string(),
+        };
+
         let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
         let mut found = false;
         for line in lines.iter_mut() {
             if line.trim().starts_with(key) && line.contains('=') {
-                *line = format!("{} = {}", key, value);
+                *line = format!("{} = {}", key, formatted_val);
                 found = true;
                 break;
             }
         }
 
         if !found {
-            lines.push(format!("{} = {}", key, value));
+            lines.push(format!("{} = {}", key, formatted_val));
         }
 
         fs::write(&path, lines.join("\n")).context("Failed to write config file")?;
@@ -395,6 +408,7 @@ mod tests {
         assert_eq!(config.ui_font_size, 13.5);
 
         assert_eq!(Config::default().sidebar_position, "right");
+        assert_eq!(Config::default().language, "auto");
     }
 
     #[test]

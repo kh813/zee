@@ -353,6 +353,25 @@ impl App {
             }
         }).collect();
 
+        let language_items = zee_core::i18n::AVAILABLE_LANGUAGES.iter().map(|lang| {
+            let is_current = if lang.id == "auto" {
+                config.language == "auto" || config.language.is_empty()
+            } else {
+                config.language == lang.id
+            };
+            let label = if lang.id == "auto" {
+                i18n.get("dialog.settings.language_auto").to_string()
+            } else {
+                lang.name.to_string()
+            };
+            MenuItem::Toggle {
+                label,
+                action: Action::SetLanguage(lang.id.to_string()),
+                checked: is_current,
+                is_radio: true,
+            }
+        }).collect();
+
         let templates = zee_core::template::Template::load_all();
         let mut template_items = Vec::new();
         for tpl in &templates {
@@ -448,21 +467,22 @@ impl App {
             Menu::new(i18n.get("menu.view"), vec![
                 MenuItem::Action { label: i18n.get("menu.view.go_to_line").to_string(), action: Action::GoToLine, shortcut: Some("Ctrl+G".to_string()) },
                 MenuItem::Separator,
-                MenuItem::Toggle { label: "Sidebar (Ctrl+B)".to_string(), action: Action::ToggleSidebar, checked: config.sidebar, is_radio: false },
-                MenuItem::Action { label: "Outline".to_string(), action: Action::ToggleOutline, shortcut: Some("Alt+2".to_string()) },
+                MenuItem::Toggle { label: format!("{} (Ctrl+B)", i18n.get("menu.view.sidebar")), action: Action::ToggleSidebar, checked: config.sidebar, is_radio: false },
+                MenuItem::Action { label: i18n.get("menu.view.outline").to_string(), action: Action::ToggleOutline, shortcut: Some("Alt+2".to_string()) },
                 MenuItem::Separator,
                 MenuItem::Toggle { label: i18n.get("menu.view.line_numbers").to_string(), action: Action::ToggleLineNumbers, checked: config.line_numbers, is_radio: false },
                 MenuItem::Toggle { label: i18n.get("menu.view.word_wrap").to_string(), action: Action::ToggleWordWrap, checked: config.word_wrap, is_radio: false },
                 MenuItem::Toggle { label: i18n.get("menu.view.vi_mode").to_string(), action: Action::ToggleViMode, checked: config.vi_mode, is_radio: false },
                 MenuItem::Separator,
-                MenuItem::Submenu { label: "Encoding".to_string(), menu: Menu::new("Encoding", vec![
-                    MenuItem::Submenu { label: "Reopen with Encoding".to_string(), menu: Menu::new("Reopen", reopen_items)},
-                    MenuItem::Submenu { label: "Convert to Encoding".to_string(), menu: Menu::new("Convert", convert_items)},
+                MenuItem::Submenu { label: i18n.get("menu.view.encoding").to_string(), menu: Menu::new(i18n.get("menu.view.encoding"), vec![
+                    MenuItem::Submenu { label: i18n.get("menu.view.reopen_with_encoding").to_string(), menu: Menu::new(i18n.get("menu.view.reopen_with_encoding"), reopen_items)},
+                    MenuItem::Submenu { label: i18n.get("menu.view.convert_to_encoding").to_string(), menu: Menu::new(i18n.get("menu.view.convert_to_encoding"), convert_items)},
                 ])},
-                MenuItem::Submenu { label: "Line Ending".to_string(), menu: Menu::new("Line Ending", line_ending_items)},
+                MenuItem::Submenu { label: i18n.get("menu.view.line_ending").to_string(), menu: Menu::new(i18n.get("menu.view.line_ending"), line_ending_items)},
                 MenuItem::Separator,
-                MenuItem::Submenu { label: "Theme".to_string(), menu: Menu::new("Theme", theme_items)},
-                MenuItem::Submenu { label: "Syntax".to_string(), menu: Menu::new("Syntax", syntax_items)},
+                MenuItem::Submenu { label: i18n.get("menu.view.theme").to_string(), menu: Menu::new(i18n.get("menu.view.theme"), theme_items)},
+                MenuItem::Submenu { label: i18n.get("menu.view.syntax").to_string(), menu: Menu::new(i18n.get("menu.view.syntax"), syntax_items)},
+                MenuItem::Submenu { label: i18n.get("menu.view.language").to_string(), menu: Menu::new(i18n.get("menu.view.language"), language_items)},
             ]),
             Menu::new(i18n.get("menu.help"), vec![
                 MenuItem::Action { label: i18n.get("menu.help.about").to_string(), action: Action::About, shortcut: Some("Ctrl+H".to_string()) },
@@ -3820,6 +3840,13 @@ impl App {
                 }
                 self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
             }
+            Action::SetLanguage(lang_id) => {
+                self.config.language = lang_id.clone();
+                let _ = Config::write_key("language", &self.config.language);
+                self.i18n = I18n::load(&self.config.language);
+                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.recompute_layout();
+            }
             _ => {} // TODO: other actions
         }
     }
@@ -5502,11 +5529,14 @@ mod tests {
         assert_eq!(app.active_menu, Some(2));
         assert_eq!(app.submenu_stack.len(), 0);
 
+        let encoding_label = app.i18n.get("menu.view.encoding").to_string();
+        let reopen_label = app.i18n.get("menu.view.reopen_with_encoding").to_string();
+
         // Find index of Encoding submenu item in View menu
         let encoding_idx = app.menus[2]
             .items
             .iter()
-            .position(|item| matches!(item, MenuItem::Submenu { label, .. } if label == "Encoding"))
+            .position(|item| matches!(item, MenuItem::Submenu { label, .. } if label == &encoding_label))
             .expect("Encoding submenu not found");
 
         app.selected_item = encoding_idx;
@@ -5520,19 +5550,19 @@ mod tests {
 
         // Current menu is now Encoding (items: Reopen with Encoding, Convert to Encoding)
         let cur_menu = app.get_current_active_menu();
-        assert_eq!(cur_menu.label, "Encoding");
+        assert_eq!(cur_menu.label, encoding_label);
 
         // Press Right arrow on "Reopen with Encoding" submenu
         app.handle_key(make_key(KeyCode::Right));
         assert_eq!(app.submenu_stack.len(), 2);
         let cur_menu2 = app.get_current_active_menu();
-        assert_eq!(cur_menu2.label, "Reopen");
+        assert_eq!(cur_menu2.label, reopen_label);
 
         // Press Left arrow -> Should return to Encoding submenu and restore selected_item to 0
         app.handle_key(make_key(KeyCode::Left));
         assert_eq!(app.submenu_stack.len(), 1);
         assert_eq!(app.selected_item, 0);
-        assert_eq!(app.get_current_active_menu().label, "Encoding");
+        assert_eq!(app.get_current_active_menu().label, encoding_label);
 
         // Press Left arrow -> Should return to View menu and restore selected_item to encoding_idx
         app.handle_key(make_key(KeyCode::Left));

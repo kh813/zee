@@ -71,6 +71,24 @@ impl WindowView {
                 this.config.theme = w_config.theme.clone();
                 menu_changed = true;
             }
+            if this.config.language != w_config.language {
+                this.config.language = w_config.language.clone();
+                this.i18n = I18n::load(&this.config.language);
+                this.sidebar.update(cx, |sb, cx| {
+                    sb.i18n = this.i18n.clone();
+                    cx.notify();
+                });
+                #[cfg(not(target_os = "macos"))]
+                this.menu_bar.update(cx, |mb, cx| {
+                    mb.set_i18n(this.i18n.clone(), cx);
+                });
+                if let Some(dialog) = &this.dialog {
+                    dialog.update(cx, |d, cx| {
+                        d.set_i18n(this.i18n.clone(), cx);
+                    });
+                }
+                menu_changed = true;
+            }
             if menu_changed {
                 #[cfg(target_os = "macos")]
                 cx.set_menus(crate::app::build_native_menus(&this.i18n, &this.config));
@@ -832,6 +850,18 @@ impl WindowView {
         cx.notify();
     }
 
+    fn handle_set_language(&mut self, action: &crate::app::SetLanguage, _window: &mut Window, cx: &mut Context<Self>) {
+        self.set_language(&action.id, cx);
+    }
+
+    fn set_language(&mut self, lang_id: &str, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |w, cx| {
+            w.config.language = lang_id.to_string();
+            let _ = Config::write_key("language", lang_id);
+            cx.notify();
+        });
+    }
+
     fn set_theme(&mut self, name: &str, cx: &mut Context<Self>) {
         let theme = zee_core::theme::Theme::find_by_name(name)
             .unwrap_or_default();
@@ -1243,6 +1273,7 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_set_line_ending_cr))
             .on_action(cx.listener(Self::handle_set_theme))
             .on_action(cx.listener(Self::handle_set_syntax))
+            .on_action(cx.listener(Self::handle_set_language))
             .on_action(cx.listener(Self::handle_go_to_line))
             .on_action(cx.listener(Self::handle_open_settings))
             .on_action(cx.listener(Self::handle_export_config))
@@ -1572,7 +1603,7 @@ impl WindowView {
         let word_wrap_checked = self.config.word_wrap;
         let vi_mode_checked = self.config.vi_mode;
 
-        div()
+        let mut menu = div()
             .flex()
             .flex_col()
             .child(self.render_menu_item(self.i18n.get("menu.view.go_to_line").to_string(), None, false, GoToLine {}, fg, hover_bg, muted_fg, cx))
@@ -1585,6 +1616,32 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.view.line_numbers").to_string(), None, line_numbers_checked, ToggleLineNumbers {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.view.word_wrap").to_string(), None, word_wrap_checked, ToggleWordWrap {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.view.vi_mode").to_string(), None, vi_mode_checked, ToggleViMode {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_sep(border));
+
+        for lang in zee_core::i18n::AVAILABLE_LANGUAGES {
+            let is_current = if lang.id == "auto" {
+                self.config.language == "auto" || self.config.language.is_empty()
+            } else {
+                self.config.language == lang.id
+            };
+            let label = if lang.id == "auto" {
+                format!("  {}", self.i18n.get("dialog.settings.language_auto"))
+            } else {
+                format!("  {}", lang.name)
+            };
+            menu = menu.child(self.render_menu_item(
+                label,
+                None,
+                is_current,
+                crate::app::SetLanguage { id: lang.id.to_string() },
+                fg,
+                hover_bg,
+                muted_fg,
+                cx,
+            ));
+        }
+
+        menu
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.app.preferences").to_string(), Some("Ctrl+,"), false, OpenSettings {}, fg, hover_bg, muted_fg, cx))
     }

@@ -42,6 +42,11 @@ impl MenuBar {
             cx.notify();
         }
     }
+
+    pub fn set_i18n(&mut self, i18n: I18n, cx: &mut Context<Self>) {
+        self.i18n = i18n;
+        cx.notify();
+    }
 }
 
 impl Render for MenuBar {

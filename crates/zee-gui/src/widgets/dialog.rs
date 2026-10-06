@@ -40,6 +40,7 @@ pub enum DialogType {
 pub enum SettingsDropdown {
     Theme,
     Font,
+    Language,
 }
 
 pub struct Dialog {
@@ -260,6 +261,11 @@ impl Dialog {
 
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus_handle.focus(window, cx);
+    }
+
+    pub fn set_i18n(&mut self, i18n: I18n, cx: &mut Context<Self>) {
+        self.i18n = i18n;
+        cx.notify();
     }
 
     fn handle_keydown(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1098,14 +1104,31 @@ impl Dialog {
                 let current_theme_name = workspace.theme.meta.name.clone();
                 let is_theme_open = self.settings_dropdown == Some(SettingsDropdown::Theme);
                 let is_font_open = self.settings_dropdown == Some(SettingsDropdown::Font);
+                let is_language_open = self.settings_dropdown == Some(SettingsDropdown::Language);
 
+                let current_lang_id = if workspace.config.language.is_empty() {
+                    "auto"
+                } else {
+                    workspace.config.language.as_str()
+                };
+                let current_lang_name = if current_lang_id == "auto" {
+                    self.i18n.get("dialog.settings.language_auto").to_string()
+                } else {
+                    zee_core::i18n::AVAILABLE_LANGUAGES
+                        .iter()
+                        .find(|l| l.id == current_lang_id)
+                        .map(|l| l.name.to_string())
+                        .unwrap_or_else(|| current_lang_id.to_string())
+                };
+
+                let sys_default_font = self.i18n.get("dialog.settings.font_system_default").to_string();
                 let current_font_label = match &workspace.config.font_family {
                     Some(f) if !f.is_empty() => f.clone(),
-                    _ => "System Default".to_string(),
+                    _ => sys_default_font.clone(),
                 };
 
                 let mut font_options: Vec<(Option<String>, String)> = vec![
-                    (None, "System Default".to_string()),
+                    (None, sys_default_font),
                     (Some("Menlo".to_string()), "Menlo".to_string()),
                     (Some("SF Mono".to_string()), "SF Mono".to_string()),
                     (Some("Monaco".to_string()), "Monaco".to_string()),
@@ -1279,6 +1302,137 @@ impl Dialog {
                                                                 .text_size(px(12.0))
                                                                 .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
                                                                 .child(t_name)
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(11.0))
+                                                                .text_color(accent)
+                                                                .child(if is_active { "✓" } else { "" })
+                                                        )
+                                                }))
+                                        )
+                                    } else {
+                                        None
+                                    })
+                            )
+                    )
+                    // Language dropdown section
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .gap_1p5()
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(with_alpha(fg, 0.75))
+                                    .child(self.i18n.get("dialog.settings.language").to_string())
+                            )
+                            // Anchor container for trigger and floating popup
+                            .child(
+                                div()
+                                    .relative()
+                                    .w_full()
+                                    .child(
+                                        // Dropdown trigger button
+                                        div()
+                                            .h(px(32.0))
+                                            .w_full()
+                                            .px_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .rounded_md()
+                                            .border_1()
+                                            .border_color(if is_language_open { accent } else { chip_border })
+                                            .bg(input_bg)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                this.settings_dropdown = if this.settings_dropdown == Some(SettingsDropdown::Language) {
+                                                    None
+                                                } else {
+                                                    Some(SettingsDropdown::Language)
+                                                };
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.5))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(current_lang_name.clone())
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.0))
+                                                    .text_color(with_alpha(fg, 0.6))
+                                                    .child(if is_language_open { "▲" } else { "▼" })
+                                            )
+                                    )
+                                    // Floating dropdown popup
+                                    .children(if is_language_open {
+                                        Some(
+                                            div()
+                                                .id("settings-language-dropdown-list")
+                                                .absolute()
+                                                .top(px(36.0))
+                                                .left_0()
+                                                .right_0()
+                                                .w_full()
+                                                .max_h(px(200.0))
+                                                .overflow_y_scroll()
+                                                .rounded_md()
+                                                .border_1()
+                                                .border_color(accent)
+                                                .bg(input_bg)
+                                                .shadow_2xl()
+                                                .p_1()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_0p5()
+                                                .children(zee_core::i18n::AVAILABLE_LANGUAGES.iter().map(|lang| {
+                                                    let is_active = if lang.id == "auto" {
+                                                        current_lang_id == "auto"
+                                                    } else {
+                                                        current_lang_id == lang.id
+                                                    };
+                                                    let label = if lang.id == "auto" {
+                                                        self.i18n.get("dialog.settings.language_auto").to_string()
+                                                    } else {
+                                                        lang.name.to_string()
+                                                    };
+                                                    let l_id = lang.id.to_string();
+
+                                                    div()
+                                                        .h(px(28.0))
+                                                        .px_2p5()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .rounded_sm()
+                                                        .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.bg(with_alpha(fg, 0.12)))
+                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                            cx.stop_propagation();
+                                                            let l_id_clone = l_id.clone();
+                                                            this.workspace.update(cx, |w, cx| {
+                                                                w.config.language = l_id_clone.clone();
+                                                                let _ = zee_core::config::Config::write_key("language", &l_id_clone);
+                                                                cx.notify();
+                                                            });
+                                                            this.i18n = zee_core::i18n::I18n::load(&l_id);
+                                                            this.settings_dropdown = None;
+                                                            cx.notify();
+                                                        }))
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(12.0))
+                                                                .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                                                .child(label)
                                                         )
                                                         .child(
                                                             div()
@@ -1969,6 +2123,8 @@ impl Dialog {
                                             w.config.tab_size = 4;
                                             w.config.expand_tab = true;
                                             w.config.sidebar_position = "right".to_string();
+                                            w.config.language = "auto".to_string();
+                                            let _ = zee_core::config::Config::write_key("language", "auto");
                                             let _ = zee_core::config::Config::write_key("font_family", "");
                                             let _ = zee_core::config::Config::write_key("font_size", "12.0");
                                             let _ = zee_core::config::Config::write_key("line_height", "19.0");

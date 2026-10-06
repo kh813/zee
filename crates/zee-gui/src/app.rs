@@ -681,6 +681,19 @@ impl Action for ApplyTemplate {
     fn name_for_type() -> &'static str { "ApplyTemplate" }
 }
 
+#[derive(serde::Deserialize, PartialEq, Eq, Clone, Debug)]
+pub struct SetLanguage {
+    pub id: String,
+}
+
+impl Action for SetLanguage {
+    fn name(&self) -> &'static str { "SetLanguage" }
+    fn boxed_clone(&self) -> Box<dyn Action> { Box::new(self.clone()) }
+    fn build(v: gpui::private::serde_json::Value) -> Result<Box<dyn Action>> { Ok(Box::new(serde_json::from_value::<Self>(v)?)) }
+    fn partial_eq(&self, _other: &dyn Action) -> bool { false }
+    fn name_for_type() -> &'static str { "SetLanguage" }
+}
+
 #[cfg(target_os = "macos")]
 pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec<Menu> {
     let mut theme_items = Vec::new();
@@ -767,16 +780,39 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
     plugin_menu_items.push(MenuItem::action(i18n.get("menu.plugins.manage"), ManagePlugins {}));
     plugin_menu_items.push(MenuItem::action(i18n.get("menu.plugins.open_folder"), OpenPluginsFolder {}));
 
+    let mut language_items = Vec::new();
+    for lang in zee_core::i18n::AVAILABLE_LANGUAGES {
+        let is_current = if lang.id == "auto" {
+            config.language == "auto" || config.language.is_empty()
+        } else {
+            config.language == lang.id
+        };
+        let label = if lang.id == "auto" {
+            i18n.get("dialog.settings.language_auto").to_string()
+        } else {
+            lang.name.to_string()
+        };
+        let display_name = if is_current {
+            format!("✓ {}", label)
+        } else {
+            label
+        };
+        language_items.push(MenuItem::action(
+            display_name,
+            SetLanguage { id: lang.id.to_string() },
+        ));
+    }
+
     vec![
         Menu {
             name: "zee".into(),
             items: vec![
-                MenuItem::action("About zee", About {}),
+                MenuItem::action(i18n.get("menu.zee.about"), About {}),
                 MenuItem::action(i18n.get("menu.help.check_for_updates"), CheckForUpdates {}),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.app.preferences"), OpenSettings {}),
                 MenuItem::separator(),
-                MenuItem::action("Quit zee", Quit {}),
+                MenuItem::action(i18n.get("menu.zee.quit"), Quit {}),
             ],
             disabled: false,
         },
@@ -895,8 +931,8 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
                 MenuItem::submenu(Menu {
                     name: i18n.get("menu.view.encoding").into(),
                     items: vec![
-                        MenuItem::submenu(Menu { name: "Reopen with Encoding".into(), items: reopen_items, disabled: false }),
-                        MenuItem::submenu(Menu { name: "Convert to Encoding".into(), items: convert_items, disabled: false }),
+                        MenuItem::submenu(Menu { name: i18n.get("menu.view.reopen_with_encoding").into(), items: reopen_items, disabled: false }),
+                        MenuItem::submenu(Menu { name: i18n.get("menu.view.convert_to_encoding").into(), items: convert_items, disabled: false }),
                     ],
                     disabled: false,
                 }),
@@ -919,16 +955,21 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
                     items: syntax_items,
                     disabled: false,
                 }),
+                MenuItem::submenu(Menu {
+                    name: i18n.get("menu.view.language").into(),
+                    items: language_items,
+                    disabled: false,
+                }),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.app.preferences"), OpenSettings {}),
             ],
             disabled: false,
         },
         Menu {
-            name: "Tabs".into(),
+            name: i18n.get("menu.tabs").into(),
             items: vec![
-                MenuItem::action("Next Tab", NextTab {}),
-                MenuItem::action("Previous Tab", PrevTab {}),
+                MenuItem::action(i18n.get("menu.tabs.next"), NextTab {}),
+                MenuItem::action(i18n.get("menu.tabs.prev"), PrevTab {}),
             ],
             disabled: false,
         },

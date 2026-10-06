@@ -3,6 +3,87 @@ use std::path::PathBuf;
 use std::fs;
 use crate::config::Config;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LanguageInfo {
+    pub id: &'static str,
+    pub name: &'static str,
+}
+
+pub const AVAILABLE_LANGUAGES: &[LanguageInfo] = &[
+    LanguageInfo { id: "auto", name: "Auto" },
+    LanguageInfo { id: "en", name: "English" },
+    LanguageInfo { id: "ja", name: "日本語 (Japanese)" },
+    LanguageInfo { id: "zh-CN", name: "简体中文 (Simplified Chinese)" },
+    LanguageInfo { id: "zh-TW", name: "繁體中文 (Traditional Chinese)" },
+    LanguageInfo { id: "ko", name: "한국어 (Korean)" },
+    LanguageInfo { id: "es", name: "Español (Spanish)" },
+    LanguageInfo { id: "fr", name: "Français (French)" },
+    LanguageInfo { id: "de", name: "Deutsch (German)" },
+    LanguageInfo { id: "it", name: "Italiano (Italian)" },
+    LanguageInfo { id: "pt", name: "Português (Portuguese)" },
+    LanguageInfo { id: "ru", name: "Русский (Russian)" },
+];
+
+#[cfg(target_os = "macos")]
+fn get_macos_locale() -> Option<String> {
+    if let Ok(output) = std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleLocale"])
+        .output()
+    {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !s.is_empty() {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn get_windows_locale() -> Option<String> {
+    const LOCALE_NAME_MAX_LENGTH: usize = 85;
+    let mut buffer = [0u16; LOCALE_NAME_MAX_LENGTH];
+    extern "system" {
+        fn GetUserDefaultLocaleName(lpLocaleName: *mut u16, cchLocaleName: i32) -> i32;
+    }
+    unsafe {
+        let ret = GetUserDefaultLocaleName(buffer.as_mut_ptr(), LOCALE_NAME_MAX_LENGTH as i32);
+        if ret > 0 {
+            let len = (ret as usize).saturating_sub(1);
+            String::from_utf16(&buffer[..len]).ok()
+        } else {
+            None
+        }
+    }
+}
+
+pub fn detect_system_locale() -> &'static str {
+    static CACHED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHED.get_or_init(|| {
+        for var in &["LC_ALL", "LC_MESSAGES", "LANG"] {
+            if let Ok(val) = std::env::var(var) {
+                let val = val.trim();
+                if !val.is_empty() && val != "C" && val != "POSIX" {
+                    return val.to_string();
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        if let Some(loc) = get_macos_locale() {
+            return loc;
+        }
+
+        #[cfg(target_os = "windows")]
+        if let Some(loc) = get_windows_locale() {
+            return loc;
+        }
+
+        "en".to_string()
+    })
+}
+
 #[derive(Clone)]
 pub struct I18n {
     strings: HashMap<String, String>,
@@ -37,8 +118,17 @@ impl I18n {
         }
     }
 
+    pub fn resolve_lang(lang: &str) -> String {
+        let trimmed = lang.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
+            Self::normalize_lang(detect_system_locale())
+        } else {
+            Self::normalize_lang(trimmed)
+        }
+    }
+
     pub fn load(lang: &str) -> Self {
-        let norm = Self::normalize_lang(lang);
+        let norm = Self::resolve_lang(lang);
         let mut strings = match norm.as_str() {
             "ja" => Self::get_ja_defaults(),
             "zh-CN" => Self::get_zh_cn_defaults(),
@@ -61,7 +151,7 @@ impl I18n {
             }
         }
 
-        if let Some(path) = Self::locale_file_path(lang) {
+        if let Some(path) = Self::locale_file_path(&norm) {
             if path.exists() {
                 if let Ok(content) = fs::read_to_string(path) {
                     if let Ok(custom) = Self::parse_locale_toml(&content) {
@@ -78,6 +168,12 @@ impl I18n {
 
     fn get_en_defaults() -> HashMap<String, String> {
         let mut m = HashMap::new();
+        m.insert("menu.zee.about".to_string(), "About zee".to_string());
+        m.insert("menu.zee.quit".to_string(), "Quit zee".to_string());
+        m.insert("menu.tabs".to_string(), "Tabs".to_string());
+        m.insert("menu.tabs.next".to_string(), "Next Tab".to_string());
+        m.insert("menu.tabs.prev".to_string(), "Previous Tab".to_string());
+
         m.insert("menu.file".to_string(), "File".to_string());
         m.insert("menu.file.new_tab".to_string(), "New Tab".to_string());
         m.insert("menu.file.new_window".to_string(), "New Window".to_string());
@@ -120,9 +216,13 @@ impl I18n {
         m.insert("menu.view.word_wrap".to_string(), "Word Wrap".to_string());
         m.insert("menu.view.vi_mode".to_string(), "Vi Mode".to_string());
         m.insert("menu.view.encoding".to_string(), "Encoding".to_string());
+        m.insert("menu.view.reopen_with_encoding".to_string(), "Reopen with Encoding".to_string());
+        m.insert("menu.view.convert_to_encoding".to_string(), "Convert to Encoding".to_string());
         m.insert("menu.view.line_ending".to_string(), "Line Ending".to_string());
         m.insert("menu.view.theme".to_string(), "Theme".to_string());
         m.insert("menu.view.syntax".to_string(), "Syntax".to_string());
+        m.insert("menu.view.language".to_string(), "Language".to_string());
+        m.insert("menu.view.outline".to_string(), "Outline".to_string());
 
         m.insert("menu.help".to_string(), "Help".to_string());
         m.insert("menu.help.about".to_string(), "About".to_string());
@@ -207,7 +307,10 @@ impl I18n {
 
         m.insert("dialog.settings.title".to_string(), "Preferences".to_string());
         m.insert("dialog.settings.theme".to_string(), "Theme".to_string());
+        m.insert("dialog.settings.language".to_string(), "Language".to_string());
+        m.insert("dialog.settings.language_auto".to_string(), "Auto (System)".to_string());
         m.insert("dialog.settings.font_family".to_string(), "Editor Font".to_string());
+        m.insert("dialog.settings.font_system_default".to_string(), "System Default".to_string());
         m.insert("dialog.settings.font_size".to_string(), "Font Size".to_string());
         m.insert("dialog.settings.line_height".to_string(), "Line Height".to_string());
         m.insert("dialog.settings.ui_font_size".to_string(), "UI Font Size".to_string());
@@ -249,6 +352,12 @@ impl I18n {
 
     fn get_ja_defaults() -> HashMap<String, String> {
         let mut m = HashMap::new();
+        m.insert("menu.zee.about".to_string(), "zee について".to_string());
+        m.insert("menu.zee.quit".to_string(), "zee を終了".to_string());
+        m.insert("menu.tabs".to_string(), "タブ".to_string());
+        m.insert("menu.tabs.next".to_string(), "次のタブ".to_string());
+        m.insert("menu.tabs.prev".to_string(), "前のタブ".to_string());
+
         m.insert("menu.file".to_string(), "ファイル".to_string());
         m.insert("menu.file.new_tab".to_string(), "新規タブ".to_string());
         m.insert("menu.file.new_window".to_string(), "新規ウィンドウ".to_string());
@@ -291,9 +400,13 @@ impl I18n {
         m.insert("menu.view.word_wrap".to_string(), "右端で折り返す".to_string());
         m.insert("menu.view.vi_mode".to_string(), "Viモード".to_string());
         m.insert("menu.view.encoding".to_string(), "エンコード".to_string());
+        m.insert("menu.view.reopen_with_encoding".to_string(), "エンコーディングを指定して再読み込み".to_string());
+        m.insert("menu.view.convert_to_encoding".to_string(), "エンコーディングを変換".to_string());
         m.insert("menu.view.line_ending".to_string(), "改行コード".to_string());
         m.insert("menu.view.theme".to_string(), "テーマ".to_string());
         m.insert("menu.view.syntax".to_string(), "シンタックス".to_string());
+        m.insert("menu.view.language".to_string(), "言語".to_string());
+        m.insert("menu.view.outline".to_string(), "アウトライン".to_string());
 
         m.insert("menu.help".to_string(), "ヘルプ".to_string());
         m.insert("menu.help.about".to_string(), "このソフトについて".to_string());
@@ -378,7 +491,10 @@ impl I18n {
 
         m.insert("dialog.settings.title".to_string(), "設定".to_string());
         m.insert("dialog.settings.theme".to_string(), "テーマ".to_string());
+        m.insert("dialog.settings.language".to_string(), "言語".to_string());
+        m.insert("dialog.settings.language_auto".to_string(), "自動（システム設定）".to_string());
         m.insert("dialog.settings.font_family".to_string(), "エディタフォント".to_string());
+        m.insert("dialog.settings.font_system_default".to_string(), "システム既定".to_string());
         m.insert("dialog.settings.font_size".to_string(), "フォントサイズ".to_string());
         m.insert("dialog.settings.line_height".to_string(), "行の高さ".to_string());
         m.insert("dialog.settings.ui_font_size".to_string(), "UIフォントサイズ".to_string());
@@ -951,5 +1067,74 @@ impl I18n {
                 Self::flatten_toml_value(&new_prefix, v, map);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_lang() {
+        assert_eq!(I18n::normalize_lang("ja"), "ja");
+        assert_eq!(I18n::normalize_lang("ja_JP.UTF-8"), "ja");
+        assert_eq!(I18n::normalize_lang("ja-JP"), "ja");
+        assert_eq!(I18n::normalize_lang("en_US.UTF-8"), "en");
+        assert_eq!(I18n::normalize_lang("en"), "en");
+        assert_eq!(I18n::normalize_lang("zh_CN"), "zh-CN");
+        assert_eq!(I18n::normalize_lang("zh_TW"), "zh-TW");
+        assert_eq!(I18n::normalize_lang("ko_KR"), "ko");
+        assert_eq!(I18n::normalize_lang("es_ES"), "es");
+        assert_eq!(I18n::normalize_lang("fr_FR"), "fr");
+        assert_eq!(I18n::normalize_lang("de_DE"), "de");
+        assert_eq!(I18n::normalize_lang("it_IT"), "it");
+        assert_eq!(I18n::normalize_lang("pt_BR"), "pt");
+        assert_eq!(I18n::normalize_lang("ru_RU"), "ru");
+        assert_eq!(I18n::normalize_lang("unknown_lang"), "en");
+    }
+
+    #[test]
+    fn test_resolve_lang() {
+        assert_eq!(I18n::resolve_lang("ja"), "ja");
+        assert_eq!(I18n::resolve_lang("en"), "en");
+        let auto_resolved = I18n::resolve_lang("auto");
+        assert!(!auto_resolved.is_empty());
+        let empty_resolved = I18n::resolve_lang("");
+        assert_eq!(empty_resolved, auto_resolved);
+    }
+
+    #[test]
+    fn test_detect_system_locale_non_empty() {
+        let loc = detect_system_locale();
+        assert!(!loc.is_empty());
+    }
+
+    #[test]
+    fn test_available_languages() {
+        assert!(AVAILABLE_LANGUAGES.iter().any(|l| l.id == "auto"));
+        assert!(AVAILABLE_LANGUAGES.iter().any(|l| l.id == "en"));
+        assert!(AVAILABLE_LANGUAGES.iter().any(|l| l.id == "ja"));
+        assert!(AVAILABLE_LANGUAGES.iter().any(|l| l.id == "zh-CN"));
+    }
+
+    #[test]
+    fn test_japanese_translations_coverage() {
+        let ja = I18n::load("ja");
+        assert_eq!(ja.get("menu.file"), "ファイル");
+        assert_eq!(ja.get("menu.edit"), "編集");
+        assert_eq!(ja.get("menu.view"), "表示");
+        assert_eq!(ja.get("menu.view.language"), "言語");
+        assert_eq!(ja.get("menu.view.reopen_with_encoding"), "エンコーディングを指定して再読み込み");
+        assert_eq!(ja.get("menu.view.convert_to_encoding"), "エンコーディングを変換");
+        assert_eq!(ja.get("menu.tabs"), "タブ");
+        assert_eq!(ja.get("menu.tabs.next"), "次のタブ");
+        assert_eq!(ja.get("menu.tabs.prev"), "前のタブ");
+        assert_eq!(ja.get("menu.zee.about"), "zee について");
+        assert_eq!(ja.get("menu.zee.quit"), "zee を終了");
+        assert_eq!(ja.get("dialog.settings.title"), "設定");
+        assert_eq!(ja.get("dialog.settings.language"), "言語");
+        assert_eq!(ja.get("dialog.settings.language_auto"), "自動（システム設定）");
+        assert_eq!(ja.get("dialog.settings.theme"), "テーマ");
+        assert_eq!(ja.get("dialog.settings.font_family"), "エディタフォント");
     }
 }

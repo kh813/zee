@@ -252,6 +252,8 @@ In the desktop GUI, hold the `Alt` key (Option on macOS) while dragging the mous
 
 Toggle Vi Mode with `Ctrl+I` (`⌘I` on macOS) or via `View > [x] Vi Mode`. When active, a Vim-standard 2-row bottom bar appears across both GUI and TUI: the upper row displays status indicators, while the bottom row serves as a dedicated command line (`:`) and message feedback area.
 
+> **POSIX Compliance Roadmap**: For detailed implementation status and the roadmap towards full POSIX.1-2017 `vi`/`ex` compatibility, see [`docs/POSIX_VI_COMPLIANCE.md`](docs/POSIX_VI_COMPLIANCE.md).
+
 #### Ex Commands (`:`)
 Press `:` in Normal or Visual mode (or `Shift+;` on US keyboards / full-width `：` with IME on) to enter the command line:
 

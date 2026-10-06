@@ -54,6 +54,7 @@ Whether launching `Zee.app` on your desktop or running `zee` over SSH in a termi
   - Dedicated 2-row bottom bar with Ex command line (`:w [path]`, `:q[!]`, `:wq`, `:e[!]`, `:<line>`, `:noh`, `:bn`, `:bp`, `:set nu/wrap`).
   - Full Japanese IME transparency with automatic key normalization (`っ` for `dd`, `い` for `i`, full-width symbols/colons).
   - Context-aware cursor shapes: Block `█` in Normal mode, vertical bar `|` in Insert mode (Latin), and amber underscore `_` with `[あ]` status badge when CJK IME is active.
+  - Tracking progress towards full POSIX.1-2017 vi compliance via [POSIX Vi Compliance Checklist](docs/POSIX_VI_COMPLIANCE.md).
 - **Remote SSH & OSC 52 Clipboard**:
 
   - Seamless system clipboard synchronization locally and over SSH terminal connections.

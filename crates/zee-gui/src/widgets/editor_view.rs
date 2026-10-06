@@ -25,6 +25,9 @@ pub struct EditorView {
     pending_capital_t: bool,
     pending_indent: bool,
     pending_unindent: bool,
+    pending_m: bool,
+    pending_single_quote: bool,
+    pending_backtick: bool,
     ignore_next_text_input: bool,
     pub last_wrap_cols: usize,
     pub last_wrap_width_px: f32,
@@ -62,6 +65,9 @@ impl EditorView {
             pending_capital_t: false,
             pending_indent: false,
             pending_unindent: false,
+            pending_m: false,
+            pending_single_quote: false,
+            pending_backtick: false,
             ignore_next_text_input: false,
             last_wrap_cols: 80,
             last_wrap_width_px: 800.0,
@@ -709,6 +715,36 @@ impl EditorView {
                             editor.selection = None;
                             editor.selection_anchor = None;
                         }
+                    }
+                    cx.notify();
+                });
+            }
+            return;
+        }
+
+        if self.pending_m {
+            self.pending_m = false;
+            if key != "escape" && key.chars().count() == 1 {
+                let m = key.chars().next().unwrap();
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.set_mark(m);
+                    }
+                    cx.notify();
+                });
+            }
+            return;
+        }
+
+        if self.pending_single_quote || self.pending_backtick {
+            let line_only = self.pending_single_quote;
+            self.pending_single_quote = false;
+            self.pending_backtick = false;
+            if key != "escape" && key.chars().count() == 1 {
+                let m = key.chars().next().unwrap();
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.jump_to_mark(m, line_only, false);
                     }
                     cx.notify();
                 });
@@ -1364,6 +1400,15 @@ impl EditorView {
             "T" => {
                 self.pending_capital_t = true;
             }
+            "m" => {
+                self.pending_m = true;
+            }
+            "'" => {
+                self.pending_single_quote = true;
+            }
+            "`" => {
+                self.pending_backtick = true;
+            }
             ">" => {
                 self.pending_indent = true;
             }
@@ -1640,6 +1685,9 @@ impl EditorView {
                 self.pending_capital_t = false;
                 self.pending_indent = false;
                 self.pending_unindent = false;
+                self.pending_m = false;
+                self.pending_single_quote = false;
+                self.pending_backtick = false;
             }
             "enter" => {
                 self.preedit_text = None;
@@ -1759,11 +1807,29 @@ impl EditorView {
     }
 
     fn handle_vi_visual_key(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.pending_single_quote || self.pending_backtick {
+            let line_only = self.pending_single_quote;
+            self.pending_single_quote = false;
+            self.pending_backtick = false;
+            if key != "escape" && key.chars().count() == 1 {
+                let m = key.chars().next().unwrap();
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.jump_to_mark(m, line_only, true);
+                    }
+                    cx.notify();
+                });
+            }
+            return;
+        }
+
         let current_mode = self.workspace.read(cx).active_editor().map(|e| e.vi_mode);
         let is_block = current_mode == Some(zee_core::ViMode::VisualBlock);
 
         match key {
             "escape" => {
+                self.pending_single_quote = false;
+                self.pending_backtick = false;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         editor.vi_mode = zee_core::ViMode::Normal;
@@ -1962,6 +2028,12 @@ impl EditorView {
                     }
                     cx.notify();
                 });
+            }
+            "'" => {
+                self.pending_single_quote = true;
+            }
+            "`" => {
+                self.pending_backtick = true;
             }
             "d" | "x" => {
                 let mut text_to_copy = None;

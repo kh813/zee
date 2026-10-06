@@ -278,6 +278,7 @@ Press `:` in Normal or Visual mode (or `Shift+;` on US keyboards / full-width `ï
 #### Normal Mode
 - **Motions**: `h` / `j` / `k` / `l` (left/down/up/right), `w` / `b` / `e` (word forward/backward/end), `W` / `B` / `E` (whitespace-delimited WORD motions), `0` / `^` / `_` (line start/first non-blank), `+` / `-` (next/previous line first non-blank), `$` (line end), `gg` / `G` (document start/end), `Ctrl+D` / `Ctrl+U` (half-page down/up), `Ctrl+F` / `Ctrl+B` (page down/up).
 - **Inline Character Search**: `f<char>` (forward find), `F<char>` (backward find), `t<char>` (until char forward), `T<char>` (until char backward), `;` (repeat last inline find in same direction), `,` (repeat last inline find in reverse direction).
+- **Marks & Jumps**: `m<a-z>` (set mark at cursor), `'<a-z>` (jump to line of mark at first non-blank char), `` `<a-z> `` (jump to exact character position of mark), `''` / ` `` ` (jump back to position prior to last jump). Marks automatically adjust positions on buffer edits.
 - **Indentation**: `>>` (indent line), `<<` (unindent line).
 - **Bracket Matching**: `%` (jump to matching bracket `()`, `{}`, `[]`).
 - **Mode Switching**: 

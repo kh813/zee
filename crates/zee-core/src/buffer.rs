@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::ops::Range;
+use std::collections::HashMap;
 use anyhow::Result;
 use ropey::Rope;
 use crate::{Encoding, LineEnding};
@@ -43,6 +44,8 @@ pub struct Editor {
     pub line_states: Vec<crate::syntax::LineState>,
     pub line_tokens: Vec<Option<Vec<crate::syntax::TokenSpan>>>,
     pub last_inline_find: Option<(char, bool, bool)>,
+    pub marks: HashMap<char, usize>,
+    pub jump_origin: Option<usize>,
 }
 
 impl Default for Editor {
@@ -77,6 +80,8 @@ impl Editor {
             line_states: vec![crate::syntax::LineState::Normal],
             line_tokens: vec![None],
             last_inline_find: None,
+            marks: HashMap::new(),
+            jump_origin: None,
         }
     }
 
@@ -125,6 +130,8 @@ impl Editor {
             line_states: vec![crate::syntax::LineState::Normal; line_count],
             line_tokens: vec![None; line_count],
             last_inline_find: None,
+            marks: HashMap::new(),
+            jump_origin: None,
         };
 
         let first_line = if editor.rope.len_lines() > 0 {
@@ -1503,6 +1510,18 @@ impl Editor {
         self.cursor = pos + new_char_count;
         self.selection = None;
         self.selection_anchor = None;
+
+        for mpos in self.marks.values_mut() {
+            if *mpos >= pos {
+                *mpos += new_char_count;
+            }
+        }
+        if let Some(ref mut jpos) = self.jump_origin {
+            if *jpos >= pos {
+                *jpos += new_char_count;
+            }
+        }
+
         delta
     }
 
@@ -1529,6 +1548,23 @@ impl Editor {
         self.cursor = range.start;
         self.selection = None;
         self.selection_anchor = None;
+
+        let del_len = range.end.saturating_sub(range.start);
+        for mpos in self.marks.values_mut() {
+            if *mpos >= range.end {
+                *mpos = mpos.saturating_sub(del_len);
+            } else if *mpos > range.start {
+                *mpos = range.start;
+            }
+        }
+        if let Some(ref mut jpos) = self.jump_origin {
+            if *jpos >= range.end {
+                *jpos = jpos.saturating_sub(del_len);
+            } else if *jpos > range.start {
+                *jpos = range.start;
+            }
+        }
+
         delta
     }
 
@@ -1980,6 +2016,51 @@ impl Editor {
             self.find_inline_char(self.cursor, ch, actual_forward, till)
         } else {
             None
+        }
+    }
+
+    pub fn set_mark(&mut self, mark: char) -> bool {
+        let normalized = mark.to_ascii_lowercase();
+        if normalized.is_ascii_lowercase() {
+            self.marks.insert(normalized, self.cursor.min(self.rope.len_chars()));
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn jump_to_mark(&mut self, mark: char, line_only: bool, extend_selection: bool) -> bool {
+        let target_pos = if mark == '\'' || mark == '`' {
+            self.jump_origin
+        } else {
+            let normalized = mark.to_ascii_lowercase();
+            self.marks.get(&normalized).copied()
+        };
+
+        if let Some(pos) = target_pos {
+            let clamped = pos.min(self.rope.len_chars());
+            let final_target = if line_only {
+                let line = self.rope.char_to_line(clamped);
+                let line_str = self.rope.line(line).to_string();
+                let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                self.line_col_to_char(line, indent)
+            } else {
+                clamped
+            };
+
+            self.jump_origin = Some(self.cursor);
+            if extend_selection {
+                self.ensure_selection();
+                self.cursor = final_target;
+                self.update_selection();
+            } else {
+                self.cursor = final_target;
+                self.selection = None;
+                self.selection_anchor = None;
+            }
+            true
+        } else {
+            false
         }
     }
 }
@@ -3069,6 +3150,39 @@ mod tests {
 
         ed.move_bigword_backward(false);
         assert_eq!(ed.cursor, 14); // 'Q'
+    }
+
+    #[test]
+    fn test_marks_and_jumps() {
+        let mut editor = Editor::new();
+        editor.insert(0, "line 1: start\n  line 2: middle\nline 3: end");
+
+        // Set mark 'a' at character 7 (':' of line 1)
+        editor.cursor = 7;
+        assert!(editor.set_mark('a'));
+
+        // Set mark 'b' at character 24 ('m' of line 2)
+        editor.cursor = 24;
+        assert!(editor.set_mark('b'));
+
+        // Move elsewhere (end of document)
+        editor.cursor = editor.rope.len_chars();
+
+        // Exact jump to mark 'a' using `a
+        assert!(editor.jump_to_mark('a', false, false));
+        assert_eq!(editor.cursor, 7);
+
+        // Jump to mark 'b' with line_only ('b)
+        assert!(editor.jump_to_mark('b', true, false));
+        assert_eq!(editor.cursor, 16); // 'l' (first non-blank of line 2)
+
+        // Return to previous jump location using ''
+        assert!(editor.jump_to_mark('\'', false, false));
+        assert_eq!(editor.cursor, 7);
+
+        // Test mark shift on insert
+        editor.insert(0, "PREFIX ");
+        assert_eq!(editor.marks.get(&'a'), Some(&14)); // 7 + 7 = 14
     }
 }
 

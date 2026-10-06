@@ -85,6 +85,9 @@ pub struct App {
     pub pending_capital_f: bool,
     pub pending_t: bool,
     pub pending_capital_t: bool,
+    pub pending_m: bool,
+    pub pending_single_quote: bool,
+    pub pending_backtick: bool,
 }
 
 impl App {
@@ -223,6 +226,9 @@ impl App {
             pending_capital_f: false,
             pending_t: false,
             pending_capital_t: false,
+            pending_m: false,
+            pending_single_quote: false,
+            pending_backtick: false,
         };
 
         app.update_active_outline();
@@ -1023,6 +1029,30 @@ impl App {
             return;
         }
 
+        if self.pending_m {
+            self.pending_m = false;
+            if let KeyCode::Char(c) = code {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.set_mark(c);
+                }
+            }
+            self.ensure_cursor_visible();
+            return;
+        }
+
+        if self.pending_single_quote || self.pending_backtick {
+            let line_only = self.pending_single_quote;
+            self.pending_single_quote = false;
+            self.pending_backtick = false;
+            if let KeyCode::Char(c) = code {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.jump_to_mark(c, line_only, false);
+                }
+            }
+            self.ensure_cursor_visible();
+            return;
+        }
+
         if self.pending_d {
             let mut handled = true;
             if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -1472,6 +1502,18 @@ impl App {
                     }
                 }
             }
+            KeyCode::Char('m') => {
+                self.pending_m = true;
+                return;
+            }
+            KeyCode::Char('\'') => {
+                self.pending_single_quote = true;
+                return;
+            }
+            KeyCode::Char('`') => {
+                self.pending_backtick = true;
+                return;
+            }
             KeyCode::Char('u') => self.perform_action(Action::Undo),
             KeyCode::Char('x') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -1693,6 +1735,9 @@ impl App {
                 self.pending_capital_f = false;
                 self.pending_t = false;
                 self.pending_capital_t = false;
+                self.pending_m = false;
+                self.pending_single_quote = false;
+                self.pending_backtick = false;
             }
             KeyCode::Enter => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -1717,6 +1762,9 @@ impl App {
                 self.pending_capital_f = false;
                 self.pending_t = false;
                 self.pending_capital_t = false;
+                self.pending_m = false;
+                self.pending_single_quote = false;
+                self.pending_backtick = false;
                 // Allow arrows and some other keys even in normal mode
                 match code {
                     KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down |
@@ -1735,10 +1783,26 @@ impl App {
             KeyCode::Char(c) => KeyCode::Char(zee_core::normalize_vi_char(c)),
             other => other,
         };
+
+        if self.pending_single_quote || self.pending_backtick {
+            let line_only = self.pending_single_quote;
+            self.pending_single_quote = false;
+            self.pending_backtick = false;
+            if let KeyCode::Char(c) = code {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.jump_to_mark(c, line_only, true);
+                }
+            }
+            self.ensure_cursor_visible();
+            return;
+        }
+
         let is_block = self.buffers.get(self.active_buffer).map(|b| b.vi_mode == zee_core::ViMode::VisualBlock).unwrap_or(false);
         
         match code {
             KeyCode::Esc => {
+                self.pending_single_quote = false;
+                self.pending_backtick = false;
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     buffer.vi_mode = zee_core::ViMode::Normal;
                     buffer.selection = None;
@@ -1863,6 +1927,14 @@ impl App {
                         buffer.update_selection();
                     }
                 }
+            }
+            KeyCode::Char('\'') => {
+                self.pending_single_quote = true;
+                return;
+            }
+            KeyCode::Char('`') => {
+                self.pending_backtick = true;
+                return;
             }
             KeyCode::Char('d') | KeyCode::Char('x') => {
                 if is_block {

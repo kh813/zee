@@ -2063,6 +2063,283 @@ impl Editor {
             false
         }
     }
+
+    pub fn move_to_next_paragraph(&mut self, extend_selection: bool) {
+        if self.rope.len_chars() == 0 { return; }
+        let num_lines = self.rope.len_lines();
+        let cur_line = self.rope.char_to_line(self.cursor);
+        
+        let is_blank = |line_idx: usize| -> bool {
+            if line_idx >= num_lines { return true; }
+            let s = self.rope.line(line_idx).to_string();
+            s.trim().is_empty()
+        };
+
+        let mut line = cur_line;
+        // If currently on blank lines, skip them
+        while line < num_lines && is_blank(line) {
+            line += 1;
+        }
+        // Then move through text lines until blank line or EOF
+        while line < num_lines && !is_blank(line) {
+            line += 1;
+        }
+
+        let target_line = line.min(num_lines.saturating_sub(1));
+        let target = self.rope.line_to_char(target_line);
+        if extend_selection {
+            self.ensure_selection();
+            self.cursor = target;
+            self.update_selection();
+        } else {
+            self.cursor = target;
+            self.selection = None;
+            self.selection_anchor = None;
+        }
+    }
+
+    pub fn move_to_prev_paragraph(&mut self, extend_selection: bool) {
+        if self.rope.len_chars() == 0 { return; }
+        let cur_line = self.rope.char_to_line(self.cursor);
+        if cur_line == 0 {
+            self.cursor = 0;
+            if extend_selection { self.update_selection(); } else { self.selection = None; self.selection_anchor = None; }
+            return;
+        }
+
+        let is_blank = |line_idx: usize| -> bool {
+            let s = self.rope.line(line_idx).to_string();
+            s.trim().is_empty()
+        };
+
+        let mut line = cur_line.saturating_sub(1);
+        // If immediately on blank lines, skip upward
+        while line > 0 && is_blank(line) {
+            line -= 1;
+        }
+        // Then move upward through text lines until blank line or top
+        while line > 0 && !is_blank(line) {
+            line -= 1;
+        }
+
+        let target = self.rope.line_to_char(line);
+        if extend_selection {
+            self.ensure_selection();
+            self.cursor = target;
+            self.update_selection();
+        } else {
+            self.cursor = target;
+            self.selection = None;
+            self.selection_anchor = None;
+        }
+    }
+
+    pub fn move_to_next_sentence(&mut self, extend_selection: bool) {
+        let len = self.rope.len_chars();
+        if len == 0 { return; }
+        if extend_selection { self.ensure_selection(); } else { self.selection = None; self.selection_anchor = None; }
+
+        let mut pos = self.cursor;
+        if pos >= len { return; }
+
+        let is_sentence_end_char = |c: char| matches!(c, '.' | '!' | '?');
+        let is_close_bracket_quote = |c: char| matches!(c, ')' | ']' | '}' | '"' | '\'');
+
+        // Step 1: Scan forward for next sentence ending
+        while pos < len {
+            let c = self.rope.char(pos);
+            // Paragraph boundary (double newline) also ends sentence
+            if c == '\n' {
+                if pos + 1 < len && self.rope.char(pos + 1) == '\n' {
+                    pos += 2;
+                    while pos < len && (self.rope.char(pos) == ' ' || self.rope.char(pos) == '\t' || self.rope.char(pos) == '\n' || self.rope.char(pos) == '\r') {
+                        pos += 1;
+                    }
+                    self.cursor = pos.min(len);
+                    if extend_selection { self.update_selection(); }
+                    return;
+                }
+            }
+
+            if is_sentence_end_char(c) {
+                let mut after_punct = pos + 1;
+                while after_punct < len && is_close_bracket_quote(self.rope.char(after_punct)) {
+                    after_punct += 1;
+                }
+                if after_punct < len {
+                    let next_c = self.rope.char(after_punct);
+                    if next_c == ' ' || next_c == '\t' || next_c == '\n' || next_c == '\r' {
+                        // Found sentence end! Move past following whitespace to start of next sentence
+                        let mut next_start = after_punct;
+                        while next_start < len && (self.rope.char(next_start) == ' ' || self.rope.char(next_start) == '\t' || self.rope.char(next_start) == '\n' || self.rope.char(next_start) == '\r') {
+                            next_start += 1;
+                        }
+                        if next_start > self.cursor {
+                            self.cursor = next_start.min(len);
+                            if extend_selection { self.update_selection(); }
+                            return;
+                        }
+                    }
+                }
+            }
+            pos += 1;
+        }
+
+        self.cursor = len;
+        if extend_selection { self.update_selection(); }
+    }
+
+    pub fn move_to_prev_sentence(&mut self, extend_selection: bool) {
+        let len = self.rope.len_chars();
+        if len == 0 { return; }
+        if extend_selection { self.ensure_selection(); } else { self.selection = None; self.selection_anchor = None; }
+
+        let cur = self.cursor;
+        if cur == 0 { return; }
+
+        let is_sentence_end_char = |c: char| matches!(c, '.' | '!' | '?');
+        let is_close_bracket_quote = |c: char| matches!(c, ')' | ']' | '}' | '"' | '\'');
+
+        // Helper to check if a sentence ending occurs ending at or before end_idx
+        // Return Some(start_of_next_sentence)
+        // We scan backwards from cur.
+        let mut target = 0;
+        let mut scan = 0;
+        while scan < cur {
+            // Check paragraph break
+            if self.rope.char(scan) == '\n' && scan + 1 < cur && self.rope.char(scan + 1) == '\n' {
+                let mut start = scan + 2;
+                while start < cur && (self.rope.char(start) == ' ' || self.rope.char(start) == '\t' || self.rope.char(start) == '\n' || self.rope.char(start) == '\r') {
+                    start += 1;
+                }
+                if start < cur {
+                    target = start;
+                }
+                scan += 1;
+                continue;
+            }
+
+            if is_sentence_end_char(self.rope.char(scan)) {
+                let mut after_punct = scan + 1;
+                while after_punct < cur && is_close_bracket_quote(self.rope.char(after_punct)) {
+                    after_punct += 1;
+                }
+                if after_punct < cur {
+                    let next_c = self.rope.char(after_punct);
+                    if next_c == ' ' || next_c == '\t' || next_c == '\n' || next_c == '\r' {
+                        let mut next_start = after_punct;
+                        while next_start < cur && (self.rope.char(next_start) == ' ' || self.rope.char(next_start) == '\t' || self.rope.char(next_start) == '\n' || self.rope.char(next_start) == '\r') {
+                            next_start += 1;
+                        }
+                        if next_start < cur {
+                            target = next_start;
+                        }
+                    }
+                }
+            }
+            scan += 1;
+        }
+
+        self.cursor = target;
+        if extend_selection { self.update_selection(); }
+    }
+
+    /// Performs Ex range substitution (e.g. `s/pattern/replacement/g`).
+    /// Returns `Ok(count)` with the number of substitutions made, or an error message.
+    pub fn substitute_range(
+        &mut self,
+        start_line_1based: usize,
+        end_line_1based: usize,
+        pattern: &str,
+        replacement: &str,
+        global: bool,
+        ignore_case: bool,
+    ) -> Result<usize, String> {
+        if pattern.is_empty() {
+            return Err("Empty pattern".to_string());
+        }
+
+        let num_lines = self.rope.len_lines();
+        if num_lines == 0 {
+            return Ok(0);
+        }
+
+        let start_line = start_line_1based.saturating_sub(1).min(num_lines.saturating_sub(1));
+        let end_line = end_line_1based.saturating_sub(1).min(num_lines.saturating_sub(1));
+        let (min_line, max_line) = if start_line <= end_line {
+            (start_line, end_line)
+        } else {
+            (end_line, start_line)
+        };
+
+        let mut builder = regex::RegexBuilder::new(pattern);
+        builder.case_insensitive(ignore_case);
+        let re = builder.build().map_err(|e| format!("Invalid regex: {}", e))?;
+
+        let mut total_subs = 0;
+        let mut last_match_char = None;
+
+        // Process from max_line down to min_line to maintain line index invariants
+        for line_idx in (min_line..=max_line).rev() {
+            let line_slice = self.rope.line(line_idx);
+            let line_str = line_slice.to_string();
+            let line_start_char = self.rope.line_to_char(line_idx);
+
+            // Separate line content from line ending so line endings aren't replaced accidentally
+            let (content, ending) = if let Some(stripped) = line_str.strip_suffix("\r\n") {
+                (stripped, "\r\n")
+            } else if let Some(stripped) = line_str.strip_suffix('\n') {
+                (stripped, "\n")
+            } else if let Some(stripped) = line_str.strip_suffix('\r') {
+                (stripped, "\r")
+            } else {
+                (line_str.as_str(), "")
+            };
+
+            let matches: Vec<(usize, usize, String)> = if global {
+                re.find_iter(content)
+                    .map(|m| (m.start(), m.end(), re.replace(&content[m.start()..m.end()], replacement).to_string()))
+                    .collect()
+            } else {
+                if let Some(m) = re.find(content) {
+                    vec![(m.start(), m.end(), re.replace(&content[m.start()..m.end()], replacement).to_string())]
+                } else {
+                    Vec::new()
+                }
+            };
+
+            if matches.is_empty() {
+                continue;
+            }
+
+            total_subs += matches.len();
+
+            // Reconstruct the new line text
+            let mut new_content = String::new();
+            let mut last_idx = 0;
+            for (m_start, m_end, repl_text) in &matches {
+                new_content.push_str(&content[last_idx..*m_start]);
+                new_content.push_str(repl_text);
+                last_idx = *m_end;
+            }
+            new_content.push_str(&content[last_idx..]);
+            new_content.push_str(ending);
+
+            let old_line_len_chars = line_slice.len_chars();
+            let line_range = line_start_char..(line_start_char + old_line_len_chars);
+            self.replace(line_range, &new_content);
+
+            if last_match_char.is_none() {
+                last_match_char = Some(line_start_char);
+            }
+        }
+
+        if let Some(pos) = last_match_char {
+            self.cursor = pos.min(self.rope.len_chars());
+        }
+
+        Ok(total_subs)
+    }
 }
 
 /// Normalizes a character typed in Vi normal/visual/command mode,
@@ -3183,6 +3460,75 @@ mod tests {
         // Test mark shift on insert
         editor.insert(0, "PREFIX ");
         assert_eq!(editor.marks.get(&'a'), Some(&14)); // 7 + 7 = 14
+    }
+
+    #[test]
+    fn test_substitute_range() {
+        let mut editor = Editor::new();
+        editor.insert(0, "apple banana\napple cherry\nbanana date\n");
+
+        // Substitute on line 1 only without global flag
+        let res = editor.substitute_range(1, 1, "apple", "orange", false, false);
+        assert_eq!(res.unwrap(), 1);
+        assert_eq!(editor.rope.to_string(), "orange banana\napple cherry\nbanana date\n");
+
+        // Global substitute on entire buffer
+        let res = editor.substitute_range(1, 3, "banana", "grape", true, false);
+        assert_eq!(res.unwrap(), 2);
+        assert_eq!(editor.rope.to_string(), "orange grape\napple cherry\ngrape date\n");
+
+        // Case-insensitive test
+        let res = editor.substitute_range(1, 3, "ORANGE", "melon", false, true);
+        assert_eq!(res.unwrap(), 1);
+        assert_eq!(editor.rope.to_string(), "melon grape\napple cherry\ngrape date\n");
+    }
+
+    #[test]
+    fn test_paragraph_motions() {
+        let mut editor = Editor::new();
+        editor.insert(0, "p1 line 1\np1 line 2\n\np2 line 1\np2 line 2\n\np3 line 1\n");
+        editor.cursor = 0;
+
+        // Move to next paragraph
+        editor.move_to_next_paragraph(false);
+        assert_eq!(editor.rope.char_to_line(editor.cursor), 2); // Blank line between p1 and p2
+
+        editor.move_to_next_paragraph(false);
+        assert_eq!(editor.rope.char_to_line(editor.cursor), 5); // Blank line between p2 and p3
+
+        // Move to prev paragraph
+        editor.move_to_prev_paragraph(false);
+        assert_eq!(editor.rope.char_to_line(editor.cursor), 2);
+
+        editor.move_to_prev_paragraph(false);
+        assert_eq!(editor.rope.char_to_line(editor.cursor), 0);
+    }
+
+    #[test]
+    fn test_sentence_motions() {
+        let mut editor = Editor::new();
+        editor.insert(0, "First sentence. Second sentence! Third sentence? Fourth.");
+        editor.cursor = 0;
+
+        // Move next sentence ')'
+        editor.move_to_next_sentence(false);
+        assert_eq!(editor.cursor, 16); // 'S' of Second
+
+        editor.move_to_next_sentence(false);
+        assert_eq!(editor.cursor, 33); // 'T' of Third
+
+        editor.move_to_next_sentence(false);
+        assert_eq!(editor.cursor, 49); // 'F' of Fourth
+
+        // Move prev sentence '('
+        editor.move_to_prev_sentence(false);
+        assert_eq!(editor.cursor, 33); // 'T' of Third
+
+        editor.move_to_prev_sentence(false);
+        assert_eq!(editor.cursor, 16); // 'S' of Second
+
+        editor.move_to_prev_sentence(false);
+        assert_eq!(editor.cursor, 0); // 'F' of First
     }
 }
 

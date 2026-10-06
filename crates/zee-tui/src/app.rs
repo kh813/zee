@@ -88,6 +88,8 @@ pub struct App {
     pub pending_m: bool,
     pub pending_single_quote: bool,
     pub pending_backtick: bool,
+    pub count: usize,
+    pub pending_op_count: usize,
 }
 
 impl App {
@@ -229,6 +231,8 @@ impl App {
             pending_m: false,
             pending_single_quote: false,
             pending_backtick: false,
+            count: 0,
+            pending_op_count: 0,
         };
 
         app.update_active_outline();
@@ -742,7 +746,12 @@ impl App {
                 KeyCode::Char('s') => { self.perform_action(Action::Save); return; }
                 KeyCode::Char('w') => { self.perform_action(Action::Close); return; }
                 KeyCode::Char('z') => { self.perform_action(Action::Undo); return; }
-                KeyCode::Char('y') => { self.perform_action(Action::Redo); return; }
+                KeyCode::Char('y') => {
+                    if !self.config.vi_mode {
+                        self.perform_action(Action::Redo);
+                        return;
+                    }
+                }
                 KeyCode::Char('f') => { self.perform_action(Action::Find); return; }
                 KeyCode::Char('r') => { self.perform_action(Action::Replace); return; }
                 KeyCode::Char('b') => { self.perform_action(Action::ToggleSidebar); return; }
@@ -948,6 +957,41 @@ impl App {
                     self.ensure_cursor_visible();
                     return;
                 }
+                KeyCode::Char('e') => {
+                    let (_, _, _, _eh) = self.layout.editor_bounds();
+                    let is_visual = buffer.vi_mode != zee_core::ViMode::Normal;
+                    let max_scroll = buffer.line_count().saturating_sub(1);
+                    if buffer.scroll_row < max_scroll {
+                        buffer.scroll_row += 1;
+                        let (line, _) = buffer.char_to_line_col(buffer.cursor);
+                        if line < buffer.scroll_row {
+                            if self.config.word_wrap {
+                                self.move_cursor_vdown(is_visual);
+                            } else {
+                                buffer.move_cursor_down(is_visual);
+                            }
+                        }
+                    }
+                    self.ensure_cursor_visible();
+                    return;
+                }
+                KeyCode::Char('y') => {
+                    let is_visual = buffer.vi_mode != zee_core::ViMode::Normal;
+                    if buffer.scroll_row > 0 {
+                        buffer.scroll_row -= 1;
+                        let (line, _) = buffer.char_to_line_col(buffer.cursor);
+                        let (_, _, _, eh) = self.layout.editor_bounds();
+                        if line >= buffer.scroll_row + (eh as usize) {
+                            if self.config.word_wrap {
+                                self.move_cursor_vup(is_visual);
+                            } else {
+                                buffer.move_cursor_up(is_visual);
+                            }
+                        }
+                    }
+                    self.ensure_cursor_visible();
+                    return;
+                }
                 _ => {}
             }
         }
@@ -972,6 +1016,29 @@ impl App {
             KeyCode::Char(c) => KeyCode::Char(zee_core::normalize_vi_char(c)),
             other => other,
         };
+
+        if !self.pending_r && !self.pending_f && !self.pending_capital_f && !self.pending_t && !self.pending_capital_t
+            && !self.pending_m && !self.pending_single_quote && !self.pending_backtick
+            && !self.pending_g
+        {
+            if let KeyCode::Char(c) = code {
+                if (self.count == 0 && matches!(c, '1'..='9')) || (self.count > 0 && matches!(c, '0'..='9')) {
+                    if let Some(digit) = c.to_digit(10) {
+                        self.count = self.count.saturating_mul(10).saturating_add(digit as usize);
+                        return;
+                    }
+                }
+            }
+        }
+
+        let has_count = self.count > 0;
+        let count_val = if has_count { self.count } else { 1 };
+        let repeat = if self.pending_d || self.pending_c || self.pending_y {
+            self.pending_op_count.max(1) * count_val
+        } else {
+            count_val
+        };
+        self.count = 0;
 
         if matches!(code, KeyCode::Char('っ') | KeyCode::Char('ッ')) {
             if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -1060,11 +1127,25 @@ impl App {
                 let target_pos = match code {
                     KeyCode::Char('d') | KeyCode::Char('っ') | KeyCode::Char('ッ') => {
                         let (line, _) = buffer.char_to_line_col(buffer.cursor);
-                        buffer.select_line(line);
-                        if let Some(range) = buffer.selection.clone() {
+                        let line_start = buffer.rope.line_to_char(line);
+                        let target_end_line = (line + repeat).min(buffer.rope.len_lines());
+                        let next_line_start = if target_end_line < buffer.rope.len_lines() {
+                            buffer.rope.line_to_char(target_end_line)
+                        } else {
+                            buffer.rope.len_chars()
+                        };
+                        let range = line_start..next_line_start;
+                        if !range.is_empty() {
                             let text = buffer.rope.slice(range.clone()).to_string();
                             let _ = clipboard::set_clipboard(&text);
                             buffer.delete(range);
+                            buffer.cursor = line_start.min(buffer.rope.len_chars());
+                            let (new_line, _) = buffer.char_to_line_col(buffer.cursor);
+                            let max_col = buffer.get_line_max_col(new_line);
+                            let col = buffer.cursor - buffer.rope.line_to_char(new_line);
+                            if col > max_col {
+                                buffer.cursor = buffer.line_col_to_char(new_line, max_col);
+                            }
                             buffer.selection = None;
                             buffer.selection_anchor = None;
                         }
@@ -1098,6 +1179,30 @@ impl App {
                     KeyCode::Char('B') => {
                         buffer.move_bigword_backward(false);
                         Some(buffer.cursor)
+                    }
+                    KeyCode::Char('{') => {
+                        for _ in 0..repeat { buffer.move_to_prev_paragraph(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('}') => {
+                        for _ in 0..repeat { buffer.move_to_next_paragraph(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('(') => {
+                        for _ in 0..repeat { buffer.move_to_prev_sentence(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char(')') => {
+                        for _ in 0..repeat { buffer.move_to_next_sentence(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
                     }
                     KeyCode::Char('0') | KeyCode::Char('^') | KeyCode::Char('_') => {
                         let line = buffer.rope.char_to_line(buffer.cursor);
@@ -1135,6 +1240,7 @@ impl App {
                 }
             }
             self.pending_d = false;
+            self.pending_op_count = 0;
             if handled {
                 self.ensure_cursor_visible();
                 return;
@@ -1189,6 +1295,30 @@ impl App {
                         buffer.move_bigword_backward(false);
                         Some(buffer.cursor)
                     }
+                    KeyCode::Char('{') => {
+                        for _ in 0..repeat { buffer.move_to_prev_paragraph(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('}') => {
+                        for _ in 0..repeat { buffer.move_to_next_paragraph(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('(') => {
+                        for _ in 0..repeat { buffer.move_to_prev_sentence(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char(')') => {
+                        for _ in 0..repeat { buffer.move_to_next_sentence(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
                     KeyCode::Char('0') | KeyCode::Char('^') | KeyCode::Char('_') => {
                         let line = buffer.rope.char_to_line(buffer.cursor);
                         let line_start = if matches!(code, KeyCode::Char('0')) {
@@ -1224,6 +1354,7 @@ impl App {
                 }
             }
             self.pending_c = false;
+            self.pending_op_count = 0;
             if handled {
                 self.ensure_cursor_visible();
                 return;
@@ -1287,6 +1418,30 @@ impl App {
                         buffer.cursor = start_pos;
                         Some(pos)
                     }
+                    KeyCode::Char('{') => {
+                        for _ in 0..repeat { buffer.move_to_prev_paragraph(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('}') => {
+                        for _ in 0..repeat { buffer.move_to_next_paragraph(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('(') => {
+                        for _ in 0..repeat { buffer.move_to_prev_sentence(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char(')') => {
+                        for _ in 0..repeat { buffer.move_to_next_sentence(false); }
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
                     KeyCode::Char('0') | KeyCode::Char('^') | KeyCode::Char('_') => {
                         let line = buffer.rope.char_to_line(buffer.cursor);
                         let line_start = if matches!(code, KeyCode::Char('0')) {
@@ -1317,6 +1472,7 @@ impl App {
                 }
             }
             self.pending_y = false;
+            self.pending_op_count = 0;
             if handled {
                 self.ensure_cursor_visible();
                 return;
@@ -1379,43 +1535,121 @@ impl App {
                     buffer.update_selection();
                 }
             }
+            KeyCode::Char('{') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    for _ in 0..repeat {
+                        buffer.move_to_prev_paragraph(false);
+                    }
+                }
+            }
+            KeyCode::Char('}') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    for _ in 0..repeat {
+                        buffer.move_to_next_paragraph(false);
+                    }
+                }
+            }
+            KeyCode::Char('(') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    for _ in 0..repeat {
+                        buffer.move_to_prev_sentence(false);
+                    }
+                }
+            }
+            KeyCode::Char(')') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    for _ in 0..repeat {
+                        buffer.move_to_next_sentence(false);
+                    }
+                }
+            }
+            KeyCode::Char('H') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    let offset = repeat.saturating_sub(1);
+                    let target_line = (buffer.scroll_row + offset).min(buffer.line_count().saturating_sub(1));
+                    let line_str = buffer.rope.line(target_line).to_string();
+                    let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                    buffer.cursor = buffer.line_col_to_char(target_line, indent);
+                    buffer.selection = None;
+                    buffer.selection_anchor = None;
+                }
+            }
+            KeyCode::Char('M') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    let (_, _, _, eh) = self.layout.editor_bounds();
+                    let half = (eh as usize) / 2;
+                    let target_line = (buffer.scroll_row + half).min(buffer.line_count().saturating_sub(1));
+                    let line_str = buffer.rope.line(target_line).to_string();
+                    let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                    buffer.cursor = buffer.line_col_to_char(target_line, indent);
+                    buffer.selection = None;
+                    buffer.selection_anchor = None;
+                }
+            }
+            KeyCode::Char('L') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    let (_, _, _, eh) = self.layout.editor_bounds();
+                    let offset = repeat.saturating_sub(1);
+                    let visible_bottom = buffer.scroll_row + (eh as usize).saturating_sub(1);
+                    let target_line = visible_bottom.saturating_sub(offset).min(buffer.line_count().saturating_sub(1));
+                    let line_str = buffer.rope.line(target_line).to_string();
+                    let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                    buffer.cursor = buffer.line_col_to_char(target_line, indent);
+                    buffer.selection = None;
+                    buffer.selection_anchor = None;
+                }
+            }
             KeyCode::Char('h') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_cursor_left(false);
+                    for _ in 0..repeat {
+                        buffer.move_cursor_left(false);
+                    }
                 }
             }
             KeyCode::Char('j') => {
-                if self.config.word_wrap {
-                    self.move_cursor_vdown(false);
-                } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_cursor_down(false);
+                for _ in 0..repeat {
+                    if self.config.word_wrap {
+                        self.move_cursor_vdown(false);
+                    } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        buffer.move_cursor_down(false);
+                    }
                 }
             }
             KeyCode::Char('k') => {
-                if self.config.word_wrap {
-                    self.move_cursor_vup(false);
-                } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_cursor_up(false);
+                for _ in 0..repeat {
+                    if self.config.word_wrap {
+                        self.move_cursor_vup(false);
+                    } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        buffer.move_cursor_up(false);
+                    }
                 }
             }
             KeyCode::Char('l') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_cursor_right(false);
+                    for _ in 0..repeat {
+                        buffer.move_cursor_right(false);
+                    }
                 }
             }
             KeyCode::Char('w') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_word_forward(false);
+                    for _ in 0..repeat {
+                        buffer.move_word_forward(false);
+                    }
                 }
             }
             KeyCode::Char('b') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_word_backward(false);
+                    for _ in 0..repeat {
+                        buffer.move_word_backward(false);
+                    }
                 }
             }
             KeyCode::Char('e') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_word_end(false);
+                    for _ in 0..repeat {
+                        buffer.move_word_end(false);
+                    }
                 }
             }
             KeyCode::Char('0') => {
@@ -1434,38 +1668,58 @@ impl App {
             }
             KeyCode::Char('$') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if repeat > 1 {
+                        for _ in 1..repeat {
+                            buffer.move_cursor_down(false);
+                        }
+                    }
                     let (line, _) = buffer.char_to_line_col(buffer.cursor);
                     buffer.cursor = buffer.line_col_to_char(line, buffer.get_line_max_col(line));
                 }
             }
             KeyCode::Char('W') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_bigword_forward(false);
+                    for _ in 0..repeat {
+                        buffer.move_bigword_forward(false);
+                    }
                 }
             }
             KeyCode::Char('B') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_bigword_backward(false);
+                    for _ in 0..repeat {
+                        buffer.move_bigword_backward(false);
+                    }
                 }
             }
             KeyCode::Char('E') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_bigword_end(false);
+                    for _ in 0..repeat {
+                        buffer.move_bigword_end(false);
+                    }
                 }
             }
             KeyCode::Char('_') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if repeat > 1 {
+                        for _ in 1..repeat {
+                            buffer.move_cursor_down(false);
+                        }
+                    }
                     buffer.move_to_first_non_blank(false);
                 }
             }
             KeyCode::Char('+') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_to_next_line_non_blank(false);
+                    for _ in 0..repeat {
+                        buffer.move_to_next_line_non_blank(false);
+                    }
                 }
             }
             KeyCode::Char('-') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.move_to_prev_line_non_blank(false);
+                    for _ in 0..repeat {
+                        buffer.move_to_prev_line_non_blank(false);
+                    }
                 }
             }
             KeyCode::Char('f') => {
@@ -1486,19 +1740,23 @@ impl App {
             }
             KeyCode::Char(';') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    if let Some(pos) = buffer.repeat_inline_find(false) {
-                        buffer.cursor = pos;
-                        buffer.selection = None;
-                        buffer.selection_anchor = None;
+                    for _ in 0..repeat {
+                        if let Some(pos) = buffer.repeat_inline_find(false) {
+                            buffer.cursor = pos;
+                            buffer.selection = None;
+                            buffer.selection_anchor = None;
+                        }
                     }
                 }
             }
             KeyCode::Char(',') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    if let Some(pos) = buffer.repeat_inline_find(true) {
-                        buffer.cursor = pos;
-                        buffer.selection = None;
-                        buffer.selection_anchor = None;
+                    for _ in 0..repeat {
+                        if let Some(pos) = buffer.repeat_inline_find(true) {
+                            buffer.cursor = pos;
+                            buffer.selection = None;
+                            buffer.selection_anchor = None;
+                        }
                     }
                 }
             }
@@ -1514,11 +1772,17 @@ impl App {
                 self.pending_backtick = true;
                 return;
             }
-            KeyCode::Char('u') => self.perform_action(Action::Undo),
+            KeyCode::Char('u') => {
+                for _ in 0..repeat {
+                    self.perform_action(Action::Undo);
+                }
+            }
             KeyCode::Char('x') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    if buffer.cursor < buffer.rope.len_chars() {
-                        buffer.delete(buffer.cursor..buffer.cursor+1);
+                    for _ in 0..repeat {
+                        if buffer.cursor < buffer.rope.len_chars() {
+                            buffer.delete(buffer.cursor..buffer.cursor+1);
+                        }
                     }
                 }
             }
@@ -1602,14 +1866,17 @@ impl App {
             }
             KeyCode::Char('d') => {
                 self.pending_d = true;
+                self.pending_op_count = repeat;
                 return;
             }
             KeyCode::Char('c') => {
                 self.pending_c = true;
+                self.pending_op_count = repeat;
                 return;
             }
             KeyCode::Char('y') => {
                 self.pending_y = true;
+                self.pending_op_count = repeat;
                 return;
             }
             KeyCode::Char('p') => {
@@ -1679,15 +1946,19 @@ impl App {
             }
             KeyCode::Char('~') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.toggle_case_at_cursor();
+                    for _ in 0..repeat {
+                        buffer.toggle_case_at_cursor();
+                    }
                 }
             }
             KeyCode::Char('X') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    if buffer.cursor > 0 {
-                        let (_line, col) = buffer.char_to_line_col(buffer.cursor);
-                        if col > 0 {
-                            buffer.delete(buffer.cursor - 1..buffer.cursor);
+                    for _ in 0..repeat {
+                        if buffer.cursor > 0 {
+                            let (_line, col) = buffer.char_to_line_col(buffer.cursor);
+                            if col > 0 {
+                                buffer.delete(buffer.cursor - 1..buffer.cursor);
+                            }
                         }
                     }
                 }
@@ -1713,8 +1984,11 @@ impl App {
             }
             KeyCode::Char('G') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    buffer.cursor = buffer.rope.len_chars();
-                    let line = buffer.rope.len_lines().saturating_sub(1);
+                    let line = if has_count {
+                        (repeat.saturating_sub(1)).min(buffer.line_count().saturating_sub(1))
+                    } else {
+                        buffer.line_count().saturating_sub(1)
+                    };
                     let col = buffer.get_line_max_col(line);
                     buffer.cursor = buffer.line_col_to_char(line, col);
                     buffer.selection = None;
@@ -1722,6 +1996,8 @@ impl App {
                 }
             }
             KeyCode::Esc => {
+                self.count = 0;
+                self.pending_op_count = 0;
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     buffer.selection = None;
                     buffer.selection_anchor = None;
@@ -1756,6 +2032,7 @@ impl App {
                 self.pending_d = false;
                 self.pending_y = false;
                 self.pending_c = false;
+                self.pending_op_count = 0;
                 self.pending_g = false;
                 self.pending_r = false;
                 self.pending_f = false;
@@ -1831,6 +2108,57 @@ impl App {
                         buffer.vi_mode = zee_core::ViMode::VisualLine;
                         buffer.update_selection();
                     }
+                }
+            }
+            KeyCode::Char('{') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_prev_paragraph(true);
+                }
+            }
+            KeyCode::Char('}') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_next_paragraph(true);
+                }
+            }
+            KeyCode::Char('(') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_prev_sentence(true);
+                }
+            }
+            KeyCode::Char(')') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_next_sentence(true);
+                }
+            }
+            KeyCode::Char('H') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    let target_line = buffer.scroll_row.min(buffer.line_count().saturating_sub(1));
+                    let line_str = buffer.rope.line(target_line).to_string();
+                    let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                    buffer.cursor = buffer.line_col_to_char(target_line, indent);
+                    buffer.update_selection();
+                }
+            }
+            KeyCode::Char('M') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    let (_, _, _, eh) = self.layout.editor_bounds();
+                    let half = (eh as usize) / 2;
+                    let target_line = (buffer.scroll_row + half).min(buffer.line_count().saturating_sub(1));
+                    let line_str = buffer.rope.line(target_line).to_string();
+                    let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                    buffer.cursor = buffer.line_col_to_char(target_line, indent);
+                    buffer.update_selection();
+                }
+            }
+            KeyCode::Char('L') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    let (_, _, _, eh) = self.layout.editor_bounds();
+                    let visible_bottom = buffer.scroll_row + (eh as usize).saturating_sub(1);
+                    let target_line = visible_bottom.min(buffer.line_count().saturating_sub(1));
+                    let line_str = buffer.rope.line(target_line).to_string();
+                    let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                    buffer.cursor = buffer.line_col_to_char(target_line, indent);
+                    buffer.update_selection();
                 }
             }
             KeyCode::Char('h') => {
@@ -2245,6 +2573,28 @@ impl App {
                             }
                             _ => {
                                 self.vi_message = Some((format!("Unknown option: {}", option), true));
+                            }
+                        }
+                    }
+                    zee_core::ExCommand::Substitute { range, pattern, replacement, global, ignore_case } => {
+                        if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                            let (start_l, end_l) = match range {
+                                zee_core::ExRange::CurrentLine => {
+                                    let (cur_l, _) = buffer.char_to_line_col(buffer.cursor);
+                                    (cur_l + 1, cur_l + 1)
+                                }
+                                zee_core::ExRange::EntireBuffer => {
+                                    (1, buffer.line_count())
+                                }
+                                zee_core::ExRange::LineRange(s, e) => (s, e),
+                            };
+                            match buffer.substitute_range(start_l, end_l, &pattern, &replacement, global, ignore_case) {
+                                Ok(count) => {
+                                    self.vi_message = Some((format!("{} substitution(s) made", count), false));
+                                }
+                                Err(e) => {
+                                    self.vi_message = Some((format!("E486: {}", e), true));
+                                }
                             }
                         }
                     }
@@ -5336,7 +5686,94 @@ mod tests {
             app.handle_key(make_key(KeyCode::Char(c)));
         }
         app.handle_key(make_key(KeyCode::Enter));
-        assert_eq!(app.vi_message, Some(("E492: Not an editor command: :foo".into(), true)));
+        // 4. Substitute command via :%s/Line/Item/g
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "%s/Line/Item/g".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.vi_message, Some(("5 substitution(s) made".into(), false)));
+        assert_eq!(app.buffers[0].rope.to_string(), "Item 1\nItem 2\nItem 3\nItem 4\nItem 5\n");
+    }
+
+    #[test]
+    fn test_vi_mode_count_motions() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.vi_mode = true;
+        app.recompute_layout();
+        app.buffers[0].vi_mode = zee_core::ViMode::Normal;
+        app.buffers[0].insert(0, "aaa bbb ccc ddd eee\nfff ggg hhh\niii jjj kkk\n");
+        app.buffers[0].cursor = 0;
+
+        // 3w -> jump forward 3 words
+        app.handle_key(make_key(KeyCode::Char('3')));
+        app.handle_key(make_key(KeyCode::Char('w')));
+        assert_eq!(app.buffers[0].cursor, 12); // starts of "ddd"
+
+        // 2j -> move down 2 lines
+        app.handle_key(make_key(KeyCode::Char('2')));
+        app.handle_key(make_key(KeyCode::Char('j')));
+        let (line, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line, 2);
+
+        // 1G -> jump to first line
+        app.handle_key(make_key(KeyCode::Char('1')));
+        app.handle_key(make_key(KeyCode::Char('G')));
+        let (line, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line, 0);
+
+        // 2dd -> delete 2 lines
+        app.handle_key(make_key(KeyCode::Char('2')));
+        app.handle_key(make_key(KeyCode::Char('d')));
+        app.handle_key(make_key(KeyCode::Char('d')));
+        assert_eq!(app.buffers[0].rope.to_string(), "iii jjj kkk\n");
+    }
+
+    #[test]
+    fn test_vi_mode_screen_and_sentence_motions() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.vi_mode = true;
+        app.height = 24;
+        app.recompute_layout();
+        app.buffers[0].vi_mode = zee_core::ViMode::Normal;
+        
+        let text = (0..50).map(|i| format!("Line {}. Another sentence! Yet another?", i)).collect::<Vec<_>>().join("\n");
+        app.buffers[0].insert(0, &text);
+        app.buffers[0].cursor = 0;
+
+        // Sentence motions: ')' moves to next sentence
+        app.handle_key(make_key(KeyCode::Char(')')));
+        assert!(app.buffers[0].cursor > 0);
+
+        // Sentence motions: '(' moves back to first sentence
+        app.handle_key(make_key(KeyCode::Char('(')));
+        assert_eq!(app.buffers[0].cursor, 0);
+
+        // H moves to top line of viewport
+        app.buffers[0].scroll_row = 10;
+        app.handle_key(make_key(KeyCode::Char('H')));
+        let (line_h, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_h, 10);
+
+        // M moves to middle of viewport
+        let (_, _, _, eh) = app.layout.editor_bounds();
+        app.handle_key(make_key(KeyCode::Char('M')));
+        let (line_m, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_m, 10 + (eh as usize) / 2);
+
+        // L moves to bottom of viewport
+        app.handle_key(make_key(KeyCode::Char('L')));
+        let (line_l, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_l, 10 + (eh as usize).saturating_sub(1));
+
+        // Ctrl-E scrolls down 1 line
+        let old_scroll = app.buffers[0].scroll_row;
+        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert_eq!(app.buffers[0].scroll_row, old_scroll + 1);
+
+        // Ctrl-Y scrolls up 1 line
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
+        assert_eq!(app.buffers[0].scroll_row, old_scroll);
     }
 }
 

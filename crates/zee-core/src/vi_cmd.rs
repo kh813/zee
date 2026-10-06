@@ -2,7 +2,18 @@
 
 use crate::buffer::normalize_vi_char;
 
-/// Represents a parsed Ex command (e.g. `:w`, `:q!`, `:42`).
+/// Range for Ex commands (e.g., `%`, `1,10`, or current line).
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum ExRange {
+    /// Current line (default when no range specified)
+    CurrentLine,
+    /// Entire buffer (`%` or `1,$`)
+    EntireBuffer,
+    /// Explicit line range (1-based, inclusive, `start,end`)
+    LineRange(usize, usize),
+}
+
+/// Represents a parsed Ex command (e.g. `:w`, `:q!`, `:42`, `:%s/foo/bar/g`).
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum ExCommand {
     /// `:w[!] [path]` - Write buffer to file.
@@ -27,10 +38,122 @@ pub enum ExCommand {
     BufferPrev,
     /// `:set [option]` - Set option (e.g., `nu`, `nonu`, `wrap`, `nowrap`).
     Set { option: String, value: Option<String> },
+    /// `:[range]s/pattern/replacement/[flags]` - Substitute command.
+    Substitute {
+        range: ExRange,
+        pattern: String,
+        replacement: String,
+        global: bool,
+        ignore_case: bool,
+    },
     /// Empty command (e.g. `:` alone).
     Empty,
     /// Unknown or unsupported command string.
     Unknown(String),
+}
+
+fn parse_substitute(body: &str) -> Option<ExCommand> {
+    // Check if the command starts with an optional range followed by 's'
+    let (range, s_rest) = if let Some(rest) = body.strip_prefix('%') {
+        let rest = rest.trim_start();
+        if rest.starts_with('s') {
+            (ExRange::EntireBuffer, &rest[1..])
+        } else {
+            return None;
+        }
+    } else if body.starts_with('s') {
+        (ExRange::CurrentLine, &body[1..])
+    } else {
+        // Check for "start,end s..." or "start,end s/..."
+        if let Some((range_part, after_comma)) = body.split_once(',') {
+            if let Ok(start_l) = range_part.trim().parse::<usize>() {
+                let after_trimmed = after_comma.trim_start();
+                // Find where the number ends
+                let end_digits_len = after_trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+                if end_digits_len > 0 {
+                    let end_str = &after_trimmed[..end_digits_len];
+                    if let Ok(end_l) = end_str.parse::<usize>() {
+                        let rest = after_trimmed[end_digits_len..].trim_start();
+                        if rest.starts_with('s') {
+                            (ExRange::LineRange(start_l, end_l), &rest[1..])
+                        } else {
+                            return None;
+                        }
+                    } else {
+                        return None;
+                    }
+                } else if after_trimmed.starts_with('$') {
+                    // e.g. 1,$s/foo/bar/
+                    let rest = after_trimmed[1..].trim_start();
+                    if rest.starts_with('s') {
+                        (ExRange::EntireBuffer, &rest[1..])
+                    } else {
+                        return None;
+                    }
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        } else {
+            return None;
+        }
+    };
+
+    if s_rest.is_empty() {
+        return None;
+    }
+
+    let mut chars = s_rest.chars();
+    let delimiter = chars.next()?;
+    if delimiter.is_alphanumeric() || delimiter.is_whitespace() {
+        return None;
+    }
+
+    // Parse pattern and replacement taking backslash escaping into account
+    let rest_str = &s_rest[delimiter.len_utf8()..];
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars_iter = rest_str.chars().peekable();
+    let mut escaped = false;
+
+    while let Some(c) = chars_iter.next() {
+        if escaped {
+            current.push(c);
+            escaped = false;
+        } else if c == '\\' {
+            escaped = true;
+            current.push(c);
+        } else if c == delimiter {
+            parts.push(std::mem::take(&mut current));
+            if parts.len() == 2 {
+                break;
+            }
+        } else {
+            current.push(c);
+        }
+    }
+
+    if parts.len() < 2 {
+        // e.g. s/foo/bar (without trailing delimiter)
+        parts.push(current);
+    }
+
+    let pattern = parts.get(0).cloned().unwrap_or_default();
+    let replacement = parts.get(1).cloned().unwrap_or_default();
+    let flags: String = chars_iter.collect();
+
+    let global = flags.contains('g');
+    let ignore_case = flags.contains('i');
+
+    Some(ExCommand::Substitute {
+        range,
+        pattern,
+        replacement,
+        global,
+        ignore_case,
+    })
 }
 
 /// Parses an Ex command string typed in vi command mode.
@@ -51,6 +174,11 @@ pub fn parse_ex_command(input: &str) -> ExCommand {
     // Check if it's purely a line number jump (e.g. ":42", ":100")
     if let Ok(line_num) = body.parse::<usize>() {
         return ExCommand::GoToLine(line_num);
+    }
+
+    // Check for substitute command (e.g. :%s/foo/bar/g, :s/a/b/, :1,5s/a/b/)
+    if let Some(sub_cmd) = parse_substitute(body) {
+        return sub_cmd;
     }
 
     // Split into command name and arguments
@@ -184,6 +312,50 @@ mod tests {
         assert_eq!(parse_ex_command("：ｗ"), ExCommand::Write { path: None, force: false });
         assert_eq!(parse_ex_command("：ｑ！"), ExCommand::Quit { force: true });
         assert_eq!(parse_ex_command("：ｗｑ"), ExCommand::WriteQuit { path: None, force: false });
+    }
+
+    #[test]
+    fn test_parse_substitute() {
+        assert_eq!(
+            parse_ex_command(":%s/foo/bar/g"),
+            ExCommand::Substitute {
+                range: ExRange::EntireBuffer,
+                pattern: "foo".into(),
+                replacement: "bar".into(),
+                global: true,
+                ignore_case: false,
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":s/hello/world/gi"),
+            ExCommand::Substitute {
+                range: ExRange::CurrentLine,
+                pattern: "hello".into(),
+                replacement: "world".into(),
+                global: true,
+                ignore_case: true,
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":1,10s/abc/xyz/"),
+            ExCommand::Substitute {
+                range: ExRange::LineRange(1, 10),
+                pattern: "abc".into(),
+                replacement: "xyz".into(),
+                global: false,
+                ignore_case: false,
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":1,$s/foo/bar/g"),
+            ExCommand::Substitute {
+                range: ExRange::EntireBuffer,
+                pattern: "foo".into(),
+                replacement: "bar".into(),
+                global: true,
+                ignore_case: false,
+            }
+        );
     }
 
     #[test]

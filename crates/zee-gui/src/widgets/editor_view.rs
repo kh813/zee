@@ -34,6 +34,8 @@ pub struct EditorView {
     pub ascii_width_px: f32,
     pub cjk_width_px: f32,
     pub is_mouse_down: bool,
+    count: usize,
+    pending_op_count: usize,
 }
 
 impl EditorView {
@@ -74,6 +76,8 @@ impl EditorView {
             ascii_width_px: ascii_width,
             cjk_width_px: cjk_width,
             is_mouse_down: false,
+            count: 0,
+            pending_op_count: 0,
         }
     }
 
@@ -295,6 +299,31 @@ impl EditorView {
                         }
                         _ => {
                             w.vi_message = Some((format!("Unknown option: {}", option), true));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::Substitute { range, pattern, replacement, global, ignore_case } => {
+                workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let (start_l, end_l) = match range {
+                            zee_core::ExRange::CurrentLine => {
+                                let (cur_l, _) = editor.char_to_line_col(editor.cursor);
+                                (cur_l + 1, cur_l + 1)
+                            }
+                            zee_core::ExRange::EntireBuffer => {
+                                (1, editor.line_count())
+                            }
+                            zee_core::ExRange::LineRange(s, e) => (s, e),
+                        };
+                        match editor.substitute_range(start_l, end_l, &pattern, &replacement, global, ignore_case) {
+                            Ok(count) => {
+                                w.vi_message = Some((format!("{} substitution(s) made", count), false));
+                            }
+                            Err(e) => {
+                                w.vi_message = Some((format!("E486: {}", e), true));
+                            }
                         }
                     }
                     cx.notify();
@@ -526,6 +555,57 @@ impl EditorView {
                                 });
                                 return;
                             }
+                            "e" => {
+                                let max_w = self.last_wrap_width_px;
+                                let ascii_w = self.ascii_width_px;
+                                let cjk_w = self.cjk_width_px;
+                                self.workspace.update(cx, |w, cx| {
+                                    let word_wrap = w.config.word_wrap;
+                                    let tab_size = w.config.tab_size;
+                                    if let Some(editor) = w.active_editor_mut() {
+                                        let max_scroll = editor.line_count().saturating_sub(1);
+                                        if editor.scroll_row < max_scroll {
+                                            editor.scroll_row += 1;
+                                            let (line, _) = editor.char_to_line_col(editor.cursor);
+                                            if line < editor.scroll_row {
+                                                if word_wrap {
+                                                    editor.move_cursor_vdown_px(max_w, ascii_w, cjk_w, tab_size, is_visual);
+                                                } else {
+                                                    editor.move_cursor_down(is_visual);
+                                                }
+                                            }
+                                        }
+                                        editor.ensure_cursor_visible(30, 80, word_wrap);
+                                    }
+                                    cx.notify();
+                                });
+                                return;
+                            }
+                            "y" => {
+                                let max_w = self.last_wrap_width_px;
+                                let ascii_w = self.ascii_width_px;
+                                let cjk_w = self.cjk_width_px;
+                                self.workspace.update(cx, |w, cx| {
+                                    let word_wrap = w.config.word_wrap;
+                                    let tab_size = w.config.tab_size;
+                                    if let Some(editor) = w.active_editor_mut() {
+                                        if editor.scroll_row > 0 {
+                                            editor.scroll_row -= 1;
+                                            let (line, _) = editor.char_to_line_col(editor.cursor);
+                                            if line >= editor.scroll_row + 30 {
+                                                if word_wrap {
+                                                    editor.move_cursor_vup_px(max_w, ascii_w, cjk_w, tab_size, is_visual);
+                                                } else {
+                                                    editor.move_cursor_up(is_visual);
+                                                }
+                                            }
+                                        }
+                                        editor.ensure_cursor_visible(30, 80, word_wrap);
+                                    }
+                                    cx.notify();
+                                });
+                                return;
+                            }
                             _ => {}
                         }
                     }
@@ -677,6 +757,29 @@ impl EditorView {
     }
 
     fn handle_vi_normal_key(&mut self, key: &str, shift: bool, cx: &mut Context<Self>) {
+        if !self.pending_r && !self.pending_f && !self.pending_capital_f && !self.pending_t && !self.pending_capital_t
+            && !self.pending_m && !self.pending_single_quote && !self.pending_backtick && !self.pending_indent && !self.pending_unindent
+            && !self.pending_g
+        {
+            if (self.count == 0 && matches!(key, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"))
+                || (self.count > 0 && matches!(key, "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"))
+            {
+                if let Ok(digit) = key.parse::<usize>() {
+                    self.count = self.count.saturating_mul(10).saturating_add(digit);
+                    return;
+                }
+            }
+        }
+
+        let has_count = self.count > 0;
+        let count_val = if has_count { self.count } else { 1 };
+        let repeat = if self.pending_d || self.pending_c || self.pending_y {
+            self.pending_op_count.max(1) * count_val
+        } else {
+            count_val
+        };
+        self.count = 0;
+
         if self.pending_r {
             if key != "escape" && key.chars().count() == 1 {
                 self.workspace.update(cx, |w, cx| {
@@ -793,10 +896,24 @@ impl EditorView {
                     let target_pos = match key {
                         "d" => {
                             let (line, _) = editor.char_to_line_col(editor.cursor);
-                            editor.select_line(line);
-                            if let Some(range) = editor.selection.clone() {
+                            let line_start = editor.rope.line_to_char(line);
+                            let target_end_line = (line + repeat).min(editor.rope.len_lines());
+                            let next_line_start = if target_end_line < editor.rope.len_lines() {
+                                editor.rope.line_to_char(target_end_line)
+                            } else {
+                                editor.rope.len_chars()
+                            };
+                            let range = line_start..next_line_start;
+                            if !range.is_empty() {
                                 text_to_copy = Some(editor.rope.slice(range.clone()).to_string());
                                 editor.delete(range);
+                                editor.cursor = line_start.min(editor.rope.len_chars());
+                                let (new_line, _) = editor.char_to_line_col(editor.cursor);
+                                let max_col = editor.get_line_max_col(new_line);
+                                let col = editor.cursor - editor.rope.line_to_char(new_line);
+                                if col > max_col {
+                                    editor.cursor = editor.line_col_to_char(new_line, max_col);
+                                }
                                 editor.selection = None;
                                 editor.selection_anchor = None;
                             }
@@ -830,6 +947,30 @@ impl EditorView {
                         "B" => {
                             editor.move_bigword_backward(false);
                             Some(editor.cursor)
+                        }
+                        "{" => {
+                            for _ in 0..repeat { editor.move_to_prev_paragraph(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "}" => {
+                            for _ in 0..repeat { editor.move_to_next_paragraph(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "(" => {
+                            for _ in 0..repeat { editor.move_to_prev_sentence(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        ")" => {
+                            for _ in 0..repeat { editor.move_to_next_sentence(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
                         }
                         "0" | "^" | "_" => {
                             let line = editor.rope.char_to_line(editor.cursor);
@@ -876,6 +1017,7 @@ impl EditorView {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
             self.pending_d = false;
+            self.pending_op_count = 0;
             if handled {
                 return;
             }
@@ -931,6 +1073,30 @@ impl EditorView {
                             editor.move_bigword_backward(false);
                             Some(editor.cursor)
                         }
+                        "{" => {
+                            for _ in 0..repeat { editor.move_to_prev_paragraph(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "}" => {
+                            for _ in 0..repeat { editor.move_to_next_paragraph(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "(" => {
+                            for _ in 0..repeat { editor.move_to_prev_sentence(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        ")" => {
+                            for _ in 0..repeat { editor.move_to_next_sentence(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
                         "0" | "^" | "_" => {
                             let line = editor.rope.char_to_line(editor.cursor);
                             let line_start = if key == "0" {
@@ -971,6 +1137,7 @@ impl EditorView {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
             self.pending_c = false;
+            self.pending_op_count = 0;
             if handled {
                 self.ignore_next_text_input = true;
                 return;
@@ -1036,6 +1203,30 @@ impl EditorView {
                             editor.cursor = start_pos;
                             Some(pos)
                         }
+                        "{" => {
+                            for _ in 0..repeat { editor.move_to_prev_paragraph(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "}" => {
+                            for _ in 0..repeat { editor.move_to_next_paragraph(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "(" => {
+                            for _ in 0..repeat { editor.move_to_prev_sentence(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        ")" => {
+                            for _ in 0..repeat { editor.move_to_next_sentence(false); }
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
                         "0" | "^" | "_" => {
                             let line = editor.rope.char_to_line(editor.cursor);
                             let line_start = if key == "0" {
@@ -1071,6 +1262,7 @@ impl EditorView {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
             self.pending_y = false;
+            self.pending_op_count = 0;
             if handled {
                 return;
             }
@@ -1162,10 +1354,95 @@ impl EditorView {
                     cx.notify();
                 });
             }
+            "{" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        for _ in 0..repeat {
+                            editor.move_to_prev_paragraph(false);
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "}" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        for _ in 0..repeat {
+                            editor.move_to_next_paragraph(false);
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "(" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        for _ in 0..repeat {
+                            editor.move_to_prev_sentence(false);
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            ")" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        for _ in 0..repeat {
+                            editor.move_to_next_sentence(false);
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "H" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let offset = repeat.saturating_sub(1);
+                        let target_line = (editor.scroll_row + offset).min(editor.line_count().saturating_sub(1));
+                        let line_str = editor.rope.line(target_line).to_string();
+                        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                        editor.cursor = editor.line_col_to_char(target_line, indent);
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                    }
+                    cx.notify();
+                });
+            }
+            "M" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let half = 15; // 30 lines visible default
+                        let target_line = (editor.scroll_row + half).min(editor.line_count().saturating_sub(1));
+                        let line_str = editor.rope.line(target_line).to_string();
+                        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                        editor.cursor = editor.line_col_to_char(target_line, indent);
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                    }
+                    cx.notify();
+                });
+            }
+            "L" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let offset = repeat.saturating_sub(1);
+                        let visible_bottom = editor.scroll_row + 29;
+                        let target_line = visible_bottom.saturating_sub(offset).min(editor.line_count().saturating_sub(1));
+                        let line_str = editor.rope.line(target_line).to_string();
+                        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                        editor.cursor = editor.line_col_to_char(target_line, indent);
+                        editor.selection = None;
+                        editor.selection_anchor = None;
+                    }
+                    cx.notify();
+                });
+            }
             "h" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_cursor_left(false);
+                        for _ in 0..repeat {
+                            editor.move_cursor_left(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1178,10 +1455,12 @@ impl EditorView {
                     let word_wrap = w.config.word_wrap;
                     let tab_size = w.config.tab_size;
                     if let Some(editor) = w.active_editor_mut() {
-                        if word_wrap {
-                            editor.move_cursor_vdown_px(max_w, ascii_w, cjk_w, tab_size, false);
-                        } else {
-                            editor.move_cursor_down(false);
+                        for _ in 0..repeat {
+                            if word_wrap {
+                                editor.move_cursor_vdown_px(max_w, ascii_w, cjk_w, tab_size, false);
+                            } else {
+                                editor.move_cursor_down(false);
+                            }
                         }
                     }
                     cx.notify();
@@ -1195,10 +1474,12 @@ impl EditorView {
                     let word_wrap = w.config.word_wrap;
                     let tab_size = w.config.tab_size;
                     if let Some(editor) = w.active_editor_mut() {
-                        if word_wrap {
-                            editor.move_cursor_vup_px(max_w, ascii_w, cjk_w, tab_size, false);
-                        } else {
-                            editor.move_cursor_up(false);
+                        for _ in 0..repeat {
+                            if word_wrap {
+                                editor.move_cursor_vup_px(max_w, ascii_w, cjk_w, tab_size, false);
+                            } else {
+                                editor.move_cursor_up(false);
+                            }
                         }
                     }
                     cx.notify();
@@ -1207,7 +1488,9 @@ impl EditorView {
             "l" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_cursor_right(false);
+                        for _ in 0..repeat {
+                            editor.move_cursor_right(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1215,7 +1498,9 @@ impl EditorView {
             "w" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_word_forward(false);
+                        for _ in 0..repeat {
+                            editor.move_word_forward(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1223,7 +1508,9 @@ impl EditorView {
             "b" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_word_backward(false);
+                        for _ in 0..repeat {
+                            editor.move_word_backward(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1231,7 +1518,9 @@ impl EditorView {
             "e" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_word_end(false);
+                        for _ in 0..repeat {
+                            editor.move_word_end(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1259,6 +1548,11 @@ impl EditorView {
             "$" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
+                        if repeat > 1 {
+                            for _ in 1..repeat {
+                                editor.move_cursor_down(false);
+                            }
+                        }
                         let (line, _) = editor.char_to_line_col(editor.cursor);
                         editor.cursor = editor.line_col_to_char(line, editor.get_line_max_col(line));
                     }
@@ -1268,7 +1562,9 @@ impl EditorView {
             "W" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_bigword_forward(false);
+                        for _ in 0..repeat {
+                            editor.move_bigword_forward(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1276,7 +1572,9 @@ impl EditorView {
             "B" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_bigword_backward(false);
+                        for _ in 0..repeat {
+                            editor.move_bigword_backward(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1284,7 +1582,9 @@ impl EditorView {
             "E" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_bigword_end(false);
+                        for _ in 0..repeat {
+                            editor.move_bigword_end(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1292,6 +1592,11 @@ impl EditorView {
             "_" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
+                        if repeat > 1 {
+                            for _ in 1..repeat {
+                                editor.move_cursor_down(false);
+                            }
+                        }
                         editor.move_to_first_non_blank(false);
                     }
                     cx.notify();
@@ -1300,7 +1605,9 @@ impl EditorView {
             "+" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_to_next_line_non_blank(false);
+                        for _ in 0..repeat {
+                            editor.move_to_next_line_non_blank(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1308,7 +1615,9 @@ impl EditorView {
             "-" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.move_to_prev_line_non_blank(false);
+                        for _ in 0..repeat {
+                            editor.move_to_prev_line_non_blank(false);
+                        }
                     }
                     cx.notify();
                 });
@@ -1316,10 +1625,12 @@ impl EditorView {
             ";" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        if let Some(pos) = editor.repeat_inline_find(false) {
-                            editor.cursor = pos;
-                            editor.selection = None;
-                            editor.selection_anchor = None;
+                        for _ in 0..repeat {
+                            if let Some(pos) = editor.repeat_inline_find(false) {
+                                editor.cursor = pos;
+                                editor.selection = None;
+                                editor.selection_anchor = None;
+                            }
                         }
                     }
                     cx.notify();
@@ -1328,10 +1639,12 @@ impl EditorView {
             "," => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        if let Some(pos) = editor.repeat_inline_find(true) {
-                            editor.cursor = pos;
-                            editor.selection = None;
-                            editor.selection_anchor = None;
+                        for _ in 0..repeat {
+                            if let Some(pos) = editor.repeat_inline_find(true) {
+                                editor.cursor = pos;
+                                editor.selection = None;
+                                editor.selection_anchor = None;
+                            }
                         }
                     }
                     cx.notify();
@@ -1340,7 +1653,9 @@ impl EditorView {
             "u" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.undo();
+                        for _ in 0..repeat {
+                            editor.undo();
+                        }
                     }
                     cx.notify();
                 });
@@ -1348,8 +1663,10 @@ impl EditorView {
             "x" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        if editor.cursor < editor.rope.len_chars() {
-                            editor.delete(editor.cursor..editor.cursor + 1);
+                        for _ in 0..repeat {
+                            if editor.cursor < editor.rope.len_chars() {
+                                editor.delete(editor.cursor..editor.cursor + 1);
+                            }
                         }
                     }
                     cx.notify();
@@ -1358,10 +1675,12 @@ impl EditorView {
             "X" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        if editor.cursor > 0 {
-                            let (_line, col) = editor.char_to_line_col(editor.cursor);
-                            if col > 0 {
-                                editor.delete(editor.cursor - 1..editor.cursor);
+                        for _ in 0..repeat {
+                            if editor.cursor > 0 {
+                                let (_line, col) = editor.char_to_line_col(editor.cursor);
+                                if col > 0 {
+                                    editor.delete(editor.cursor - 1..editor.cursor);
+                                }
                             }
                         }
                     }
@@ -1371,7 +1690,9 @@ impl EditorView {
             "~" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.toggle_case_at_cursor();
+                        for _ in 0..repeat {
+                            editor.toggle_case_at_cursor();
+                        }
                     }
                     cx.notify();
                 });
@@ -1571,12 +1892,15 @@ impl EditorView {
             }
             "d" => {
                 self.pending_d = true;
+                self.pending_op_count = repeat;
             }
             "c" => {
                 self.pending_c = true;
+                self.pending_op_count = repeat;
             }
             "y" => {
                 self.pending_y = true;
+                self.pending_op_count = repeat;
             }
             "p" => {
                 if let Some(item) = cx.read_from_clipboard() {
@@ -1653,8 +1977,11 @@ impl EditorView {
             "G" => {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        editor.cursor = editor.rope.len_chars();
-                        let line = editor.line_count().saturating_sub(1);
+                        let line = if has_count {
+                            (repeat.saturating_sub(1)).min(editor.line_count().saturating_sub(1))
+                        } else {
+                            editor.line_count().saturating_sub(1)
+                        };
                         let col = editor.get_line_max_col(line);
                         editor.cursor = editor.line_col_to_char(line, col);
                         editor.selection = None;
@@ -1664,6 +1991,8 @@ impl EditorView {
                 });
             }
             "escape" => {
+                self.count = 0;
+                self.pending_op_count = 0;
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         editor.selection = None;
@@ -1715,8 +2044,9 @@ impl EditorView {
                     if let Some(editor) = w.active_editor_mut() {
                         let (line, _) = editor.char_to_line_col(editor.cursor);
                         let line_start = editor.rope.line_to_char(line);
-                        let next_line_start = if line + 1 < editor.rope.len_lines() {
-                            editor.rope.line_to_char(line + 1)
+                        let target_end_line = (line + repeat).min(editor.rope.len_lines());
+                        let next_line_start = if target_end_line < editor.rope.len_lines() {
+                            editor.rope.line_to_char(target_end_line)
                         } else {
                             editor.rope.len_chars()
                         };
@@ -1794,6 +2124,7 @@ impl EditorView {
                 self.pending_d = false;
                 self.pending_y = false;
                 self.pending_c = false;
+                self.pending_op_count = 0;
                 self.pending_g = false;
                 self.pending_r = false;
                 self.pending_f = false;
@@ -1865,6 +2196,76 @@ impl EditorView {
                             editor.vi_mode = zee_core::ViMode::VisualLine;
                             editor.update_selection();
                         }
+                    }
+                    cx.notify();
+                });
+            }
+            "{" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_prev_paragraph(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "}" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_next_paragraph(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "(" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_prev_sentence(true);
+                    }
+                    cx.notify();
+                });
+            }
+            ")" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_next_sentence(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "H" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let target_line = editor.scroll_row.min(editor.line_count().saturating_sub(1));
+                        let line_str = editor.rope.line(target_line).to_string();
+                        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                        editor.cursor = editor.line_col_to_char(target_line, indent);
+                        editor.update_selection();
+                    }
+                    cx.notify();
+                });
+            }
+            "M" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let half = 15;
+                        let target_line = (editor.scroll_row + half).min(editor.line_count().saturating_sub(1));
+                        let line_str = editor.rope.line(target_line).to_string();
+                        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                        editor.cursor = editor.line_col_to_char(target_line, indent);
+                        editor.update_selection();
+                    }
+                    cx.notify();
+                });
+            }
+            "L" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        let visible_bottom = editor.scroll_row + 29;
+                        let target_line = visible_bottom.min(editor.line_count().saturating_sub(1));
+                        let line_str = editor.rope.line(target_line).to_string();
+                        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                        editor.cursor = editor.line_col_to_char(target_line, indent);
+                        editor.update_selection();
                     }
                     cx.notify();
                 });

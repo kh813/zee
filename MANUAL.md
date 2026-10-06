@@ -252,7 +252,9 @@ In the desktop GUI, hold the `Alt` key (Option on macOS) while dragging the mous
 
 Toggle Vi Mode with `Ctrl+I` (`⌘I` on macOS) or via `View > [x] Vi Mode`. When active, a Vim-standard 2-row bottom bar appears across both GUI and TUI: the upper row displays status indicators, while the bottom row serves as a dedicated command line (`:`) and message feedback area.
 
-> **POSIX Compliance Roadmap**: For detailed implementation status and the roadmap towards full POSIX.1-2017 `vi`/`ex` compatibility, see [`docs/POSIX_VI_COMPLIANCE.md`](docs/POSIX_VI_COMPLIANCE.md).
+> **POSIX Compliance Roadmap & Pending Features**: For detailed implementation status and the roadmap towards full POSIX.1-2017 `vi`/`ex` compatibility, see [`docs/POSIX_VI_COMPLIANCE.md`](docs/POSIX_VI_COMPLIANCE.md).
+> - **Currently Implemented**: Standard motions (`h/j/k/l`, `w/b/e`, `W/B/E`, `0/^/$`, `+/-`, `G/gg`, `H/M/L`, `( / )`, `{ / }`, `%`), counts (`[count]`), inline search (`f/F/t/T/,/;`), marks (`m`, `'`, `` ` ``), operators & delete (`d`, `c`, `y`, `p`, `P`), substitution (`:[range]s/pat/repl/[flags]`), and Ex file/window management.
+> - **Pending / Roadmap**: Dot command repeat (`.`), column position jump (`|`), replace overwrite mode (`R`), window redraw (`z<Enter>`, `z.`, `z-`), named registers (`"a`-`"z`), and Ex range lines delete/copy/move (`:[range]d`, `co`, `m`).
 
 #### Ex Commands (`:`)
 Press `:` in Normal or Visual mode (or `Shift+;` on US keyboards / full-width `：` with IME on) to enter the command line:
@@ -270,13 +272,15 @@ Press `:` in Normal or Visual mode (or `Shift+;` on US keyboards / full-width `�
 | `:noh` / `:nohlsearch` | Clear search highlight | Clears active find match indicators |
 | `:bn` / `:bnext` | Next tab | Switches to the next open tab |
 | `:bp` / `:bprev` | Previous tab | Switches to the previous open tab |
+| `:[range]s/pattern/repl/[flags]` | Pattern substitution | e.g. `:%s/foo/bar/g`, `:s/a/b/gi`, `:1,10s/p/r/` (flags: `g` for all matches on line, `i` for case-insensitive) |
 | `:set nu` / `:set number` | Enable line numbers | Turns line numbers on |
 | `:set nonu` / `:set nonumber`| Disable line numbers | Turns line numbers off |
 | `:set wrap` / `:set nowrap` | Toggle word wrap | Enables or disables line wrapping |
 | `Esc` | Cancel command line | Clears pending command without executing |
 
 #### Normal Mode
-- **Motions**: `h` / `j` / `k` / `l` (left/down/up/right), `w` / `b` / `e` (word forward/backward/end), `W` / `B` / `E` (whitespace-delimited WORD motions), `0` / `^` / `_` (line start/first non-blank), `+` / `-` (next/previous line first non-blank), `$` (line end), `gg` / `G` (document start/end), `Ctrl+D` / `Ctrl+U` (half-page down/up), `Ctrl+F` / `Ctrl+B` (page down/up).
+- **Count Prefix**: Motions and operators accept count prefixes (e.g. `3w`, `5j`, `2dd`, `4x`, `10u`, `1G` or `50G` to jump to line 50).
+- **Motions**: `h` / `j` / `k` / `l` (left/down/up/right), `w` / `b` / `e` (word forward/backward/end), `W` / `B` / `E` (whitespace-delimited WORD motions), `(` / `)` (previous/next sentence), `{` / `}` (previous/next paragraph by blank line), `H` / `M` / `L` (screen top/middle/bottom line), `Ctrl+E` / `Ctrl+Y` (scroll view down/up 1 line), `0` / `^` / `_` (line start/first non-blank), `+` / `-` (next/previous line first non-blank), `$` (line end), `gg` / `G` (document start/end or `[count]G` line jump), `Ctrl+D` / `Ctrl+U` (half-page down/up), `Ctrl+F` / `Ctrl+B` (page down/up).
 - **Inline Character Search**: `f<char>` (forward find), `F<char>` (backward find), `t<char>` (until char forward), `T<char>` (until char backward), `;` (repeat last inline find in same direction), `,` (repeat last inline find in reverse direction).
 - **Marks & Jumps**: `m<a-z>` (set mark at cursor), `'<a-z>` (jump to line of mark at first non-blank char), `` `<a-z> `` (jump to exact character position of mark), `''` / ` `` ` (jump back to position prior to last jump). Marks automatically adjust positions on buffer edits.
 - **Indentation**: `>>` (indent line), `<<` (unindent line).
@@ -297,7 +301,7 @@ Press `:` in Normal or Visual mode (or `Shift+;` on US keyboards / full-width `�
 - **IME Transparency**: Japanese IME keystrokes are automatically normalized in Normal mode (e.g., `っ` triggers `dd`, `い` triggers `i`, full-width numbers/symbols trigger motions).
 
 #### Visual & Visual Line Modes (`v` / `V`)
-- **Navigation & Selection**: `h` / `j` / `k` / `l`, `w` / `b` / `e`, `0`, `$` to expand/contract selection.
+- **Navigation & Selection**: `h` / `j` / `k` / `l`, `w` / `b` / `e`, `{` / `}`, `0`, `$` to expand/contract selection.
 - **Operations on Selection**: `y` (yank), `d` / `x` (cut), `c` / `s` (cut and enter Insert mode), `p` (replace selection with clipboard), `:` (enter Ex command line for selection), `Esc` (return to Normal mode).
 
 #### Visual Block Mode (Rectangular Selection / `Ctrl+V` or `⌘V`)

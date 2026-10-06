@@ -147,7 +147,7 @@ pub enum ViMode {
 
 pub use config::{Config, export_backup, import_backup, BackupReport};
 pub use i18n::I18n;
-pub use buffer::{normalize_vi_char, normalize_vi_key};
+pub use buffer::{normalize_vi_char, normalize_vi_key, resolve_key_stroke};
 
 pub mod vi_cmd;
 pub use vi_cmd::{ExCommand, ExRange, parse_ex_command};

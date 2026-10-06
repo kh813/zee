@@ -120,11 +120,15 @@ fn parse_substitute(body: &str) -> Option<ExCommand> {
 
     while let Some(c) = chars_iter.next() {
         if escaped {
-            current.push(c);
+            if c == delimiter {
+                current.push(c);
+            } else {
+                current.push('\\');
+                current.push(c);
+            }
             escaped = false;
         } else if c == '\\' {
             escaped = true;
-            current.push(c);
         } else if c == delimiter {
             parts.push(std::mem::take(&mut current));
             if parts.len() == 2 {
@@ -133,6 +137,9 @@ fn parse_substitute(body: &str) -> Option<ExCommand> {
         } else {
             current.push(c);
         }
+    }
+    if escaped {
+        current.push('\\');
     }
 
     if parts.len() < 2 {
@@ -347,11 +354,65 @@ mod tests {
             }
         );
         assert_eq!(
+            parse_ex_command(":%s/English/english/g"),
+            ExCommand::Substitute {
+                range: ExRange::EntireBuffer,
+                pattern: "English".into(),
+                replacement: "english".into(),
+                global: true,
+                ignore_case: false,
+            }
+        );
+        // Japanese text substitution in Ex command
+        assert_eq!(
+            parse_ex_command(":%s/日本語/Japanese/g"),
+            ExCommand::Substitute {
+                range: ExRange::EntireBuffer,
+                pattern: "日本語".into(),
+                replacement: "Japanese".into(),
+                global: true,
+                ignore_case: false,
+            }
+        );
+        // Full-width IME Japanese syntax tokens
+        assert_eq!(
+            parse_ex_command("：％ｓ／日本語／Japanese／ｇ"),
+            ExCommand::Substitute {
+                range: ExRange::EntireBuffer,
+                pattern: "日本語".into(),
+                replacement: "Japanese".into(),
+                global: true,
+                ignore_case: false,
+            }
+        );
+        assert_eq!(
             parse_ex_command(":1,$s/foo/bar/g"),
             ExCommand::Substitute {
                 range: ExRange::EntireBuffer,
                 pattern: "foo".into(),
                 replacement: "bar".into(),
+                global: true,
+                ignore_case: false,
+            }
+        );
+        // Empty replacement (deletion via :%s/bad//g)
+        assert_eq!(
+            parse_ex_command(":%s/bad//g"),
+            ExCommand::Substitute {
+                range: ExRange::EntireBuffer,
+                pattern: "bad".into(),
+                replacement: "".into(),
+                global: true,
+                ignore_case: false,
+            }
+        );
+        // Escaped slashes in pattern and replacement
+        assert_eq!(
+            parse_ex_command(r":%s/\/usr\/bin/\/usr\/local\/bin/g"),
+            ExCommand::Substitute {
+                range: ExRange::EntireBuffer,
+                pattern: "/usr/bin".into(),
+                replacement: "/usr/local/bin".into(),
                 global: true,
                 ignore_case: false,
             }

@@ -5,6 +5,7 @@ use crate::app::GoToLine;
 
 pub struct StatusBar {
     workspace: Entity<Workspace>,
+    last_ime_active: bool,
 }
 
 impl StatusBar {
@@ -12,7 +13,31 @@ impl StatusBar {
         cx.observe(&workspace, |_, _, cx| {
             cx.notify();
         }).detach();
-        Self { workspace }
+
+        let initial_ime = zee_core::is_cjk_ime_active();
+        let status_bar_handle = cx.entity().clone();
+        cx.spawn(move |_, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let mut prev = initial_ime;
+                loop {
+                    smol::Timer::after(std::time::Duration::from_millis(50)).await;
+                    let current = zee_core::is_cjk_ime_active();
+                    if current != prev {
+                        prev = current;
+                        let _ = status_bar_handle.update(&mut cx.clone(), |this, cx| {
+                            this.last_ime_active = current;
+                            cx.notify();
+                        });
+                    }
+                }
+            }
+        }).detach();
+
+        Self {
+            workspace,
+            last_ime_active: initial_ime,
+        }
     }
 }
 
@@ -103,7 +128,7 @@ impl Render for StatusBar {
                         let (badge_text, bg_color) = match editor.vi_mode {
                             zee_core::ViMode::Insert => {
                                 if zee_core::is_cjk_ime_active() {
-                                    ("INSERT [あ]", gpui::rgb(0xe65100))
+                                    ("INSERT [あ]", gpui::rgb(0xd32f2f))
                                 } else {
                                     ("INSERT", gpui::rgb(0x2e7d32))
                                 }
@@ -196,6 +221,7 @@ impl Render for StatusBar {
         let cmdline_border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.15);
 
         let cmdline_content = if let Some(ref cmd) = workspace.vi_cmd {
+            let preedit = workspace.vi_cmd_preedit.as_deref().unwrap_or("");
             div()
                 .flex()
                 .items_center()
@@ -207,6 +233,19 @@ impl Render for StatusBar {
                         .text_color(led_color_to_gpui(theme.ui.status_bar_fg))
                         .child(cmd.clone())
                 )
+                .children(if !preedit.is_empty() {
+                    Some(
+                        div()
+                            .font_family(crate::widgets::mono_font_family())
+                            .text_size(px(12.0))
+                            .text_color(led_color_to_gpui(theme.editor.cursor))
+                            .border_b_2()
+                            .border_color(led_color_to_gpui(theme.editor.cursor))
+                            .child(preedit.to_string())
+                    )
+                } else {
+                    None
+                })
                 .child(
                     div()
                         .w(px(7.0))
@@ -225,23 +264,23 @@ impl Render for StatusBar {
                 .text_color(msg_color)
                 .child(msg.clone())
         } else {
-            let hint = match editor.vi_mode {
+            let (hint, hint_color) = match editor.vi_mode {
                 zee_core::ViMode::Insert => {
                     if zee_core::is_cjk_ime_active() {
-                        "-- INSERT [あ] --"
+                        ("-- INSERT [あ] --", gpui::rgb(0xef5350))
                     } else {
-                        "-- INSERT --"
+                        ("-- INSERT --", gpui::rgb(0x4caf50))
                     }
                 }
-                zee_core::ViMode::Visual => "-- VISUAL --",
-                zee_core::ViMode::VisualLine => "-- VISUAL LINE --",
-                zee_core::ViMode::VisualBlock => "-- VISUAL BLOCK --",
-                zee_core::ViMode::Normal => "",
+                zee_core::ViMode::Visual => ("-- VISUAL --", with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.7)),
+                zee_core::ViMode::VisualLine => ("-- VISUAL LINE --", with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.7)),
+                zee_core::ViMode::VisualBlock => ("-- VISUAL BLOCK --", with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.7)),
+                zee_core::ViMode::Normal => ("", with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.7)),
             };
             div()
                 .font_family(crate::widgets::mono_font_family())
                 .text_size(px(12.0))
-                .text_color(with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.7))
+                .text_color(hint_color)
                 .child(hint)
         };
 

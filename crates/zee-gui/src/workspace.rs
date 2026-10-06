@@ -22,6 +22,7 @@ pub struct Workspace {
     pub outline_nodes: Vec<OutlineNode>,
     pub plugin_manager: zee_core::plugin::PluginManager,
     pub vi_cmd: Option<String>,
+    pub vi_cmd_preedit: Option<String>,
     pub vi_message: Option<(String, bool)>,
 }
 
@@ -56,6 +57,7 @@ impl Workspace {
             outline_nodes: Vec::new(),
             plugin_manager,
             vi_cmd: None,
+            vi_cmd_preedit: None,
             vi_message: None,
         }
     }
@@ -412,6 +414,88 @@ mod tests {
         assert_eq!(workspace.vi_message, None);
     }
 
+    #[test]
+    fn test_workspace_vi_substitute_command_with_uppercase() {
+        let mut config = Config::default();
+        config.vi_mode = true;
+        let mut workspace = Workspace::new(config);
+        let editor = workspace.active_editor_mut().unwrap();
+        editor.vi_mode = zee_core::ViMode::Normal;
+        editor.insert(0, "English and English text\n");
+
+        let ex_cmd = zee_core::parse_ex_command(":%s/English/english/g");
+        if let zee_core::ExCommand::Substitute { range: _, pattern, replacement, global, ignore_case } = ex_cmd {
+            let res = editor.substitute_range(1, editor.line_count(), &pattern, &replacement, global, ignore_case);
+            assert_eq!(res, Ok(2));
+            assert_eq!(editor.rope.to_string(), "english and english text\n");
+        } else {
+            panic!("Expected ExCommand::Substitute");
+        }
+    }
+
+    #[test]
+    fn test_workspace_vi_substitute_japanese_text() {
+        let mut config = Config::default();
+        config.vi_mode = true;
+        let mut workspace = Workspace::new(config);
+        let editor = workspace.active_editor_mut().unwrap();
+        editor.vi_mode = zee_core::ViMode::Normal;
+        editor.insert(0, "日本語と英語と日本語の文章\n第二行の日本語\n");
+
+        // Execute :%s/日本語/Japanese/g
+        let ex_cmd = zee_core::parse_ex_command(":%s/日本語/Japanese/g");
+        if let zee_core::ExCommand::Substitute { range: _, pattern, replacement, global, ignore_case } = ex_cmd {
+            let res = editor.substitute_range(1, editor.line_count(), &pattern, &replacement, global, ignore_case);
+            assert_eq!(res, Ok(3));
+            assert_eq!(editor.rope.to_string(), "Japaneseと英語とJapaneseの文章\n第二行のJapanese\n");
+        } else {
+            panic!("Expected ExCommand::Substitute");
+        }
+
+        // Full-width IME Japanese syntax tokens
+        let ime_cmd = zee_core::parse_ex_command("：％ｓ／Japanese／和文／ｇ");
+        if let zee_core::ExCommand::Substitute { range: _, pattern, replacement, global, ignore_case } = ime_cmd {
+            let res = editor.substitute_range(1, editor.line_count(), &pattern, &replacement, global, ignore_case);
+            assert_eq!(res, Ok(3));
+            assert_eq!(editor.rope.to_string(), "和文と英語と和文の文章\n第二行の和文\n");
+        } else {
+            panic!("Expected ExCommand::Substitute");
+        }
+    }
+
+    #[test]
+    fn test_workspace_vi_cmd_and_preedit_lifecycle() {
+        let mut config = Config::default();
+        config.vi_mode = true;
+        let mut workspace = Workspace::new(config);
+        assert_eq!(workspace.vi_cmd, None);
+        assert_eq!(workspace.vi_cmd_preedit, None);
+
+        // Enter vi cmd mode
+        workspace.vi_cmd = Some(":".to_string());
+        assert_eq!(workspace.vi_cmd.as_deref(), Some(":"));
+
+        // Type %s/
+        workspace.vi_cmd.as_mut().unwrap().push_str("%s/");
+        assert_eq!(workspace.vi_cmd.as_deref(), Some(":%s/"));
+
+        // Preedit arrives (e.g. typing "にほんご")
+        workspace.vi_cmd_preedit = Some("にほんご".to_string());
+        assert_eq!(workspace.vi_cmd_preedit.as_deref(), Some("にほんご"));
+
+        // IME commit (preedit becomes committed "日本語")
+        workspace.vi_cmd.as_mut().unwrap().push_str("日本語");
+        workspace.vi_cmd_preedit = None;
+        assert_eq!(workspace.vi_cmd.as_deref(), Some(":%s/日本語"));
+        assert_eq!(workspace.vi_cmd_preedit, None);
+
+        // Cancel command via Escape
+        workspace.vi_cmd = None;
+        workspace.vi_cmd_preedit = None;
+        assert_eq!(workspace.vi_cmd, None);
+        assert_eq!(workspace.vi_cmd_preedit, None);
+    }
+
 
     #[test]
     fn test_open_folder_reveals_sidebar_files_tab() {
@@ -597,6 +681,95 @@ mod tests {
         assert!(content.contains("println!(\"Hello, world!\");"));
         assert!(!content.contains("{cursor}"));
         assert_eq!(editor.syntax_highlighter.as_ref().map(|h| h.def.meta.name.as_str()), Some("Rust"));
+    }
+
+    #[test]
+    fn test_workspace_standard_editing_and_selection() {
+        let mut workspace = Workspace::new(Config::default());
+        let editor = workspace.active_editor_mut().unwrap();
+        assert_eq!(editor.vi_mode, zee_core::ViMode::Insert);
+
+        // Insert and verify content
+        editor.insert(0, "First Line\nSecond Line\nThird Line");
+        assert_eq!(editor.line_count(), 3);
+        assert!(editor.is_modified());
+
+        // Test line/column calculations
+        let (l, c) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(l, 2);
+        assert_eq!(c, 10);
+
+        // Undo & Redo
+        editor.undo();
+        assert_eq!(editor.rope.to_string(), "");
+        editor.redo();
+        assert_eq!(editor.rope.to_string(), "First Line\nSecond Line\nThird Line");
+
+        // Selection deletion
+        editor.selection = Some(0..5);
+        let sel_range = editor.selection.take().unwrap();
+        editor.delete(sel_range);
+        assert_eq!(editor.rope.to_string(), " Line\nSecond Line\nThird Line");
+    }
+
+    #[test]
+    fn test_workspace_tab_cycling_and_close() {
+        let mut workspace = Workspace::new(Config::default());
+        assert_eq!(workspace.editors.len(), 1);
+        assert_eq!(workspace.active_editor_index, 0);
+
+        // Add 2 tabs
+        workspace.new_tab();
+        workspace.new_tab();
+        assert_eq!(workspace.editors.len(), 3);
+        assert_eq!(workspace.active_editor_index, 2);
+
+        // Next tab wraps around
+        workspace.next_tab();
+        assert_eq!(workspace.active_editor_index, 0);
+        workspace.next_tab();
+        assert_eq!(workspace.active_editor_index, 1);
+
+        // Prev tab moves backward
+        workspace.prev_tab();
+        assert_eq!(workspace.active_editor_index, 0);
+        workspace.prev_tab();
+        assert_eq!(workspace.active_editor_index, 2);
+
+        // Close middle tab
+        workspace.active_editor_index = 1;
+        workspace.close_active_editor();
+        assert_eq!(workspace.editors.len(), 2);
+        assert_eq!(workspace.active_editor_index, 1);
+    }
+
+    #[test]
+    fn test_workspace_find_and_replace() {
+        let mut workspace = Workspace::new(Config::default());
+        let editor = workspace.active_editor_mut().unwrap();
+        editor.insert(0, "Apple Banana Apple Orange Apple");
+
+        // Search for "Apple"
+        let query = zee_core::search::SearchQuery {
+            pattern: "Apple".to_string(),
+            flags: zee_core::search::SearchFlags {
+                match_case: true,
+                whole_word: false,
+                use_regex: false,
+            },
+        };
+        let matches = editor.search(&query);
+        assert_eq!(matches.len(), 3);
+        assert_eq!(matches[0].char_range, 0..5);
+        assert_eq!(matches[1].char_range, 13..18);
+        assert_eq!(matches[2].char_range, 26..31);
+
+        // Replace all in reverse order
+        for m in matches.into_iter().rev() {
+            editor.delete(m.char_range);
+            editor.insert(editor.cursor, "Mango");
+        }
+        assert_eq!(editor.rope.to_string(), "Mango Banana Mango Orange Mango");
     }
 }
 

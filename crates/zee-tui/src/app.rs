@@ -2610,7 +2610,7 @@ impl App {
                 self.vi_cmd.push(zee_core::normalize_vi_char(c));
             }
             KeyCode::Backspace => {
-                if self.vi_cmd.len() > 1 {
+                if self.vi_cmd.chars().count() > 1 {
                     self.vi_cmd.pop();
                 } else {
                     self.is_vi_cmd_mode = false;
@@ -4159,8 +4159,26 @@ impl App {
 
         // Move terminal cursor to the logical cursor position for IME
         if self.active_menu.is_none() {
-            // Hardware cursor for focused editor
-            if self.focus == Focus::Editor && self.current_dialog.is_none() {
+            // Hardware cursor for vi command mode
+            if self.is_vi_cmd_mode {
+                let (cx, cy, cw, ch) = self.layout.cmdline_bounds();
+                if ch > 0 {
+                    let mut cur_x = cx;
+                    for c in self.vi_cmd.chars() {
+                        if cur_x >= cx + cw { break; }
+                        let w = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
+                        cur_x += w as u16;
+                    }
+                    if cur_x < cx + cw {
+                        execute!(stdout, crossterm::cursor::SetCursorStyle::BlinkingBlock)?;
+                        execute!(stdout, cursor::Show, cursor::MoveTo(cur_x, cy))?;
+                    } else {
+                        execute!(stdout, cursor::Hide)?;
+                    }
+                } else {
+                    execute!(stdout, cursor::Hide)?;
+                }
+            } else if self.focus == Focus::Editor && self.current_dialog.is_none() {
                 let (ex, ey, ew, eh) = self.layout.editor_bounds();
                 let buffer = &self.buffers[self.active_buffer];
                 let (line, col) = buffer.char_to_line_col(buffer.cursor);
@@ -5202,28 +5220,28 @@ impl App {
             .map(|h| h.def.meta.name.as_str())
             .unwrap_or_else(|| self.i18n.get("menu.view.syntax_plain"));
 
-        let vi_mode = if self.config.vi_mode {
+        let (vi_mode_str, vi_badge_bg, vi_badge_fg) = if self.config.vi_mode {
             match buffer.vi_mode {
-                zee_core::ViMode::Normal => " NORMAL",
+                zee_core::ViMode::Normal => (" NORMAL", crossterm::style::Color::DarkBlue, crossterm::style::Color::White),
                 zee_core::ViMode::Insert => {
                     if zee_core::is_cjk_ime_active() {
-                        " INSERT [あ]"
+                        (" INSERT [あ]", crossterm::style::Color::DarkRed, crossterm::style::Color::White)
                     } else {
-                        " INSERT"
+                        (" INSERT", crossterm::style::Color::DarkGreen, crossterm::style::Color::White)
                     }
                 }
-                zee_core::ViMode::Visual => " VISUAL",
-                zee_core::ViMode::VisualLine => " V-LINE",
-                zee_core::ViMode::VisualBlock => " V-BLOCK",
+                zee_core::ViMode::Visual => (" VISUAL", crossterm::style::Color::DarkMagenta, crossterm::style::Color::White),
+                zee_core::ViMode::VisualLine => (" V-LINE", crossterm::style::Color::DarkMagenta, crossterm::style::Color::White),
+                zee_core::ViMode::VisualBlock => (" V-BLOCK", crossterm::style::Color::DarkMagenta, crossterm::style::Color::White),
             }
         } else {
-            ""
+            ("", bg, fg)
         };
 
         let right_text = format!("{}{} | {} | {} | {} | {} ", 
             search_info, selection_info, cursor_info, encoding, line_ending, syntax);
-        let vi_mode_text = if !vi_mode.is_empty() { format!("|{} ", vi_mode) } else { "".to_string() };
-        let full_right_text = format!("{}{}", right_text, vi_mode_text);
+        let vi_sep = if !vi_mode_str.is_empty() { "| " } else { "" };
+        let vi_badge_text = if !vi_mode_str.is_empty() { format!("{} ", vi_mode_str.trim_start()) } else { "".to_string() };
 
         // Render left
         let mut cur_x = x;
@@ -5237,15 +5255,22 @@ impl App {
 
         // Render right (right-aligned)
         let mut right_visual_width = 0;
-        for c in full_right_text.chars() {
+        for c in right_text.chars().chain(vi_sep.chars()).chain(vi_badge_text.chars()) {
             right_visual_width += c.width().unwrap_or(0) as u16;
         }
 
         let mut cur_rx = x + w.saturating_sub(right_visual_width);
-        for c in full_right_text.chars() {
+        for c in right_text.chars().chain(vi_sep.chars()) {
             let width = c.width().unwrap_or(0) as u16;
             if cur_rx >= x && cur_rx + width <= x + w {
                 self.renderer.set_cell(cur_rx, y, Cell { ch: c, bg, fg, width: width as u8, ..Default::default() });
+            }
+            cur_rx += width;
+        }
+        for c in vi_badge_text.chars() {
+            let width = c.width().unwrap_or(0) as u16;
+            if cur_rx >= x && cur_rx + width <= x + w {
+                self.renderer.set_cell(cur_rx, y, Cell { ch: c, bg: vi_badge_bg, fg: vi_badge_fg, width: width as u8, ..Default::default() });
             }
             cur_rx += width;
         }
@@ -5291,24 +5316,24 @@ impl App {
                 cur_x += cw as u16;
             }
         } else if let Some(buf) = self.buffers.get(self.active_buffer) {
-            let hint = match buf.vi_mode {
+            let (hint, hint_fg) = match buf.vi_mode {
                 zee_core::ViMode::Insert => {
                     if zee_core::is_cjk_ime_active() {
-                        "-- INSERT [あ] --"
+                        ("-- INSERT [あ] --", crossterm::style::Color::Red)
                     } else {
-                        "-- INSERT --"
+                        ("-- INSERT --", crossterm::style::Color::Green)
                     }
                 }
-                zee_core::ViMode::Visual => "-- VISUAL --",
-                zee_core::ViMode::VisualLine => "-- VISUAL LINE --",
-                zee_core::ViMode::VisualBlock => "-- VISUAL BLOCK --",
-                zee_core::ViMode::Normal => "",
+                zee_core::ViMode::Visual => ("-- VISUAL --", fg),
+                zee_core::ViMode::VisualLine => ("-- VISUAL LINE --", fg),
+                zee_core::ViMode::VisualBlock => ("-- VISUAL BLOCK --", fg),
+                zee_core::ViMode::Normal => ("", fg),
             };
             let mut cur_x = x;
             for c in hint.chars() {
                 if cur_x >= x + w { break; }
                 let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1);
-                self.renderer.set_cell(cur_x, y, Cell { ch: c, bg, fg, width: cw as u8, ..Default::default() });
+                self.renderer.set_cell(cur_x, y, Cell { ch: c, bg, fg: hint_fg, width: cw as u8, ..Default::default() });
                 cur_x += cw as u16;
             }
         }
@@ -5694,6 +5719,46 @@ mod tests {
         app.handle_key(make_key(KeyCode::Enter));
         assert_eq!(app.vi_message, Some(("5 substitution(s) made".into(), false)));
         assert_eq!(app.buffers[0].rope.to_string(), "Item 1\nItem 2\nItem 3\nItem 4\nItem 5\n");
+
+        // 5. Substitute with uppercase characters like %s/English/english/g
+        let len = app.buffers[0].rope.len_chars();
+        app.buffers[0].delete(0..len);
+        app.buffers[0].insert(0, "English language and English text\n");
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "%s/English/english/g".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.vi_message, Some(("2 substitution(s) made".into(), false)));
+        assert_eq!(app.buffers[0].rope.to_string(), "english language and english text\n");
+
+        // 6. Substitute with Japanese characters :%s/日本語/Japanese/g
+        let len = app.buffers[0].rope.len_chars();
+        app.buffers[0].delete(0..len);
+        app.buffers[0].insert(0, "日本語のテストと日本語のテキスト\n");
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "%s/日本語/Japanese/g".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.vi_message, Some(("2 substitution(s) made".into(), false)));
+        assert_eq!(app.buffers[0].rope.to_string(), "JapaneseのテストとJapaneseのテキスト\n");
+
+        // 7. Vi command mode backspace on Japanese multi-byte characters
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "%s/日本語".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.vi_cmd, ":%s/日本語");
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.vi_cmd, ":%s/日本");
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.vi_cmd, ":%s/日");
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.vi_cmd, ":%s/");
+        app.handle_key(make_key(KeyCode::Esc));
+        assert!(!app.is_vi_cmd_mode);
+        assert_eq!(app.vi_cmd, "");
     }
 
     #[test]
@@ -5774,6 +5839,142 @@ mod tests {
         // Ctrl-Y scrolls up 1 line
         app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
         assert_eq!(app.buffers[0].scroll_row, old_scroll);
+    }
+
+    #[test]
+    fn test_standard_editor_typing_and_navigation() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        assert!(!app.config.vi_mode);
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert);
+
+        // Type "Hello World"
+        for c in "Hello World".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.buffers[0].rope.to_string(), "Hello World");
+        assert_eq!(app.buffers[0].cursor, 11);
+
+        // Move Left 5 times (to space between Hello and World)
+        for _ in 0..5 {
+            app.handle_key(make_key(KeyCode::Left));
+        }
+        assert_eq!(app.buffers[0].cursor, 6);
+
+        // Backspace to delete the space
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.buffers[0].rope.to_string(), "HelloWorld");
+        assert_eq!(app.buffers[0].cursor, 5);
+
+        // Delete key deletes character under cursor ('W')
+        app.handle_key(make_key(KeyCode::Delete));
+        assert_eq!(app.buffers[0].rope.to_string(), "Helloorld");
+
+        // Enter key inserts newline
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.buffers[0].rope.to_string(), "Hello\norld");
+        assert_eq!(app.buffers[0].line_count(), 2);
+
+        // Home key moves to start of line
+        app.handle_key(make_key(KeyCode::Home));
+        let (_, col) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(col, 0);
+
+        // End key moves to end of line
+        app.handle_key(make_key(KeyCode::End));
+        let (_, col_end) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(col_end, 4);
+
+        // Tab key inserts 4 spaces
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.buffers[0].rope.to_string(), "Hello\norld    ");
+    }
+
+    #[test]
+    fn test_clipboard_and_selection_operations() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.buffers[0].insert(0, "The quick brown fox");
+
+        // Select "quick " (chars 4..10)
+        app.buffers[0].selection = Some(4..10);
+        app.buffers[0].selection_anchor = Some(4);
+        app.buffers[0].cursor = 10;
+
+        // Cut operation removes selection
+        app.perform_action(Action::Cut);
+        assert_eq!(app.buffers[0].rope.to_string(), "The brown fox");
+        assert_eq!(app.buffers[0].selection, None);
+
+        // Select All (via Action::SelectAll)
+        app.perform_action(Action::SelectAll);
+        assert_eq!(app.buffers[0].selection, Some(0..app.buffers[0].rope.len_chars()));
+
+        // Backspace replaces entire selection
+        app.handle_key(make_key(KeyCode::Backspace));
+        assert_eq!(app.buffers[0].rope.to_string(), "");
+        assert_eq!(app.buffers[0].cursor, 0);
+    }
+
+    #[test]
+    fn test_ui_menu_and_view_toggles() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+
+        // 1. Toggle Sidebar
+        let initial_sidebar = app.sidebar.visible;
+        app.perform_action(Action::ToggleSidebar);
+        assert_eq!(app.sidebar.visible, !initial_sidebar);
+        app.perform_action(Action::ToggleSidebar);
+        assert_eq!(app.sidebar.visible, initial_sidebar);
+
+        // 2. Toggle Line Numbers
+        let initial_ln = app.config.line_numbers;
+        app.perform_action(Action::ToggleLineNumbers);
+        assert_eq!(app.config.line_numbers, !initial_ln);
+        app.perform_action(Action::ToggleLineNumbers);
+        assert_eq!(app.config.line_numbers, initial_ln);
+
+        // 3. Toggle Word Wrap
+        let initial_wrap = app.config.word_wrap;
+        app.perform_action(Action::ToggleWordWrap);
+        assert_eq!(app.config.word_wrap, !initial_wrap);
+        app.perform_action(Action::ToggleWordWrap);
+        assert_eq!(app.config.word_wrap, initial_wrap);
+
+        // 4. Toggle Vi Mode
+        assert!(!app.config.vi_mode);
+        app.perform_action(Action::ToggleViMode);
+        assert!(app.config.vi_mode);
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Normal);
+        app.perform_action(Action::ToggleViMode);
+        assert!(!app.config.vi_mode);
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert);
+    }
+
+    #[test]
+    fn test_multi_buffer_tab_navigation() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        assert_eq!(app.buffers.len(), 1);
+
+        // Add 2 more buffers
+        app.perform_action(Action::New);
+        app.perform_action(Action::New);
+        assert_eq!(app.buffers.len(), 3);
+        assert_eq!(app.active_buffer, 2);
+
+        // Ctrl+Tab moves forward and wraps around
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL));
+        assert_eq!(app.active_buffer, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL));
+        assert_eq!(app.active_buffer, 1);
+
+        // Ctrl+PageUp moves backward
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL));
+        assert_eq!(app.active_buffer, 0);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::CONTROL));
+        assert_eq!(app.active_buffer, 2);
+
+        // Close active buffer
+        app.perform_action(Action::Close);
+        assert_eq!(app.buffers.len(), 2);
     }
 }
 

@@ -5,7 +5,7 @@ use std::ops::Range;
 use std::collections::HashMap;
 use anyhow::Result;
 use ropey::Rope;
-use crate::{Encoding, LineEnding};
+use crate::{Encoding, LineEnding, ViMode};
 use encoding_rs::*;
 
 #[derive(Debug, Clone)]
@@ -2381,6 +2381,43 @@ pub fn normalize_vi_key(key: &str) -> String {
     }
 }
 
+/// Resolves a raw key string and modifiers into the canonical input key or character,
+/// taking into account whether vi mode is active, the current Vi mode, and whether
+/// vi command (:ex) line mode is active.
+pub fn resolve_key_stroke(raw_key: &str, shift: bool, vi_mode: Option<ViMode>, in_vi_cmd: bool) -> String {
+    let is_insert = vi_mode == Some(ViMode::Insert);
+    let is_vi_normal_or_visual = vi_mode.is_some() && !is_insert && !in_vi_cmd;
+
+    if is_vi_normal_or_visual {
+        let n = normalize_vi_key(raw_key);
+        if shift && n.len() == 1 {
+            n.to_uppercase()
+        } else {
+            n
+        }
+    } else if in_vi_cmd {
+        if raw_key == "space" {
+            " ".to_string()
+        } else if raw_key.chars().count() == 1 {
+            let norm = normalize_vi_char(raw_key.chars().next().unwrap());
+            if shift && norm.is_ascii_lowercase() {
+                norm.to_ascii_uppercase().to_string()
+            } else {
+                norm.to_string()
+            }
+        } else {
+            raw_key.to_string()
+        }
+    } else {
+        // Standard text editor input (vi Insert mode or vi-disabled regular editor mode)
+        if shift && raw_key.len() == 1 {
+            raw_key.to_uppercase()
+        } else {
+            raw_key.to_string()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3220,6 +3257,39 @@ mod tests {
         assert_eq!(normalize_vi_key("・"), "/");
         assert_eq!(normalize_vi_key("：ｗｑ"), ":wq");
         assert_eq!(normalize_vi_key("："), ":");
+    }
+
+    #[test]
+    fn test_resolve_key_stroke() {
+        // 1. Regular non-vi editor or Insert mode:
+        // Shift+e -> "E", e -> "e", space -> "space"
+        assert_eq!(resolve_key_stroke("e", true, None, false), "E");
+        assert_eq!(resolve_key_stroke("e", false, None, false), "e");
+        assert_eq!(resolve_key_stroke("e", true, Some(ViMode::Insert), false), "E");
+        assert_eq!(resolve_key_stroke("e", false, Some(ViMode::Insert), false), "e");
+        assert_eq!(resolve_key_stroke("space", false, None, false), "space");
+
+        // 2. Vi Normal mode:
+        // Shift+e -> "E", e -> "e", Shift+g -> "G", g -> "g", Shift+4 ($) -> "$"
+        assert_eq!(resolve_key_stroke("e", true, Some(ViMode::Normal), false), "E");
+        assert_eq!(resolve_key_stroke("e", false, Some(ViMode::Normal), false), "e");
+        assert_eq!(resolve_key_stroke("g", true, Some(ViMode::Normal), false), "G");
+        assert_eq!(resolve_key_stroke("g", false, Some(ViMode::Normal), false), "g");
+        // Japanese IME in Normal mode: "ｊ" -> "j", Shift + "ｊ" -> "J"
+        assert_eq!(resolve_key_stroke("ｊ", false, Some(ViMode::Normal), false), "j");
+        assert_eq!(resolve_key_stroke("ｊ", true, Some(ViMode::Normal), false), "J");
+        assert_eq!(resolve_key_stroke("っ", false, Some(ViMode::Normal), false), "dd");
+
+        // 3. Vi Command (:ex) mode:
+        // Shift+e -> "E" (the bug report scenario!)
+        assert_eq!(resolve_key_stroke("e", true, Some(ViMode::Normal), true), "E");
+        assert_eq!(resolve_key_stroke("e", false, Some(ViMode::Normal), true), "e");
+        assert_eq!(resolve_key_stroke("space", false, Some(ViMode::Normal), true), " ");
+        // Japanese IME in Command mode: "ｗ" -> "w", Shift + "ｗ" -> "W"
+        assert_eq!(resolve_key_stroke("ｗ", false, Some(ViMode::Normal), true), "w");
+        assert_eq!(resolve_key_stroke("ｗ", true, Some(ViMode::Normal), true), "W");
+        assert_eq!(resolve_key_stroke("・", false, Some(ViMode::Normal), true), "/");
+        assert_eq!(resolve_key_stroke("：", false, Some(ViMode::Normal), true), ":");
     }
 
     #[test]

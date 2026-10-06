@@ -43,6 +43,25 @@ impl EditorView {
         cx.observe(&workspace, |_, _, cx| {
             cx.notify();
         }).detach();
+
+        let initial_ime = zee_core::is_cjk_ime_active();
+        let editor_view_handle = cx.entity().clone();
+        cx.spawn(move |_, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let mut prev = initial_ime;
+                loop {
+                    smol::Timer::after(std::time::Duration::from_millis(50)).await;
+                    let current = zee_core::is_cjk_ime_active();
+                    if current != prev {
+                        prev = current;
+                        let _ = editor_view_handle.update(&mut cx.clone(), |_this, cx| {
+                            cx.notify();
+                        });
+                    }
+                }
+            }
+        }).detach();
         
         let config = workspace.read(cx).config.clone();
         let font_size = config.font_size;
@@ -356,11 +375,9 @@ impl EditorView {
         let vi_mode_enabled = self.workspace.read(cx).config.vi_mode;
         let current_vi_mode = self.workspace.read(cx).active_editor().map(|e| e.vi_mode);
 
-        let normalized_key = if vi_mode_enabled && current_vi_mode != Some(zee_core::ViMode::Insert) {
-            zee_core::normalize_vi_key(raw_key)
-        } else {
-            raw_key.to_string()
-        };
+        let in_vi_cmd = vi_mode_enabled && self.workspace.read(cx).vi_cmd.is_some();
+        let effective_vi_mode = if vi_mode_enabled { current_vi_mode } else { None };
+        let normalized_key = zee_core::resolve_key_stroke(raw_key, shift, effective_vi_mode, in_vi_cmd);
         let key = &normalized_key;
 
         // In vi mode (Normal or Visual), detect colon to enter command line
@@ -379,16 +396,22 @@ impl EditorView {
             if self.workspace.read(cx).vi_cmd.is_some() {
                 match key.as_str() {
                     "escape" => {
+                        self.preedit_text = None;
+                        self.preedit_range = None;
                         self.workspace.update(cx, |w, cx| {
                             w.vi_cmd = None;
+                            w.vi_cmd_preedit = None;
                             cx.notify();
                         });
                         return;
                     }
                     "enter" => {
+                        self.preedit_text = None;
+                        self.preedit_range = None;
                         let cmd_opt = self.workspace.read(cx).vi_cmd.clone();
                         self.workspace.update(cx, |w, cx| {
                             w.vi_cmd = None;
+                            w.vi_cmd_preedit = None;
                             cx.notify();
                         });
                         if let Some(cmd_raw) = cmd_opt {
@@ -397,9 +420,12 @@ impl EditorView {
                         return;
                     }
                     "backspace" => {
+                        self.preedit_text = None;
+                        self.preedit_range = None;
                         self.workspace.update(cx, |w, cx| {
+                            w.vi_cmd_preedit = None;
                             if let Some(cmd) = &mut w.vi_cmd {
-                                if cmd.len() > 1 {
+                                if cmd.chars().count() > 1 {
                                     cmd.pop();
                                 } else {
                                     w.vi_cmd = None;
@@ -412,16 +438,23 @@ impl EditorView {
                     _ => {
                         if !control && !cmd {
                             let char_to_add = if key.as_str() == "space" {
-                                " "
+                                " ".to_string()
                             } else if key.chars().count() == 1 {
-                                key.as_str()
+                                let norm = zee_core::normalize_vi_char(key.chars().next().unwrap());
+                                if shift && norm.is_ascii_lowercase() {
+                                    norm.to_ascii_uppercase().to_string()
+                                } else {
+                                    norm.to_string()
+                                }
                             } else {
-                                ""
+                                "".to_string()
                             };
                             if !char_to_add.is_empty() {
+                                self.ignore_next_text_input = true;
                                 self.workspace.update(cx, |w, cx| {
+                                    w.vi_cmd_preedit = None;
                                     if let Some(cmd) = &mut w.vi_cmd {
-                                        cmd.push_str(char_to_add);
+                                        cmd.push_str(&char_to_add);
                                     }
                                     cx.notify();
                                 });
@@ -2980,6 +3013,13 @@ impl EditorView {
 impl EntityInputHandler for EditorView {
     fn text_for_range(&mut self, range: std::ops::Range<usize>, _actual_range: &mut Option<std::ops::Range<usize>>, _window: &mut Window, cx: &mut Context<Self>) -> Option<String> {
         let workspace = self.workspace.read(cx);
+        if let Some(cmd) = &workspace.vi_cmd {
+            let u16_chars: Vec<u16> = cmd.encode_utf16().collect();
+            if range.start > u16_chars.len() || range.end > u16_chars.len() {
+                return None;
+            }
+            return String::from_utf16(&u16_chars[range.start..range.end]).ok();
+        }
         let editor = workspace.active_editor()?;
         let total_chars = editor.rope.len_chars();
         if range.start > total_chars || range.end > total_chars {
@@ -2990,8 +3030,17 @@ impl EntityInputHandler for EditorView {
 
     fn selected_text_range(&mut self, ignore_disabled_input: bool, _window: &mut Window, cx: &mut Context<Self>) -> Option<UTF16Selection> {
         let workspace = self.workspace.read(cx);
-        let editor = workspace.active_editor()?;
         let vi_mode_enabled = workspace.config.vi_mode;
+        let in_vi_cmd = vi_mode_enabled && workspace.vi_cmd.is_some();
+        if in_vi_cmd {
+            let cmd_len = workspace.vi_cmd.as_ref().map(|s| s.encode_utf16().count()).unwrap_or(0);
+            return Some(UTF16Selection {
+                range: cmd_len..cmd_len,
+                reversed: false,
+            });
+        }
+
+        let editor = workspace.active_editor()?;
         let is_insert = editor.vi_mode == zee_core::ViMode::Insert;
         let input_enabled = !vi_mode_enabled || is_insert || self.pending_r;
 
@@ -3013,12 +3062,19 @@ impl EntityInputHandler for EditorView {
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.preedit_text = None;
         self.preedit_range = None;
+        self.workspace.update(cx, |w, cx| {
+            w.vi_cmd_preedit = None;
+            cx.notify();
+        });
         cx.notify();
     }
 
     fn accepts_text_input(&self, _window: &mut Window, cx: &mut Context<Self>) -> bool {
         let workspace = self.workspace.read(cx);
         if !workspace.config.vi_mode {
+            return true;
+        }
+        if workspace.vi_cmd.is_some() {
             return true;
         }
         let is_insert = workspace.active_editor().map(|e| e.vi_mode == zee_core::ViMode::Insert).unwrap_or(true);
@@ -3032,9 +3088,24 @@ impl EntityInputHandler for EditorView {
         }
 
         let vi_mode_enabled = self.workspace.read(cx).config.vi_mode;
+        let in_vi_cmd = vi_mode_enabled && self.workspace.read(cx).vi_cmd.is_some();
         let is_normal_or_visual = self.workspace.read(cx).active_editor().map(|e| e.vi_mode != zee_core::ViMode::Insert).unwrap_or(false);
-        let in_vi_cmd = self.workspace.read(cx).vi_cmd.is_some();
-        if vi_mode_enabled && (is_normal_or_visual || in_vi_cmd) && !self.pending_r {
+
+        if in_vi_cmd {
+            self.workspace.update(cx, |w, cx| {
+                if let Some(cmd) = &mut w.vi_cmd {
+                    cmd.push_str(text);
+                }
+                w.vi_cmd_preedit = None;
+                cx.notify();
+            });
+            self.preedit_text = None;
+            self.preedit_range = None;
+            cx.notify();
+            return;
+        }
+
+        if vi_mode_enabled && is_normal_or_visual && !self.pending_r {
             self.preedit_text = None;
             self.preedit_range = None;
             cx.notify();
@@ -3075,9 +3146,27 @@ impl EntityInputHandler for EditorView {
         }
 
         let vi_mode_enabled = self.workspace.read(cx).config.vi_mode;
+        let in_vi_cmd = vi_mode_enabled && self.workspace.read(cx).vi_cmd.is_some();
         let is_normal_or_visual = self.workspace.read(cx).active_editor().map(|e| e.vi_mode != zee_core::ViMode::Insert).unwrap_or(false);
-        let in_vi_cmd = self.workspace.read(cx).vi_cmd.is_some();
-        if vi_mode_enabled && (is_normal_or_visual || in_vi_cmd) {
+
+        if in_vi_cmd {
+            if text.is_empty() {
+                self.unmark_text(_window, cx);
+                return;
+            }
+            let cmd_len = self.workspace.read(cx).vi_cmd.as_ref().map(|s| s.encode_utf16().count()).unwrap_or(0);
+            let text_u16_len = text.encode_utf16().count();
+            self.preedit_text = Some(text.to_string());
+            self.preedit_range = Some(cmd_len..cmd_len + text_u16_len);
+            self.workspace.update(cx, |w, cx| {
+                w.vi_cmd_preedit = Some(text.to_string());
+                cx.notify();
+            });
+            cx.notify();
+            return;
+        }
+
+        if vi_mode_enabled && is_normal_or_visual {
             self.preedit_text = None;
             self.preedit_range = None;
             cx.notify();
@@ -3103,6 +3192,33 @@ impl EntityInputHandler for EditorView {
 
     fn bounds_for_range(&mut self, range_utf16: std::ops::Range<usize>, bounds: Bounds<Pixels>, _window: &mut Window, cx: &mut Context<Self>) -> Option<Bounds<Pixels>> {
         let workspace = self.workspace.read(cx);
+        let vi_mode_enabled = workspace.config.vi_mode;
+        let in_vi_cmd = vi_mode_enabled && workspace.vi_cmd.is_some();
+
+        if in_vi_cmd {
+            use unicode_width::UnicodeWidthChar;
+            let window_left = if workspace.sidebar_visible && workspace.config.sidebar_position == "left" {
+                bounds.origin.x - px(240.0)
+            } else {
+                bounds.origin.x
+            };
+            let cmd_text = workspace.vi_cmd.as_deref().unwrap_or("");
+            let mono_char_width = 12.0 * 0.6; // approx 7.2px per ASCII char at text_size 12.0
+            let mut visual_cols = 0.0;
+            for c in cmd_text.chars() {
+                let w = UnicodeWidthChar::width(c).unwrap_or(1);
+                visual_cols += w as f32;
+            }
+            let cmd_x = window_left + px(12.0) + px(visual_cols * mono_char_width);
+            let cmd_y = bounds.bottom() + px(24.0);
+            let preedit_w = (range_utf16.end.saturating_sub(range_utf16.start)).max(1) as f32 * mono_char_width;
+
+            return Some(Bounds {
+                origin: Point::new(cmd_x, cmd_y),
+                size: Size::new(px(preedit_w), px(22.0)),
+            });
+        }
+
         let editor = workspace.active_editor()?;
         
         let line_height = px(workspace.config.line_height);

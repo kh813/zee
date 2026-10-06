@@ -1,5 +1,21 @@
 # zee Devlog
 
+## 2026-10-06
+
+### Vi Command Mode Japanese IME Inline Input & Robust Test Suite (GUI & CLI / TUI)
+- **Inline Japanese IME Support in Vi Command Line (`: %s/...`)**:
+  - Fixed an issue where Japanese text could not be typed inline in the vi command line (Ex commands like `:%s/日本語/Japanese/g`) and conversion candidate windows popped up outside the window on macOS and Windows.
+  - Enabled `accepts_text_input` in `EditorView::EntityInputHandler` during vi command mode (`workspace.vi_cmd.is_some()`), allowing macOS Cocoa and Windows IMM32/TSF to recognize active text input.
+  - Updated `replace_and_mark_text_in_range` and `replace_text_in_range` to route preedit text into `workspace.vi_cmd_preedit` and committed characters directly into `workspace.vi_cmd`.
+  - Added bottom status bar command row bounds calculation in `EditorView::bounds_for_range` so IME candidate popup windows anchor precisely beneath the command line cursor.
+  - Rendered inline preedit composition with underline highlight in `StatusBar` vi command bar.
+  - Added hardware cursor positioning in `zee-tui` when `is_vi_cmd_mode` is active so terminal IMEs position conversion popups at the command line.
+  - Fixed Backspace handling for multi-byte UTF-8 Japanese characters in both GUI and TUI vi command line.
+- **Comprehensive Vi Mode & Non-Vi Mode Editor Test Suite**:
+  - Added unit and integration tests covering Japanese substitution (`:%s/日本語/Japanese/g`) and full-width IME syntax tokens (`：％ｓ／日本語／Japanese／ｇ`).
+  - Added test coverage for `vi_cmd` and `vi_cmd_preedit` state transitions, multi-byte backspace, and terminal hardware cursor positioning.
+  - Added extensive tests for standard text editing (typing, navigation, deletion, clipboard, selection, menu toggles, and multi-tab cycling) with vi mode disabled to ensure zero regressions across all platforms.
+
 ## 2026-09-14
 
 ### GUI Font/Spacing Customization, Syntax Highlighting & Theme System Enhancement (GUI & CLI)

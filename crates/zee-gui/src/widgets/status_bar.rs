@@ -101,13 +101,20 @@ impl Render for StatusBar {
                     )
                     .children(if vi_mode_enabled {
                         let (badge_text, bg_color) = match editor.vi_mode {
-                            zee_core::ViMode::Insert => ("INSERT", gpui::rgb(0x2e7d32)),
+                            zee_core::ViMode::Insert => {
+                                if zee_core::is_cjk_ime_active() {
+                                    ("INSERT [あ]", gpui::rgb(0xe65100))
+                                } else {
+                                    ("INSERT", gpui::rgb(0x2e7d32))
+                                }
+                            }
                             zee_core::ViMode::Visual => ("VISUAL", gpui::rgb(0x7b1fa2)),
                             zee_core::ViMode::VisualLine => ("V-LINE", gpui::rgb(0x8e24aa)),
                             zee_core::ViMode::VisualBlock => ("V-BLOCK", gpui::rgb(0x6a1b9a)),
                             zee_core::ViMode::Normal => ("NORMAL", gpui::rgb(0x1565c0)),
                         };
                         Some(
+
                             div()
                                 .px_1p5()
                                 .py(px(1.0))
@@ -219,7 +226,13 @@ impl Render for StatusBar {
                 .child(msg.clone())
         } else {
             let hint = match editor.vi_mode {
-                zee_core::ViMode::Insert => "-- INSERT --",
+                zee_core::ViMode::Insert => {
+                    if zee_core::is_cjk_ime_active() {
+                        "-- INSERT [あ] --"
+                    } else {
+                        "-- INSERT --"
+                    }
+                }
                 zee_core::ViMode::Visual => "-- VISUAL --",
                 zee_core::ViMode::VisualLine => "-- VISUAL LINE --",
                 zee_core::ViMode::VisualBlock => "-- VISUAL BLOCK --",

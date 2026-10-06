@@ -3031,18 +3031,45 @@ impl EditorView {
                     .into_any_element(),
             )
         } else {
-            Some(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left(px(cursor_x))
-                    .w(px(2.0))
-                    .h(line_height)
-                    .bg(cursor_color)
-                    .into_any_element(),
-            )
+            let is_ime_active = zee_core::is_cjk_ime_active() || self.preedit_text.is_some();
+            if is_ime_active {
+                let line = editor.rope.line(line_idx);
+                let char_at_cursor = line.chars().nth(cursor_col);
+                use unicode_width::UnicodeWidthChar;
+                let cursor_w = match char_at_cursor {
+                    Some(c) if c.width() == Some(2) => self.cjk_width_px,
+                    _ => self.ascii_width_px,
+                };
+                let ime_cursor_color = gpui::rgb(0xffa726); // Vibrant amber/orange
+                let underscore_height = px(3.0);
+                let underscore_top = line_height - underscore_height;
+
+                Some(
+                    div()
+                        .absolute()
+                        .top(underscore_top)
+                        .left(px(cursor_x))
+                        .w(px(cursor_w))
+                        .h(underscore_height)
+                        .bg(ime_cursor_color)
+                        .rounded_xs()
+                        .into_any_element(),
+                )
+            } else {
+                Some(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(px(cursor_x))
+                        .w(px(2.0))
+                        .h(line_height)
+                        .bg(cursor_color)
+                        .into_any_element(),
+                )
+            }
         }
     }
+
 
     #[allow(clippy::too_many_arguments)]
     fn render_chunk_internal(

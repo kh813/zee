@@ -152,3 +152,7 @@ pub use buffer::{normalize_vi_char, normalize_vi_key};
 pub mod vi_cmd;
 pub use vi_cmd::{ExCommand, parse_ex_command};
 
+pub mod ime;
+pub use ime::is_cjk_ime_active;
+
+

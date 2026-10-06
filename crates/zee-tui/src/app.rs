@@ -696,7 +696,8 @@ impl App {
                 stdout,
                 LeaveAlternateScreen,
                 event::DisableMouseCapture,
-                cursor::Show
+                cursor::Show,
+                cursor::SetCursorStyle::DefaultUserShape
             );
             original_hook(panic_info);
         }));
@@ -711,7 +712,8 @@ impl App {
             stdout,
             LeaveAlternateScreen,
             event::DisableMouseCapture,
-            cursor::Show
+            cursor::Show,
+            cursor::SetCursorStyle::DefaultUserShape
         )?;
         Ok(())
     }
@@ -3551,6 +3553,20 @@ impl App {
                         let rx = ex + (visual_x - buffer.scroll_col) as u16;
                         let ry = ey + (line - buffer.scroll_row) as u16;
                         if ry < ey + eh {
+                            if self.config.vi_mode {
+                                let style = match buffer.vi_mode {
+                                    zee_core::ViMode::Normal => crossterm::cursor::SetCursorStyle::BlinkingBlock,
+                                    zee_core::ViMode::Insert => {
+                                        if zee_core::is_cjk_ime_active() {
+                                            crossterm::cursor::SetCursorStyle::BlinkingUnderScore
+                                        } else {
+                                            crossterm::cursor::SetCursorStyle::BlinkingBar
+                                        }
+                                    }
+                                    _ => crossterm::cursor::SetCursorStyle::BlinkingBlock,
+                                };
+                                execute!(stdout, style)?;
+                            }
                             execute!(stdout, cursor::Show, cursor::MoveTo(rx, ry))?;
                         } else {
                             execute!(stdout, cursor::Hide)?;
@@ -4560,7 +4576,13 @@ impl App {
         let vi_mode = if self.config.vi_mode {
             match buffer.vi_mode {
                 zee_core::ViMode::Normal => " NORMAL",
-                zee_core::ViMode::Insert => " INSERT",
+                zee_core::ViMode::Insert => {
+                    if zee_core::is_cjk_ime_active() {
+                        " INSERT [あ]"
+                    } else {
+                        " INSERT"
+                    }
+                }
                 zee_core::ViMode::Visual => " VISUAL",
                 zee_core::ViMode::VisualLine => " V-LINE",
                 zee_core::ViMode::VisualBlock => " V-BLOCK",
@@ -4641,7 +4663,13 @@ impl App {
             }
         } else if let Some(buf) = self.buffers.get(self.active_buffer) {
             let hint = match buf.vi_mode {
-                zee_core::ViMode::Insert => "-- INSERT --",
+                zee_core::ViMode::Insert => {
+                    if zee_core::is_cjk_ime_active() {
+                        "-- INSERT [あ] --"
+                    } else {
+                        "-- INSERT --"
+                    }
+                }
                 zee_core::ViMode::Visual => "-- VISUAL --",
                 zee_core::ViMode::VisualLine => "-- VISUAL LINE --",
                 zee_core::ViMode::VisualBlock => "-- VISUAL BLOCK --",

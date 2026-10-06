@@ -704,7 +704,7 @@ impl EditorView {
                 let target_ch = key.chars().next().unwrap();
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
-                        if let Some(pos) = editor.find_inline_char(editor.cursor, target_ch, forward, till) {
+                        if let Some(pos) = editor.find_and_record_inline_char(target_ch, forward, till) {
                             editor.cursor = pos;
                             editor.selection = None;
                             editor.selection_anchor = None;
@@ -783,9 +783,27 @@ impl EditorView {
                             let line_end = editor.line_col_to_char(line, editor.get_line_max_col(line));
                             Some(line_end)
                         }
-                        "0" | "^" => {
+                        "W" => {
+                            editor.move_bigword_forward(false);
+                            Some(editor.cursor)
+                        }
+                        "E" => {
+                            editor.move_bigword_end(false);
+                            Some((editor.cursor + 1).min(editor.rope.len_chars()))
+                        }
+                        "B" => {
+                            editor.move_bigword_backward(false);
+                            Some(editor.cursor)
+                        }
+                        "0" | "^" | "_" => {
                             let line = editor.rope.char_to_line(editor.cursor);
-                            let line_start = editor.rope.line_to_char(line);
+                            let line_start = if key == "0" {
+                                editor.rope.line_to_char(line)
+                            } else {
+                                let line_str = editor.rope.line(line).to_string();
+                                let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                                editor.line_col_to_char(line, indent)
+                            };
                             Some(line_start)
                         }
                         "h" => {
@@ -865,9 +883,27 @@ impl EditorView {
                             let line_end = editor.line_col_to_char(line, editor.get_line_max_col(line));
                             Some(line_end)
                         }
-                        "0" | "^" => {
+                        "W" => {
+                            editor.move_bigword_forward(false);
+                            Some(editor.cursor)
+                        }
+                        "E" => {
+                            editor.move_bigword_end(false);
+                            Some((editor.cursor + 1).min(editor.rope.len_chars()))
+                        }
+                        "B" => {
+                            editor.move_bigword_backward(false);
+                            Some(editor.cursor)
+                        }
+                        "0" | "^" | "_" => {
                             let line = editor.rope.char_to_line(editor.cursor);
-                            let line_start = editor.rope.line_to_char(line);
+                            let line_start = if key == "0" {
+                                editor.rope.line_to_char(line)
+                            } else {
+                                let line_str = editor.rope.line(line).to_string();
+                                let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                                editor.line_col_to_char(line, indent)
+                            };
                             Some(line_start)
                         }
                         _ => {
@@ -946,9 +982,33 @@ impl EditorView {
                             let line_end = editor.line_col_to_char(line, editor.get_line_max_col(line));
                             Some(line_end)
                         }
-                        "0" | "^" => {
+                        "W" => {
+                            editor.move_bigword_forward(false);
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "E" => {
+                            editor.move_bigword_end(false);
+                            let pos = (editor.cursor + 1).min(editor.rope.len_chars());
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "B" => {
+                            editor.move_bigword_backward(false);
+                            let pos = editor.cursor;
+                            editor.cursor = start_pos;
+                            Some(pos)
+                        }
+                        "0" | "^" | "_" => {
                             let line = editor.rope.char_to_line(editor.cursor);
-                            let line_start = editor.rope.line_to_char(line);
+                            let line_start = if key == "0" {
+                                editor.rope.line_to_char(line)
+                            } else {
+                                let line_str = editor.rope.line(line).to_string();
+                                let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                                editor.line_col_to_char(line, indent)
+                            };
                             Some(line_start)
                         }
                         _ => {
@@ -1165,6 +1225,78 @@ impl EditorView {
                     if let Some(editor) = w.active_editor_mut() {
                         let (line, _) = editor.char_to_line_col(editor.cursor);
                         editor.cursor = editor.line_col_to_char(line, editor.get_line_max_col(line));
+                    }
+                    cx.notify();
+                });
+            }
+            "W" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_bigword_forward(false);
+                    }
+                    cx.notify();
+                });
+            }
+            "B" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_bigword_backward(false);
+                    }
+                    cx.notify();
+                });
+            }
+            "E" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_bigword_end(false);
+                    }
+                    cx.notify();
+                });
+            }
+            "_" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_first_non_blank(false);
+                    }
+                    cx.notify();
+                });
+            }
+            "+" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_next_line_non_blank(false);
+                    }
+                    cx.notify();
+                });
+            }
+            "-" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_prev_line_non_blank(false);
+                    }
+                    cx.notify();
+                });
+            }
+            ";" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(pos) = editor.repeat_inline_find(false) {
+                            editor.cursor = pos;
+                            editor.selection = None;
+                            editor.selection_anchor = None;
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "," => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(pos) = editor.repeat_inline_find(true) {
+                            editor.cursor = pos;
+                            editor.selection = None;
+                            editor.selection_anchor = None;
+                        }
                     }
                     cx.notify();
                 });
@@ -1757,6 +1889,76 @@ impl EditorView {
                 self.workspace.update(cx, |w, cx| {
                     if let Some(editor) = w.active_editor_mut() {
                         editor.move_cursor_end(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "W" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_bigword_forward(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "B" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_bigword_backward(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "E" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_bigword_end(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "_" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_first_non_blank(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "+" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_next_line_non_blank(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "-" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_to_prev_line_non_blank(true);
+                    }
+                    cx.notify();
+                });
+            }
+            ";" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(pos) = editor.repeat_inline_find(false) {
+                            editor.cursor = pos;
+                            editor.update_selection();
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "," => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        if let Some(pos) = editor.repeat_inline_find(true) {
+                            editor.cursor = pos;
+                            editor.update_selection();
+                        }
                     }
                     cx.notify();
                 });

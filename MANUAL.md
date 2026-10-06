@@ -276,8 +276,8 @@ Press `:` in Normal or Visual mode (or `Shift+;` on US keyboards / full-width `Ô
 | `Esc` | Cancel command line | Clears pending command without executing |
 
 #### Normal Mode
-- **Motions**: `h` / `j` / `k` / `l` (left/down/up/right), `w` / `b` / `e` (word forward/backward/end), `0` / `^` (line start/first non-blank), `$` (line end), `gg` / `G` (document start/end).
-- **Inline Character Search**: `f<char>` (forward find), `F<char>` (backward find), `t<char>` (until char forward), `T<char>` (until char backward), `;` (repeat last inline find).
+- **Motions**: `h` / `j` / `k` / `l` (left/down/up/right), `w` / `b` / `e` (word forward/backward/end), `W` / `B` / `E` (whitespace-delimited WORD motions), `0` / `^` / `_` (line start/first non-blank), `+` / `-` (next/previous line first non-blank), `$` (line end), `gg` / `G` (document start/end), `Ctrl+D` / `Ctrl+U` (half-page down/up), `Ctrl+F` / `Ctrl+B` (page down/up).
+- **Inline Character Search**: `f<char>` (forward find), `F<char>` (backward find), `t<char>` (until char forward), `T<char>` (until char backward), `;` (repeat last inline find in same direction), `,` (repeat last inline find in reverse direction).
 - **Indentation**: `>>` (indent line), `<<` (unindent line).
 - **Bracket Matching**: `%` (jump to matching bracket `()`, `{}`, `[]`).
 - **Mode Switching**: 
@@ -286,11 +286,11 @@ Press `:` in Normal or Visual mode (or `Shift+;` on US keyboards / full-width `Ô
   - `Esc` (clear selection/pending operator).
 - **Operators & Deletion**:
   - `x` (delete character), `r<char>` (replace character with `<char>`), `~` (toggle case at cursor).
-  - `dw` (delete word), `de` (delete to word end), `db` (delete to word start), `d$` / `D` (delete to line end), `d0` / `d^` (delete to line start), `dd` (delete line).
+  - `dw` / `dW` (delete word/WORD), `de` / `dE` (delete to word/WORD end), `db` / `dB` (delete to word/WORD start), `d$` / `D` (delete to line end), `d0` / `d^` / `d_` (delete to line start), `dd` (delete line).
 - **Change**:
-  - `cw` / `ce` / `cb` / `c$` / `c0` / `c^` (change motion to Insert mode), `C` (change to line end), `cc` / `S` (change whole line), `s` (substitute character).
+  - `cw` / `cW` / `ce` / `cE` / `cb` / `cB` / `c$` / `c0` / `c^` / `c_` (change motion to Insert mode), `C` (change to line end), `cc` / `S` (change whole line), `s` (substitute character).
 - **Yank & Put (Clipboard)**:
-  - `yw` / `ye` / `yb` / `y$` / `y0` / `y^` (yank motion), `yy` / `Y` (yank whole line).
+  - `yw` / `yW` / `ye` / `yE` / `yb` / `yB` / `y$` / `y0` / `y^` / `y_` (yank motion), `yy` / `Y` (yank whole line).
   - `p` (paste after cursor / below line), `P` (paste before cursor / above line).
 - **Other**: `u` (undo), `J` (join next line).
 - **IME Transparency**: Japanese IME keystrokes are automatically normalized in Normal mode (e.g., `„Å£` triggers `dd`, `„ÅÑ` triggers `i`, full-width numbers/symbols trigger motions).

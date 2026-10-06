@@ -42,6 +42,7 @@ pub struct Editor {
     pub syntax_highlighter: Option<crate::syntax::SyntaxHighlighter>,
     pub line_states: Vec<crate::syntax::LineState>,
     pub line_tokens: Vec<Option<Vec<crate::syntax::TokenSpan>>>,
+    pub last_inline_find: Option<(char, bool, bool)>,
 }
 
 impl Default for Editor {
@@ -75,6 +76,7 @@ impl Editor {
             syntax_highlighter: None,
             line_states: vec![crate::syntax::LineState::Normal],
             line_tokens: vec![None],
+            last_inline_find: None,
         }
     }
 
@@ -122,6 +124,7 @@ impl Editor {
             syntax_highlighter: None,
             line_states: vec![crate::syntax::LineState::Normal; line_count],
             line_tokens: vec![None; line_count],
+            last_inline_find: None,
         };
 
         let first_line = if editor.rope.len_lines() > 0 {
@@ -1144,6 +1147,102 @@ impl Editor {
         if extend_selection { self.update_selection(); }
     }
 
+    pub fn move_bigword_forward(&mut self, extend_selection: bool) {
+        if extend_selection { self.ensure_selection(); } else { self.selection = None; }
+        let mut pos = self.cursor;
+        let len = self.rope.len_chars();
+        if pos >= len { return; }
+
+        while pos < len && !self.rope.char(pos).is_whitespace() { pos += 1; }
+        while pos < len && self.rope.char(pos).is_whitespace() { pos += 1; }
+
+        self.cursor = pos;
+        if extend_selection { self.update_selection(); }
+    }
+
+    pub fn move_bigword_backward(&mut self, extend_selection: bool) {
+        if extend_selection { self.ensure_selection(); } else { self.selection = None; }
+        let mut pos = self.cursor;
+        if pos == 0 { return; }
+
+        while pos > 0 && self.rope.char(pos - 1).is_whitespace() { pos -= 1; }
+        while pos > 0 && !self.rope.char(pos - 1).is_whitespace() { pos -= 1; }
+
+        self.cursor = pos;
+        if extend_selection { self.update_selection(); }
+    }
+
+    pub fn move_bigword_end(&mut self, extend_selection: bool) {
+        if extend_selection { self.ensure_selection(); } else { self.selection = None; }
+        let mut pos = self.cursor;
+        let len = self.rope.len_chars();
+        if pos >= len.saturating_sub(1) { return; }
+
+        pos += 1;
+        while pos < len && self.rope.char(pos).is_whitespace() { pos += 1; }
+        while pos < len - 1 && !self.rope.char(pos + 1).is_whitespace() { pos += 1; }
+
+        self.cursor = pos;
+        if extend_selection { self.update_selection(); }
+    }
+
+    pub fn move_to_first_non_blank(&mut self, extend_selection: bool) {
+        if self.rope.len_chars() == 0 { return; }
+        let line = self.rope.char_to_line(self.cursor);
+        let line_str = self.rope.line(line).to_string();
+        let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+        let target = self.line_col_to_char(line, indent);
+        if extend_selection {
+            self.ensure_selection();
+            self.cursor = target;
+            self.update_selection();
+        } else {
+            self.cursor = target;
+            self.selection = None;
+            self.selection_anchor = None;
+        }
+    }
+
+    pub fn move_to_next_line_non_blank(&mut self, extend_selection: bool) {
+        if self.rope.len_chars() == 0 { return; }
+        let line = self.rope.char_to_line(self.cursor);
+        if line + 1 < self.line_count() {
+            let next_line = line + 1;
+            let line_str = self.rope.line(next_line).to_string();
+            let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+            let target = self.line_col_to_char(next_line, indent);
+            if extend_selection {
+                self.ensure_selection();
+                self.cursor = target;
+                self.update_selection();
+            } else {
+                self.cursor = target;
+                self.selection = None;
+                self.selection_anchor = None;
+            }
+        }
+    }
+
+    pub fn move_to_prev_line_non_blank(&mut self, extend_selection: bool) {
+        if self.rope.len_chars() == 0 { return; }
+        let line = self.rope.char_to_line(self.cursor);
+        if line > 0 {
+            let prev_line = line - 1;
+            let line_str = self.rope.line(prev_line).to_string();
+            let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+            let target = self.line_col_to_char(prev_line, indent);
+            if extend_selection {
+                self.ensure_selection();
+                self.cursor = target;
+                self.update_selection();
+            } else {
+                self.cursor = target;
+                self.selection = None;
+                self.selection_anchor = None;
+            }
+        }
+    }
+
     pub fn ensure_selection(&mut self) {
         if self.selection_anchor.is_none() {
             self.selection_anchor = Some(self.cursor);
@@ -1868,6 +1967,20 @@ impl Editor {
             }
         }
         None
+    }
+
+    pub fn find_and_record_inline_char(&mut self, ch: char, forward: bool, till: bool) -> Option<usize> {
+        self.last_inline_find = Some((ch, forward, till));
+        self.find_inline_char(self.cursor, ch, forward, till)
+    }
+
+    pub fn repeat_inline_find(&mut self, reverse: bool) -> Option<usize> {
+        if let Some((ch, forward, till)) = self.last_inline_find {
+            let actual_forward = if reverse { !forward } else { forward };
+            self.find_inline_char(self.cursor, ch, actual_forward, till)
+        } else {
+            None
+        }
     }
 }
 
@@ -2905,6 +3018,57 @@ mod tests {
         editor4.insert(0, "abc");
         editor4.cleanup_on_save(false, true);
         assert_eq!(editor4.rope.to_string(), "abc\n");
+    }
+
+    #[test]
+    fn test_posix_vi_motions_and_inline_find_repeat() {
+        let mut editor = Editor::new();
+        editor.insert(0, "  first line with foo bar foo\n    second line\n\tthird line");
+
+        // Test move_to_first_non_blank
+        editor.cursor = 0;
+        editor.move_to_first_non_blank(false);
+        assert_eq!(editor.cursor, 2); // 'f'
+
+        // Test move_to_next_line_non_blank
+        editor.move_to_next_line_non_blank(false);
+        assert_eq!(editor.cursor, 34); // 's' of "second" (offset 30 + 4)
+
+        // Test move_to_prev_line_non_blank
+        editor.move_to_prev_line_non_blank(false);
+        assert_eq!(editor.cursor, 2);
+
+        // Test find_and_record_inline_char & repeat_inline_find
+        let pos1 = editor.find_and_record_inline_char('o', true, false);
+        assert_eq!(pos1, Some(19)); // first 'o' in first "foo"
+        editor.cursor = pos1.unwrap();
+
+        // Repeat with ';' (same direction)
+        let pos2 = editor.repeat_inline_find(false);
+        assert_eq!(pos2, Some(20)); // second 'o' in first "foo"
+        editor.cursor = pos2.unwrap();
+
+        let pos3 = editor.repeat_inline_find(false);
+        assert_eq!(pos3, Some(27)); // first 'o' in second "foo"
+        editor.cursor = pos3.unwrap();
+
+        // Repeat with ',' (reverse direction)
+        let pos4 = editor.repeat_inline_find(true);
+        assert_eq!(pos4, Some(20));
+
+        // Test bigword motions
+        let mut ed = Editor::new();
+        ed.insert(0, "foo.bar(baz)  QUX_123=val;  end");
+        ed.cursor = 0;
+
+        ed.move_bigword_forward(false);
+        assert_eq!(ed.cursor, 14); // 'Q'
+
+        ed.move_bigword_end(false);
+        assert_eq!(ed.cursor, 25); // ';'
+
+        ed.move_bigword_backward(false);
+        assert_eq!(ed.cursor, 14); // 'Q'
     }
 }
 

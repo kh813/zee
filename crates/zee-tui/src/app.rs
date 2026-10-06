@@ -81,6 +81,10 @@ pub struct App {
     pub pending_y: bool,
     pub pending_c: bool,
     pub pending_r: bool,
+    pub pending_f: bool,
+    pub pending_capital_f: bool,
+    pub pending_t: bool,
+    pub pending_capital_t: bool,
 }
 
 impl App {
@@ -215,6 +219,10 @@ impl App {
             pending_y: false,
             pending_c: false,
             pending_r: false,
+            pending_f: false,
+            pending_capital_f: false,
+            pending_t: false,
+            pending_capital_t: false,
         };
 
         app.update_active_outline();
@@ -994,6 +1002,27 @@ impl App {
             return;
         }
 
+        if self.pending_f || self.pending_capital_f || self.pending_t || self.pending_capital_t {
+            let forward = self.pending_f || self.pending_t;
+            let till = self.pending_t || self.pending_capital_t;
+            self.pending_f = false;
+            self.pending_capital_f = false;
+            self.pending_t = false;
+            self.pending_capital_t = false;
+
+            if let KeyCode::Char(c) = code {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(pos) = buffer.find_and_record_inline_char(c, forward, till) {
+                        buffer.cursor = pos;
+                        buffer.selection = None;
+                        buffer.selection_anchor = None;
+                    }
+                }
+            }
+            self.ensure_cursor_visible();
+            return;
+        }
+
         if self.pending_d {
             let mut handled = true;
             if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -1028,9 +1057,27 @@ impl App {
                         let line_end = buffer.line_col_to_char(line, buffer.get_line_max_col(line));
                         Some(line_end)
                     }
-                    KeyCode::Char('0') | KeyCode::Char('^') => {
+                    KeyCode::Char('W') => {
+                        buffer.move_bigword_forward(false);
+                        Some(buffer.cursor)
+                    }
+                    KeyCode::Char('E') => {
+                        buffer.move_bigword_end(false);
+                        Some((buffer.cursor + 1).min(buffer.rope.len_chars()))
+                    }
+                    KeyCode::Char('B') => {
+                        buffer.move_bigword_backward(false);
+                        Some(buffer.cursor)
+                    }
+                    KeyCode::Char('0') | KeyCode::Char('^') | KeyCode::Char('_') => {
                         let line = buffer.rope.char_to_line(buffer.cursor);
-                        let line_start = buffer.rope.line_to_char(line);
+                        let line_start = if matches!(code, KeyCode::Char('0')) {
+                            buffer.rope.line_to_char(line)
+                        } else {
+                            let line_str = buffer.rope.line(line).to_string();
+                            let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                            buffer.line_col_to_char(line, indent)
+                        };
                         Some(line_start)
                     }
                     KeyCode::Char('h') => Some(buffer.cursor.saturating_sub(1)),
@@ -1100,9 +1147,27 @@ impl App {
                         let line_end = buffer.line_col_to_char(line, buffer.get_line_max_col(line));
                         Some(line_end)
                     }
-                    KeyCode::Char('0') | KeyCode::Char('^') => {
+                    KeyCode::Char('W') => {
+                        buffer.move_bigword_forward(false);
+                        Some(buffer.cursor)
+                    }
+                    KeyCode::Char('E') => {
+                        buffer.move_bigword_end(false);
+                        Some((buffer.cursor + 1).min(buffer.rope.len_chars()))
+                    }
+                    KeyCode::Char('B') => {
+                        buffer.move_bigword_backward(false);
+                        Some(buffer.cursor)
+                    }
+                    KeyCode::Char('0') | KeyCode::Char('^') | KeyCode::Char('_') => {
                         let line = buffer.rope.char_to_line(buffer.cursor);
-                        let line_start = buffer.rope.line_to_char(line);
+                        let line_start = if matches!(code, KeyCode::Char('0')) {
+                            buffer.rope.line_to_char(line)
+                        } else {
+                            let line_str = buffer.rope.line(line).to_string();
+                            let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                            buffer.line_col_to_char(line, indent)
+                        };
                         Some(line_start)
                     }
                     _ => {
@@ -1174,9 +1239,33 @@ impl App {
                         let line_end = buffer.line_col_to_char(line, buffer.get_line_max_col(line));
                         Some(line_end)
                     }
-                    KeyCode::Char('0') | KeyCode::Char('^') => {
+                    KeyCode::Char('W') => {
+                        buffer.move_bigword_forward(false);
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('E') => {
+                        buffer.move_bigword_end(false);
+                        let pos = (buffer.cursor + 1).min(buffer.rope.len_chars());
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('B') => {
+                        buffer.move_bigword_backward(false);
+                        let pos = buffer.cursor;
+                        buffer.cursor = start_pos;
+                        Some(pos)
+                    }
+                    KeyCode::Char('0') | KeyCode::Char('^') | KeyCode::Char('_') => {
                         let line = buffer.rope.char_to_line(buffer.cursor);
-                        let line_start = buffer.rope.line_to_char(line);
+                        let line_start = if matches!(code, KeyCode::Char('0')) {
+                            buffer.rope.line_to_char(line)
+                        } else {
+                            let line_str = buffer.rope.line(line).to_string();
+                            let indent = line_str.chars().take_while(|c| c.is_whitespace() && *c != '\n' && *c != '\r').count();
+                            buffer.line_col_to_char(line, indent)
+                        };
                         Some(line_start)
                     }
                     _ => {
@@ -1317,6 +1406,70 @@ impl App {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     let (line, _) = buffer.char_to_line_col(buffer.cursor);
                     buffer.cursor = buffer.line_col_to_char(line, buffer.get_line_max_col(line));
+                }
+            }
+            KeyCode::Char('W') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_bigword_forward(false);
+                }
+            }
+            KeyCode::Char('B') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_bigword_backward(false);
+                }
+            }
+            KeyCode::Char('E') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_bigword_end(false);
+                }
+            }
+            KeyCode::Char('_') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_first_non_blank(false);
+                }
+            }
+            KeyCode::Char('+') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_next_line_non_blank(false);
+                }
+            }
+            KeyCode::Char('-') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_prev_line_non_blank(false);
+                }
+            }
+            KeyCode::Char('f') => {
+                self.pending_f = true;
+                return;
+            }
+            KeyCode::Char('F') => {
+                self.pending_capital_f = true;
+                return;
+            }
+            KeyCode::Char('t') => {
+                self.pending_t = true;
+                return;
+            }
+            KeyCode::Char('T') => {
+                self.pending_capital_t = true;
+                return;
+            }
+            KeyCode::Char(';') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(pos) = buffer.repeat_inline_find(false) {
+                        buffer.cursor = pos;
+                        buffer.selection = None;
+                        buffer.selection_anchor = None;
+                    }
+                }
+            }
+            KeyCode::Char(',') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(pos) = buffer.repeat_inline_find(true) {
+                        buffer.cursor = pos;
+                        buffer.selection = None;
+                        buffer.selection_anchor = None;
+                    }
                 }
             }
             KeyCode::Char('u') => self.perform_action(Action::Undo),
@@ -1536,6 +1689,10 @@ impl App {
                 self.pending_c = false;
                 self.pending_g = false;
                 self.pending_r = false;
+                self.pending_f = false;
+                self.pending_capital_f = false;
+                self.pending_t = false;
+                self.pending_capital_t = false;
             }
             KeyCode::Enter => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -1556,6 +1713,10 @@ impl App {
                 self.pending_c = false;
                 self.pending_g = false;
                 self.pending_r = false;
+                self.pending_f = false;
+                self.pending_capital_f = false;
+                self.pending_t = false;
+                self.pending_capital_t = false;
                 // Allow arrows and some other keys even in normal mode
                 match code {
                     KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down |
@@ -1655,6 +1816,52 @@ impl App {
             KeyCode::Char('$') => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     buffer.move_cursor_end(true);
+                }
+            }
+            KeyCode::Char('W') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_bigword_forward(true);
+                }
+            }
+            KeyCode::Char('B') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_bigword_backward(true);
+                }
+            }
+            KeyCode::Char('E') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_bigword_end(true);
+                }
+            }
+            KeyCode::Char('_') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_first_non_blank(true);
+                }
+            }
+            KeyCode::Char('+') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_next_line_non_blank(true);
+                }
+            }
+            KeyCode::Char('-') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_to_prev_line_non_blank(true);
+                }
+            }
+            KeyCode::Char(';') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(pos) = buffer.repeat_inline_find(false) {
+                        buffer.cursor = pos;
+                        buffer.update_selection();
+                    }
+                }
+            }
+            KeyCode::Char(',') => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(pos) = buffer.repeat_inline_find(true) {
+                        buffer.cursor = pos;
+                        buffer.update_selection();
+                    }
                 }
             }
             KeyCode::Char('d') | KeyCode::Char('x') => {

@@ -22,6 +22,12 @@ pub struct Config {
     pub line_height: f32,
     pub ui_font_family: Option<String>,
     pub ui_font_size: f32,
+    #[serde(default = "default_plugin_registries")]
+    pub plugin_registries: Vec<String>,
+}
+
+pub fn default_plugin_registries() -> Vec<String> {
+    vec!["https://github.com/kh813/zee-plugins".to_string()]
 }
 
 impl Default for Config {
@@ -43,6 +49,7 @@ impl Default for Config {
             line_height: 19.0,
             ui_font_family: None,
             ui_font_size: 12.5,
+            plugin_registries: default_plugin_registries(),
         }
     }
 }
@@ -107,6 +114,22 @@ impl Config {
                             config.ui_font_size = f as f32;
                         } else if let Some(i) = v.as_integer() {
                             config.ui_font_size = i as f32;
+                        }
+                    }
+                    "plugin_registries" => {
+                        if let Some(arr) = v.as_array() {
+                            let mut list = Vec::new();
+                            for item in arr {
+                                if let Some(s) = item.as_str() {
+                                    let s_trim = s.trim().to_string();
+                                    if !s_trim.is_empty() {
+                                        list.push(s_trim);
+                                    }
+                                }
+                            }
+                            if !list.is_empty() {
+                                config.plugin_registries = list;
+                            }
                         }
                     }
                     _ => {}
@@ -182,6 +205,35 @@ impl Config {
 
         fs::write(&path, lines.join("\n")).context("Failed to write config file")?;
         Ok(())
+    }
+
+    pub fn save_plugin_registries(registries: &[String]) -> Result<()> {
+        let items: Vec<String> = registries.iter().map(|s| format!("\"{}\"", s)).collect();
+        let val = format!("[{}]", items.join(", "));
+        Self::write_key("plugin_registries", &val)
+    }
+
+    pub fn add_plugin_registry(&mut self, url: &str) -> Result<()> {
+        let trimmed = url.trim().to_string();
+        if !trimmed.is_empty() && !self.plugin_registries.iter().any(|r| r.trim() == trimmed) {
+            self.plugin_registries.push(trimmed);
+            let _ = Self::save_plugin_registries(&self.plugin_registries);
+        }
+        Ok(())
+    }
+
+    pub fn remove_plugin_registry(&mut self, url: &str) -> Result<bool> {
+        let trimmed = url.trim();
+        let initial_len = self.plugin_registries.len();
+        self.plugin_registries.retain(|r| {
+            let r_trim = r.trim();
+            r_trim != trimmed && !r_trim.contains(trimmed)
+        });
+        let removed = self.plugin_registries.len() < initial_len;
+        if removed {
+            let _ = Self::save_plugin_registries(&self.plugin_registries);
+        }
+        Ok(removed)
     }
 }
 
@@ -478,5 +530,33 @@ mod tests {
         assert!(dst_config_dir.join("syntax").join("custom.syntax").exists());
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_config_plugin_registries() {
+        let toml_content = r#"
+theme = "nord"
+plugin_registries = [
+    "https://github.com/kh813/zee-plugins",
+    "https://github.com/other-user/zee-plugins"
+]
+"#;
+        let raw = toml_span::parse(toml_content).unwrap();
+        let mut config = Config::deserialize_from_value(&raw).unwrap();
+        assert_eq!(config.plugin_registries.len(), 2);
+        assert_eq!(config.plugin_registries[0], "https://github.com/kh813/zee-plugins");
+        assert_eq!(config.plugin_registries[1], "https://github.com/other-user/zee-plugins");
+
+        // Add registry
+        let _ = config.add_plugin_registry("https://github.com/third-user/plugins");
+        assert_eq!(config.plugin_registries.len(), 3);
+        // Duplicate should not be added
+        let _ = config.add_plugin_registry("https://github.com/third-user/plugins");
+        assert_eq!(config.plugin_registries.len(), 3);
+
+        // Remove registry
+        let removed = config.remove_plugin_registry("third-user").unwrap();
+        assert!(removed);
+        assert_eq!(config.plugin_registries.len(), 2);
     }
 }

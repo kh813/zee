@@ -65,6 +65,8 @@ pub struct Dialog {
     registry_plugins: Option<Vec<zee_core::plugin::RegistryPlugin>>,
     registry_loading: bool,
     registry_error: Option<String>,
+    plugin_show_add_repo: bool,
+    plugin_new_repo_url: String,
 }
 
 #[derive(Clone)]
@@ -117,6 +119,8 @@ impl Dialog {
             registry_plugins: None,
             registry_loading: false,
             registry_error: None,
+            plugin_show_add_repo: false,
+            plugin_new_repo_url: String::new(),
         };
         this.refresh_files();
         if is_update {
@@ -248,18 +252,19 @@ impl Dialog {
         self.registry_error = None;
         cx.notify();
 
+        let sources = self.workspace.read(cx).config.plugin_registries.clone();
         cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
-                let res = std::thread::spawn(|| {
-                    zee_core::plugin::PluginManager::fetch_registry(None)
+                let res = std::thread::spawn(move || {
+                    zee_core::plugin::PluginManager::fetch_registries(&sources)
                 }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Registry fetch thread panicked")));
 
                 let _ = this.update(&mut cx.clone(), |this, cx| {
                     this.registry_loading = false;
                     match res {
-                        Ok(index) => {
-                            this.registry_plugins = Some(index.plugins);
+                        Ok(plugins) => {
+                            this.registry_plugins = Some(plugins);
                         }
                         Err(e) => {
                             this.registry_error = Some(e.to_string());
@@ -277,12 +282,13 @@ impl Dialog {
         cx.notify();
 
         let workspace = self.workspace.clone();
+        let sources = self.workspace.read(cx).config.plugin_registries.clone();
         cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
                 let id_clone = plugin_id.clone();
                 let res = std::thread::spawn(move || {
-                    zee_core::plugin::PluginManager::install_from_registry(&id_clone, None)
+                    zee_core::plugin::PluginManager::install_from_registry(&id_clone, None, Some(&sources))
                 }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Plugin install thread panicked")));
 
                 let _ = this.update(&mut cx.clone(), |this, cx| {
@@ -373,8 +379,19 @@ impl Dialog {
                         self.selected_idx = (self.selected_idx + 1).min(self.files.len() - 1);
                         self.input_text = self.files[self.selected_idx].name.clone();
                     }
+            "v" if event.keystroke.modifiers.platform || event.keystroke.modifiers.control => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
+                        self.plugin_new_repo_url.push_str(text.trim());
+                    } else {
+                        self.input_text.push_str(text.trim());
+                    }
+                }
+            }
             "backspace" => {
-                if matches!(self.dialog_type, DialogType::OpenFile | DialogType::SaveAs) && event.keystroke.modifiers.platform {
+                if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
+                    self.plugin_new_repo_url.pop();
+                } else if matches!(self.dialog_type, DialogType::OpenFile | DialogType::SaveAs) && event.keystroke.modifiers.platform {
                     if let Some(parent) = self.current_dir.parent() {
                         self.current_dir = parent.to_path_buf();
                         self.refresh_files();
@@ -384,7 +401,16 @@ impl Dialog {
                 }
             }
             "enter" => {
-                if let DialogType::UnsavedChanges { intent, .. } = &self.dialog_type {
+                if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
+                    let url = std::mem::take(&mut self.plugin_new_repo_url);
+                    self.plugin_show_add_repo = false;
+                    if !url.trim().is_empty() {
+                        self.workspace.update(cx, |w, _| {
+                            let _ = w.config.add_plugin_registry(&url);
+                        });
+                        self.fetch_online_plugins(cx);
+                    }
+                } else if let DialogType::UnsavedChanges { intent, .. } = &self.dialog_type {
                     match self.button_idx {
                         0 => {
                             cx.emit(DialogEvent::Save(*intent));
@@ -401,14 +427,21 @@ impl Dialog {
                 }
             }
             "escape" => {
-                if self.settings_dropdown.is_some() {
+                if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
+                    self.plugin_show_add_repo = false;
+                    self.plugin_new_repo_url.clear();
+                } else if self.settings_dropdown.is_some() {
                     self.settings_dropdown = None;
                 } else {
                     self.close(cx);
                 }
             }
-            k if k.len() == 1 => {
-                self.input_text.push_str(k);
+            k if k.len() == 1 && !event.keystroke.modifiers.platform && !event.keystroke.modifiers.control => {
+                if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
+                    self.plugin_new_repo_url.push_str(k);
+                } else {
+                    self.input_text.push_str(k);
+                }
             }
             _ => {}
         }
@@ -2248,6 +2281,7 @@ impl Dialog {
             }
             DialogType::PluginManager => {
                 let plugins = workspace.plugin_manager.all_manifests();
+                let configured_repos = workspace.config.plugin_registries.clone();
                 let accent = led_color_to_gpui(theme.syntax.keyword.unwrap_or(theme.ui.menu_item_active_fg));
                 let chip_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
                 let chip_border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
@@ -2563,39 +2597,204 @@ impl Dialog {
                         div()
                             .flex()
                             .flex_col()
-                            .gap_3()
+                            .gap_2p5()
                             .child(
+                                // Repositories bar
                                 div()
                                     .flex()
-                                    .items_center()
-                                    .justify_between()
+                                    .flex_col()
+                                    .gap_1p5()
                                     .child(
                                         div()
-                                            .text_size(px(12.0))
-                                            .text_color(with_alpha(fg, 0.6))
-                                            .child(if is_loading {
-                                                self.i18n.get("dialog.plugin.loading").to_string()
-                                            } else {
-                                                "https://github.com/kh813/zee-plugins".to_string()
-                                            })
-                                    )
-                                    .child(
-                                        div()
-                                            .h(px(26.0))
-                                            .px_2p5()
                                             .flex()
                                             .items_center()
-                                            .justify_center()
-                                            .rounded_md()
-                                            .bg(button_bg)
-                                            .text_size(px(11.5))
-                                            .cursor_pointer()
-                                            .hover(move |s| s.bg(button_hover))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                                this.fetch_online_plugins(cx);
-                                            }))
-                                            .child("↻ Refresh")
+                                            .justify_between()
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.0))
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .text_color(with_alpha(fg, 0.75))
+                                                    .child(self.i18n.get("dialog.plugin.repositories").to_string())
+                                            )
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .h(px(24.0))
+                                                            .px_2()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .rounded_sm()
+                                                            .bg(if self.plugin_show_add_repo { accent } else { button_bg })
+                                                            .text_color(if self.plugin_show_add_repo { gpui::rgb(0xffffff) } else { fg })
+                                                            .text_size(px(11.0))
+                                                            .font_weight(FontWeight::MEDIUM)
+                                                            .cursor_pointer()
+                                                            .hover(move |s| s.opacity(0.85))
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                                this.plugin_show_add_repo = !this.plugin_show_add_repo;
+                                                                if !this.plugin_show_add_repo {
+                                                                    this.plugin_new_repo_url.clear();
+                                                                }
+                                                                cx.notify();
+                                                            }))
+                                                            .child(self.i18n.get("dialog.plugin.add_repo_btn").to_string())
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .h(px(24.0))
+                                                            .px_2()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .rounded_sm()
+                                                            .bg(button_bg)
+                                                            .text_size(px(11.0))
+                                                            .cursor_pointer()
+                                                            .hover(move |s| s.bg(button_hover))
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                                this.fetch_online_plugins(cx);
+                                                            }))
+                                                            .child("↻ Refresh")
+                                                    )
+                                            )
                                     )
+                                    .child(
+                                        // Repository chips
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .flex_wrap()
+                                            .gap_1p5()
+                                            .children(configured_repos.iter().map(|repo_url| {
+                                                let url_clone = repo_url.clone();
+                                                let display_name = zee_core::plugin::PluginManager::repo_display_name(repo_url);
+                                                let can_remove = configured_repos.len() > 1;
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded_sm()
+                                                    .bg(chip_bg)
+                                                    .border_1()
+                                                    .border_color(chip_border)
+                                                    .text_size(px(11.0))
+                                                    .child(display_name)
+                                                    .children(if can_remove {
+                                                        Some(
+                                                            div()
+                                                                .text_size(px(10.0))
+                                                                .text_color(with_alpha(fg, 0.45))
+                                                                .cursor_pointer()
+                                                                .hover(|s| s.text_color(gpui::rgb(0xe53935)))
+                                                                .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                                    let u = url_clone.clone();
+                                                                    this.workspace.update(cx, |w, _| {
+                                                                        let _ = w.config.remove_plugin_registry(&u);
+                                                                    });
+                                                                    this.fetch_online_plugins(cx);
+                                                                }))
+                                                                .child("✕")
+                                                        )
+                                                    } else {
+                                                        None
+                                                    })
+                                            }))
+                                    )
+                                    .children(if self.plugin_show_add_repo {
+                                        let input_val = self.plugin_new_repo_url.clone();
+                                        let placeholder = self.i18n.get("dialog.plugin.repo_placeholder").to_string();
+                                        let add_btn_text = self.i18n.get("dialog.plugin.repo_add").to_string();
+                                        let cancel_btn_text = self.i18n.get("dialog.plugin.repo_cancel").to_string();
+                                        Some(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .p_1p5()
+                                                .rounded_sm()
+                                                .bg(with_alpha(accent, 0.08))
+                                                .border_1()
+                                                .border_color(with_alpha(accent, 0.3))
+                                                .child(
+                                                    div()
+                                                        .flex_grow()
+                                                        .h(px(26.0))
+                                                        .px_2()
+                                                        .flex()
+                                                        .items_center()
+                                                        .rounded_xs()
+                                                        .bg(input_bg)
+                                                        .border_1()
+                                                        .border_color(chip_border)
+                                                        .text_size(px(11.5))
+                                                        .child(if input_val.is_empty() {
+                                                            div()
+                                                                .text_color(with_alpha(fg, 0.4))
+                                                                .child(format!("{} |", placeholder))
+                                                                .into_any_element()
+                                                        } else {
+                                                            div()
+                                                                .text_color(fg)
+                                                                .child(format!("{}|", input_val))
+                                                                .into_any_element()
+                                                        })
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h(px(26.0))
+                                                        .px_2p5()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .rounded_xs()
+                                                        .bg(accent)
+                                                        .text_color(gpui::rgb(0xffffff))
+                                                        .text_size(px(11.0))
+                                                        .font_weight(FontWeight::MEDIUM)
+                                                        .cursor_pointer()
+                                                        .hover(|s| s.opacity(0.9))
+                                                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                            let url = std::mem::take(&mut this.plugin_new_repo_url);
+                                                            this.plugin_show_add_repo = false;
+                                                            if !url.trim().is_empty() {
+                                                                this.workspace.update(cx, |w, _| {
+                                                                    let _ = w.config.add_plugin_registry(&url);
+                                                                });
+                                                                this.fetch_online_plugins(cx);
+                                                            }
+                                                        }))
+                                                        .child(add_btn_text)
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h(px(26.0))
+                                                        .px_2p5()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .rounded_xs()
+                                                        .bg(button_bg)
+                                                        .text_size(px(11.0))
+                                                        .cursor_pointer()
+                                                        .hover(move |s| s.bg(button_hover))
+                                                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                            this.plugin_show_add_repo = false;
+                                                            this.plugin_new_repo_url.clear();
+                                                            cx.notify();
+                                                        }))
+                                                        .child(cancel_btn_text)
+                                                )
+                                        )
+                                    } else {
+                                        None
+                                    })
                             )
                             .child(
                                 div()
@@ -2700,6 +2899,16 @@ impl Dialog {
                                                                                 .font_weight(FontWeight::BOLD)
                                                                                 .child(type_label)
                                                                         )
+                                                                        .children(reg_p.repository.as_ref().map(|repo| {
+                                                                            div()
+                                                                                .px_1p5()
+                                                                                .py_0p5()
+                                                                                .rounded_xs()
+                                                                                .bg(with_alpha(fg, 0.08))
+                                                                                .text_color(with_alpha(fg, 0.7))
+                                                                                .text_size(px(10.0))
+                                                                                .child(repo.clone())
+                                                                        }))
                                                                         .child(
                                                                             div()
                                                                                 .text_size(px(11.0))

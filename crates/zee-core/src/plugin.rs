@@ -361,6 +361,8 @@ pub struct RegistryPlugin {
     #[serde(rename = "type", default)]
     pub plugin_type: PluginType,
     #[serde(default)]
+    pub entry: Option<String>,
+    #[serde(default)]
     pub author: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
@@ -368,6 +370,8 @@ pub struct RegistryPlugin {
     pub homepage: Option<String>,
     #[serde(default)]
     pub download_url: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
     #[serde(default)]
     pub languages: Vec<String>,
     #[serde(default)]
@@ -724,32 +728,170 @@ impl PluginManager {
         }
     }
 
-    /// Fetch the plugin catalog from zee-plugins repository
+    /// Normalize a repository URL (e.g. GitHub URL or raw JSON URL) to an index.json URL
+    pub fn normalize_registry_index_url(repo_or_url: &str) -> String {
+        let trimmed = repo_or_url.trim().trim_end_matches('/');
+        if trimmed.ends_with(".json") {
+            return trimmed.to_string();
+        }
+        // Handle https://github.com/owner/repo
+        if let Some(rest) = trimmed.strip_prefix("https://github.com/") {
+            let clean = rest.trim_end_matches(".git").trim_matches('/');
+            let parts: Vec<&str> = clean.split('/').collect();
+            if parts.len() >= 2 {
+                return format!("https://raw.githubusercontent.com/{}/{}/main/index.json", parts[0], parts[1]);
+            }
+        }
+        // Handle http://github.com/owner/repo
+        if let Some(rest) = trimmed.strip_prefix("http://github.com/") {
+            let clean = rest.trim_end_matches(".git").trim_matches('/');
+            let parts: Vec<&str> = clean.split('/').collect();
+            if parts.len() >= 2 {
+                return format!("https://raw.githubusercontent.com/{}/{}/main/index.json", parts[0], parts[1]);
+            }
+        }
+        // Handle git@github.com:owner/repo
+        if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
+            let clean = rest.trim_end_matches(".git").trim_matches('/');
+            let parts: Vec<&str> = clean.split('/').collect();
+            if parts.len() >= 2 {
+                return format!("https://raw.githubusercontent.com/{}/{}/main/index.json", parts[0], parts[1]);
+            }
+        }
+        // Handle owner/repo shorthand (e.g. "kh813/zee-plugins")
+        if !trimmed.contains("://") && !trimmed.contains(' ') {
+            let parts: Vec<&str> = trimmed.split('/').collect();
+            if parts.len() == 2 {
+                return format!("https://raw.githubusercontent.com/{}/{}/main/index.json", parts[0], parts[1]);
+            }
+        }
+        if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+            return format!("{}/index.json", trimmed);
+        }
+        trimmed.to_string()
+    }
+
+    /// Derive short repository display name (e.g. "kh813/zee-plugins" or domain/path)
+    pub fn repo_display_name(url: &str) -> String {
+        let trimmed = url.trim().trim_end_matches('/');
+        if let Some(rest) = trimmed.strip_prefix("https://raw.githubusercontent.com/") {
+            let parts: Vec<&str> = rest.split('/').collect();
+            if parts.len() >= 2 {
+                return format!("{}/{}", parts[0], parts[1]);
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("https://github.com/") {
+            let clean = rest.trim_end_matches(".git").trim_matches('/');
+            return clean.to_string();
+        }
+        if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
+            let clean = rest.trim_end_matches(".git").trim_matches('/');
+            return clean.to_string();
+        }
+        if let Some(rest) = trimmed.strip_prefix("https://") {
+            return rest.to_string();
+        }
+        if let Some(rest) = trimmed.strip_prefix("http://") {
+            return rest.to_string();
+        }
+        trimmed.to_string()
+    }
+
+    /// Derive plugin download base URL from index URL and plugin ID
+    pub fn derive_plugin_base_url(index_url: &str, plugin_id: &str) -> String {
+        if let Some(base) = index_url.strip_suffix("/index.json") {
+            format!("{}/plugins/{}", base, plugin_id)
+        } else if let Some(idx) = index_url.rfind('/') {
+            format!("{}/plugins/{}", &index_url[..idx], plugin_id)
+        } else {
+            format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/plugins/{}", plugin_id)
+        }
+    }
+
+    /// Fetch the plugin catalog from a single registry URL
     pub fn fetch_registry(registry_url: Option<&str>) -> Result<PluginRegistryIndex> {
-        let url = registry_url.unwrap_or(DEFAULT_REGISTRY_URL);
-        let resp = ureq::get(url)
+        let raw_url = registry_url.unwrap_or(DEFAULT_REGISTRY_URL);
+        let normalized = Self::normalize_registry_index_url(raw_url);
+        let resp = ureq::get(&normalized)
             .set("User-Agent", "zee-editor")
             .timeout(std::time::Duration::from_secs(10))
             .call()
-            .context("Failed to fetch plugin registry")?;
+            .context(format!("Failed to fetch plugin registry from {}", normalized))?;
 
         let index: PluginRegistryIndex = resp.into_json()
             .context("Failed to parse registry index JSON")?;
         Ok(index)
     }
 
-    /// Install a plugin by ID from the online registry
-    pub fn install_from_registry(plugin_id: &str, registry_url: Option<&str>) -> Result<()> {
-        let registry = Self::fetch_registry(registry_url)?;
-        let plugin = registry.plugins.into_iter().find(|p| p.id == plugin_id)
-            .ok_or_else(|| anyhow::anyhow!("Plugin '{}' not found in registry", plugin_id))?;
+    /// Fetch registry indices from multiple URLs and combine the results.
+    pub fn fetch_registries(registry_sources: &[String]) -> Result<Vec<RegistryPlugin>> {
+        let mut all_plugins = Vec::new();
+        let mut errors = Vec::new();
+        let mut seen_ids = std::collections::HashSet::new();
+
+        let sources: Vec<String> = if registry_sources.is_empty() {
+            vec![DEFAULT_REGISTRY_URL.to_string()]
+        } else {
+            registry_sources.to_vec()
+        };
+
+        for source in &sources {
+            let index_url = Self::normalize_registry_index_url(source);
+            let display_repo = Self::repo_display_name(source);
+            match Self::fetch_registry(Some(&index_url)) {
+                Ok(index) => {
+                    for mut plugin in index.plugins {
+                        plugin.repository = Some(display_repo.clone());
+                        if plugin.download_url.is_none() {
+                            plugin.download_url = Some(Self::derive_plugin_base_url(&index_url, &plugin.id));
+                        }
+                        if seen_ids.insert(plugin.id.clone()) {
+                            all_plugins.push(plugin);
+                        }
+                    }
+                }
+                Err(e) => {
+                    errors.push(format!("{}: {}", display_repo, e));
+                }
+            }
+        }
+
+        if all_plugins.is_empty() && !errors.is_empty() {
+            return Err(anyhow::anyhow!("Failed to fetch plugins:\n{}", errors.join("\n")));
+        }
+
+        Ok(all_plugins)
+    }
+
+    /// Install a plugin by ID from online registries
+    pub fn install_from_registry(
+        plugin_id: &str,
+        registry_url: Option<&str>,
+        configured_sources: Option<&[String]>,
+    ) -> Result<()> {
+        let target_plugin = if let Some(url) = registry_url {
+            let index_url = Self::normalize_registry_index_url(url);
+            let registry = Self::fetch_registry(Some(&index_url))?;
+            let mut found = registry.plugins.into_iter().find(|p| p.id == plugin_id)
+                .ok_or_else(|| anyhow::anyhow!("Plugin '{}' not found in registry", plugin_id))?;
+            if found.download_url.is_none() {
+                found.download_url = Some(Self::derive_plugin_base_url(&index_url, &found.id));
+            }
+            found
+        } else {
+            let default_sources = crate::config::default_plugin_registries();
+            let sources = configured_sources.unwrap_or(&default_sources);
+            let plugins = Self::fetch_registries(sources)?;
+            plugins.into_iter().find(|p| p.id == plugin_id)
+                .ok_or_else(|| anyhow::anyhow!("Plugin '{}' not found in configured registries", plugin_id))?
+        };
 
         let plugins_dir = Self::plugins_dir().context("Could not determine plugins directory")?;
-        let target_dir = plugins_dir.join(&plugin.id);
+        let target_dir = plugins_dir.join(&target_plugin.id);
         fs::create_dir_all(&target_dir)?;
 
-        let base_download_url = plugin.download_url
-            .unwrap_or_else(|| format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/plugins/{}", plugin.id));
+        let base_download_url = target_plugin.download_url
+            .unwrap_or_else(|| format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/plugins/{}", target_plugin.id));
 
         // 1. Download plugin.toml
         let toml_url = format!("{}/plugin.toml", base_download_url.trim_end_matches('/'));
@@ -760,30 +902,20 @@ impl PluginManager {
         }
 
         // 2. Download entry file based on type
-        match plugin.plugin_type {
-            PluginType::Lua => {
-                let lua_url = format!("{}/init.lua", base_download_url.trim_end_matches('/'));
-                let resp = ureq::get(&lua_url)
-                    .set("User-Agent", "zee-editor")
-                    .timeout(std::time::Duration::from_secs(10))
-                    .call()
-                    .context("Failed to download init.lua")?;
-                let mut reader = resp.into_reader();
-                let mut file = fs::File::create(target_dir.join("init.lua"))?;
-                std::io::copy(&mut reader, &mut file)?;
-            }
-            PluginType::Wasm => {
-                let wasm_url = format!("{}/plugin.wasm", base_download_url.trim_end_matches('/'));
-                let resp = ureq::get(&wasm_url)
-                    .set("User-Agent", "zee-editor")
-                    .timeout(std::time::Duration::from_secs(15))
-                    .call()
-                    .context("Failed to download plugin.wasm")?;
-                let mut reader = resp.into_reader();
-                let mut file = fs::File::create(target_dir.join("plugin.wasm"))?;
-                std::io::copy(&mut reader, &mut file)?;
-            }
-        }
+        let entry_filename = target_plugin.entry.clone().unwrap_or_else(|| match target_plugin.plugin_type {
+            PluginType::Lua => "init.lua".to_string(),
+            PluginType::Wasm => "plugin.wasm".to_string(),
+        });
+
+        let entry_url = format!("{}/{}", base_download_url.trim_end_matches('/'), entry_filename);
+        let resp = ureq::get(&entry_url)
+            .set("User-Agent", "zee-editor")
+            .timeout(std::time::Duration::from_secs(15))
+            .call()
+            .context(format!("Failed to download plugin entry file '{}'", entry_filename))?;
+        let mut reader = resp.into_reader();
+        let mut file = fs::File::create(target_dir.join(&entry_filename))?;
+        std::io::copy(&mut reader, &mut file)?;
 
         Ok(())
     }
@@ -1018,6 +1150,51 @@ commands = ["lorem"]
         assert_eq!(p.id, "case-converter");
         assert_eq!(p.plugin_type, PluginType::Lua);
         assert_eq!(p.capabilities.commands.len(), 2);
+    }
+
+    #[test]
+    fn test_multi_registry_url_helpers() {
+        // Normalize GitHub URLs
+        assert_eq!(
+            PluginManager::normalize_registry_index_url("https://github.com/kh813/zee-plugins"),
+            "https://raw.githubusercontent.com/kh813/zee-plugins/main/index.json"
+        );
+        assert_eq!(
+            PluginManager::normalize_registry_index_url("https://github.com/user/custom-repo.git/"),
+            "https://raw.githubusercontent.com/user/custom-repo/main/index.json"
+        );
+        assert_eq!(
+            PluginManager::normalize_registry_index_url("git@github.com:team/plugins.git"),
+            "https://raw.githubusercontent.com/team/plugins/main/index.json"
+        );
+        assert_eq!(
+            PluginManager::normalize_registry_index_url("community/zee-plugins"),
+            "https://raw.githubusercontent.com/community/zee-plugins/main/index.json"
+        );
+        assert_eq!(
+            PluginManager::normalize_registry_index_url("https://raw.githubusercontent.com/kh813/zee-plugins/main/index.json"),
+            "https://raw.githubusercontent.com/kh813/zee-plugins/main/index.json"
+        );
+        assert_eq!(
+            PluginManager::normalize_registry_index_url("https://example.com/custom/registry.json"),
+            "https://example.com/custom/registry.json"
+        );
+
+        // Repo display name
+        assert_eq!(
+            PluginManager::repo_display_name("https://github.com/kh813/zee-plugins"),
+            "kh813/zee-plugins"
+        );
+        assert_eq!(
+            PluginManager::repo_display_name("https://raw.githubusercontent.com/kh813/zee-plugins/main/index.json"),
+            "kh813/zee-plugins"
+        );
+
+        // Derive plugin download base URL
+        assert_eq!(
+            PluginManager::derive_plugin_base_url("https://raw.githubusercontent.com/user/repo/main/index.json", "my-plugin"),
+            "https://raw.githubusercontent.com/user/repo/main/plugins/my-plugin"
+        );
     }
 }
 

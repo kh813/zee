@@ -357,7 +357,7 @@ impl EditorView {
                     cx.notify();
                 });
             }
-            zee_core::ExCommand::Plugin { subcmd, arg } => {
+            zee_core::ExCommand::Plugin { subcmd, arg, extra } => {
                 workspace.update(cx, |w, cx| {
                     match subcmd.as_str() {
                         "list" => {
@@ -374,9 +374,49 @@ impl EditorView {
                                 w.vi_message = Some((format!("Installed plugins: {}", names.join(", ")), false));
                             }
                         }
+                        "repo" => {
+                            let action = arg.as_deref().unwrap_or("list");
+                            match action {
+                                "list" => {
+                                    if w.config.plugin_registries.is_empty() {
+                                        w.vi_message = Some(("No repositories configured".to_string(), false));
+                                    } else {
+                                        w.vi_message = Some((format!("Configured repositories: {}", w.config.plugin_registries.join(", ")), false));
+                                    }
+                                }
+                                "add" => {
+                                    if let Some(url) = extra {
+                                        let _ = w.config.add_plugin_registry(&url);
+                                        w.vi_message = Some((format!("Added plugin repository: {}", url), false));
+                                    } else {
+                                        w.vi_message = Some(("Usage: :plugin repo add <url>".to_string(), true));
+                                    }
+                                }
+                                "remove" | "rm" => {
+                                    if let Some(url) = extra {
+                                        match w.config.remove_plugin_registry(&url) {
+                                            Ok(true) => {
+                                                w.vi_message = Some((format!("Removed plugin repository: {}", url), false));
+                                            }
+                                            Ok(false) => {
+                                                w.vi_message = Some((format!("Repository '{}' not found", url), true));
+                                            }
+                                            Err(e) => {
+                                                w.vi_message = Some((format!("Failed to remove repository: {}", e), true));
+                                            }
+                                        }
+                                    } else {
+                                        w.vi_message = Some(("Usage: :plugin repo remove <url>".to_string(), true));
+                                    }
+                                }
+                                _ => {
+                                    w.vi_message = Some((format!("Unknown repo command: {}. Available: list, add <url>, remove <url>", action), true));
+                                }
+                            }
+                        }
                         "install" => {
                             if let Some(id) = arg {
-                                match zee_core::plugin::PluginManager::install_from_registry(&id, None) {
+                                match zee_core::plugin::PluginManager::install_from_registry(&id, None, Some(&w.config.plugin_registries)) {
                                     Ok(_) => {
                                         w.plugin_manager.load_installed_plugins();
                                         w.vi_message = Some((format!("Plugin '{}' installed successfully", id), false));
@@ -408,7 +448,7 @@ impl EditorView {
                             }
                         }
                         _ => {
-                            w.vi_message = Some((format!("Unknown plugin command: {}. Available: list, install <id>, uninstall <id>", subcmd), true));
+                            w.vi_message = Some((format!("Unknown plugin command: {}. Available: list, repo [list|add|remove], install <id>, uninstall <id>", subcmd), true));
                         }
                     }
                     cx.notify();

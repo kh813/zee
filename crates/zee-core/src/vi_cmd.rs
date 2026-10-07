@@ -46,8 +46,12 @@ pub enum ExCommand {
         global: bool,
         ignore_case: bool,
     },
-    /// `:plugin [subcmd] [arg]` - Plugin management (e.g., `:plugin install <id>`, `:plugin list`).
-    Plugin { subcmd: String, arg: Option<String> },
+    /// `:plugin [subcmd] [arg] [extra]` - Plugin management (e.g., `:plugin install <id>`, `:plugin repo add <url>`).
+    Plugin {
+        subcmd: String,
+        arg: Option<String>,
+        extra: Option<String>,
+    },
     /// Empty command (e.g. `:` alone).
     Empty,
     /// Unknown or unsupported command string.
@@ -249,13 +253,15 @@ pub fn parse_ex_command(input: &str) -> ExCommand {
             }
         }
 
-        // --- Plugins (:plugin install <id>, :plugin list) ---
+        // --- Plugins (:plugin install <id>, :plugin list, :plugin repo add <url>) ---
         "plugin" => {
             let subcmd = arg.unwrap_or_else(|| "list".to_string());
             let plugin_target = parts.next().map(|s| s.to_string());
+            let plugin_extra = parts.next().map(|s| s.to_string());
             ExCommand::Plugin {
                 subcmd,
                 arg: plugin_target,
+                extra: plugin_extra,
             }
         }
 
@@ -438,6 +444,7 @@ mod tests {
             ExCommand::Plugin {
                 subcmd: "list".into(),
                 arg: None,
+                extra: None,
             }
         );
         assert_eq!(
@@ -445,6 +452,7 @@ mod tests {
             ExCommand::Plugin {
                 subcmd: "list".into(),
                 arg: None,
+                extra: None,
             }
         );
         assert_eq!(
@@ -452,6 +460,7 @@ mod tests {
             ExCommand::Plugin {
                 subcmd: "install".into(),
                 arg: Some("case-converter".into()),
+                extra: None,
             }
         );
         assert_eq!(
@@ -459,6 +468,23 @@ mod tests {
             ExCommand::Plugin {
                 subcmd: "uninstall".into(),
                 arg: Some("case-converter".into()),
+                extra: None,
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":plugin repo add https://github.com/foo/bar"),
+            ExCommand::Plugin {
+                subcmd: "repo".into(),
+                arg: Some("add".into()),
+                extra: Some("https://github.com/foo/bar".into()),
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":plugin repo remove https://github.com/foo/bar"),
+            ExCommand::Plugin {
+                subcmd: "repo".into(),
+                arg: Some("remove".into()),
+                extra: Some("https://github.com/foo/bar".into()),
             }
         );
     }

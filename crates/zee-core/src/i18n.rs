@@ -350,6 +350,11 @@ impl I18n {
         m.insert("dialog.plugin.installed".to_string(), "Installed Plugins".to_string());
         m.insert("dialog.plugin.empty".to_string(), "No plugins installed yet.".to_string());
         m.insert("dialog.plugin.active".to_string(), "Active".to_string());
+        m.insert("dialog.plugin.repositories".to_string(), "Repositories:".to_string());
+        m.insert("dialog.plugin.add_repo_btn".to_string(), "+ Add".to_string());
+        m.insert("dialog.plugin.repo_placeholder".to_string(), "GitHub URL (e.g. user/plugins) or index.json URL".to_string());
+        m.insert("dialog.plugin.repo_add".to_string(), "Add".to_string());
+        m.insert("dialog.plugin.repo_cancel".to_string(), "Cancel".to_string());
 
         m.insert("about.version".to_string(), "Version".to_string());
         m.insert("about.license".to_string(), "License".to_string());
@@ -540,6 +545,11 @@ impl I18n {
         m.insert("dialog.plugin.installed".to_string(), "インストール済みプラグイン".to_string());
         m.insert("dialog.plugin.empty".to_string(), "プラグインはまだインストールされていません。".to_string());
         m.insert("dialog.plugin.active".to_string(), "有効".to_string());
+        m.insert("dialog.plugin.repositories".to_string(), "リポジトリ:".to_string());
+        m.insert("dialog.plugin.add_repo_btn".to_string(), "+ 追加".to_string());
+        m.insert("dialog.plugin.repo_placeholder".to_string(), "GitHub URL (例: user/plugins) または index.json URL".to_string());
+        m.insert("dialog.plugin.repo_add".to_string(), "追加".to_string());
+        m.insert("dialog.plugin.repo_cancel".to_string(), "キャンセル".to_string());
 
         m.insert("about.version".to_string(), "バージョン".to_string());
         m.insert("about.license".to_string(), "ライセンス".to_string());

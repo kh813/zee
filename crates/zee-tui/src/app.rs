@@ -2618,7 +2618,7 @@ impl App {
                             }
                         }
                     }
-                    zee_core::ExCommand::Plugin { subcmd, arg } => {
+                    zee_core::ExCommand::Plugin { subcmd, arg, extra } => {
                         match subcmd.as_str() {
                             "list" => {
                                 let mut names = Vec::new();
@@ -2634,9 +2634,49 @@ impl App {
                                     self.vi_message = Some((format!("Installed plugins: {}", names.join(", ")), false));
                                 }
                             }
+                            "repo" => {
+                                let action = arg.as_deref().unwrap_or("list");
+                                match action {
+                                    "list" => {
+                                        if self.config.plugin_registries.is_empty() {
+                                            self.vi_message = Some(("No repositories configured".to_string(), false));
+                                        } else {
+                                            self.vi_message = Some((format!("Configured repositories: {}", self.config.plugin_registries.join(", ")), false));
+                                        }
+                                    }
+                                    "add" => {
+                                        if let Some(url) = extra {
+                                            let _ = self.config.add_plugin_registry(&url);
+                                            self.vi_message = Some((format!("Added plugin repository: {}", url), false));
+                                        } else {
+                                            self.vi_message = Some(("Usage: :plugin repo add <url>".to_string(), true));
+                                        }
+                                    }
+                                    "remove" | "rm" => {
+                                        if let Some(url) = extra {
+                                            match self.config.remove_plugin_registry(&url) {
+                                                Ok(true) => {
+                                                    self.vi_message = Some((format!("Removed plugin repository: {}", url), false));
+                                                }
+                                                Ok(false) => {
+                                                    self.vi_message = Some((format!("Repository '{}' not found", url), true));
+                                                }
+                                                Err(e) => {
+                                                    self.vi_message = Some((format!("Failed to remove repository: {}", e), true));
+                                                }
+                                            }
+                                        } else {
+                                            self.vi_message = Some(("Usage: :plugin repo remove <url>".to_string(), true));
+                                        }
+                                    }
+                                    _ => {
+                                        self.vi_message = Some((format!("Unknown repo command: {}. Available: list, add <url>, remove <url>", action), true));
+                                    }
+                                }
+                            }
                             "install" => {
                                 if let Some(id) = arg {
-                                    match zee_core::plugin::PluginManager::install_from_registry(&id, None) {
+                                    match zee_core::plugin::PluginManager::install_from_registry(&id, None, Some(&self.config.plugin_registries)) {
                                         Ok(_) => {
                                             self.sidebar.plugin_manager.load_installed_plugins();
                                             self.vi_message = Some((format!("Plugin '{}' installed successfully", id), false));
@@ -2668,7 +2708,7 @@ impl App {
                                 }
                             }
                             _ => {
-                                self.vi_message = Some((format!("Unknown plugin command: {}. Available: list, install <id>, uninstall <id>", subcmd), true));
+                                self.vi_message = Some((format!("Unknown plugin command: {}. Available: list, repo [list|add|remove], install <id>, uninstall <id>", subcmd), true));
                             }
                         }
                     }

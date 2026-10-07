@@ -2623,6 +2623,440 @@ impl Dialog for SettingsDialog {
     }
 }
 
+pub enum GDriveMsg {
+    ListDone(Result<Vec<zee_core::gdrive::GDriveItem>, String>),
+    AuthDone(Result<(), String>),
+    DownloadDone(Result<PathBuf, String>),
+}
+
+pub struct GoogleDriveDialog {
+    pub items: Vec<zee_core::gdrive::GDriveItem>,
+    pub selected_idx: usize,
+    pub is_loading: bool,
+    pub error_message: Option<String>,
+    pub current_folder_id: Option<String>,
+    pub folder_stack: Vec<(Option<String>, String)>,
+    pub search_query: String,
+    pub selected_btn: usize, // 0: Open, 1: Cancel, 2: Sign Out
+    pub rx: std::sync::mpsc::Receiver<GDriveMsg>,
+    pub tx: std::sync::mpsc::Sender<GDriveMsg>,
+
+    // i18n
+    pub i18n_title: String,
+    pub i18n_connect: String,
+    pub i18n_connecting: String,
+    pub i18n_sign_out: String,
+    pub i18n_open: String,
+    pub i18n_cancel: String,
+    pub i18n_search_placeholder: String,
+}
+
+impl GoogleDriveDialog {
+    pub fn new(i18n: &zee_core::I18n) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut dialog = Self {
+            items: Vec::new(),
+            selected_idx: 0,
+            is_loading: false,
+            error_message: None,
+            current_folder_id: None,
+            folder_stack: vec![(None, "My Drive".to_string())],
+            search_query: String::new(),
+            selected_btn: 0,
+            rx,
+            tx,
+            i18n_title: i18n.get("gdrive.title").to_string(),
+            i18n_connect: i18n.get("gdrive.connect").to_string(),
+            i18n_connecting: i18n.get("gdrive.connecting").to_string(),
+            i18n_sign_out: i18n.get("gdrive.sign_out").to_string(),
+            i18n_open: i18n.get("gdrive.open").to_string(),
+            i18n_cancel: i18n.get("gdrive.cancel").to_string(),
+            i18n_search_placeholder: i18n.get("gdrive.search_placeholder").to_string(),
+        };
+
+        if zee_core::gdrive::GDriveManager::is_authenticated() {
+            dialog.fetch_files();
+        }
+        dialog
+    }
+
+    pub fn poll_messages(&mut self) -> Option<PathBuf> {
+        let mut downloaded_path = None;
+        while let Ok(msg) = self.rx.try_recv() {
+            self.is_loading = false;
+            match msg {
+                GDriveMsg::ListDone(res) => match res {
+                    Ok(items) => {
+                        self.items = items;
+                        self.selected_idx = 0;
+                        self.error_message = None;
+                    }
+                    Err(e) => {
+                        self.error_message = Some(e);
+                    }
+                },
+                GDriveMsg::AuthDone(res) => match res {
+                    Ok(()) => {
+                        self.current_folder_id = None;
+                        self.folder_stack = vec![(None, "My Drive".to_string())];
+                        self.search_query.clear();
+                        self.fetch_files();
+                    }
+                    Err(e) => {
+                        self.error_message = Some(e);
+                    }
+                },
+                GDriveMsg::DownloadDone(res) => match res {
+                    Ok(path) => {
+                        downloaded_path = Some(path);
+                    }
+                    Err(e) => {
+                        self.error_message = Some(e);
+                    }
+                },
+            }
+        }
+        downloaded_path
+    }
+
+    pub fn fetch_files(&mut self) {
+        if self.is_loading {
+            return;
+        }
+        self.is_loading = true;
+        self.error_message = None;
+
+        let tx = self.tx.clone();
+        let parent_id = self.current_folder_id.clone();
+        let search = if self.search_query.trim().is_empty() {
+            None
+        } else {
+            Some(self.search_query.trim().to_string())
+        };
+
+        std::thread::spawn(move || {
+            let res = zee_core::gdrive::GDriveManager::list_files(parent_id.as_deref(), search.as_deref())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(GDriveMsg::ListDone(res));
+        });
+    }
+
+    pub fn start_auth(&mut self) {
+        if self.is_loading {
+            return;
+        }
+        self.is_loading = true;
+        self.error_message = None;
+
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let res = zee_core::gdrive::GDriveManager::start_oauth_flow()
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(GDriveMsg::AuthDone(res));
+        });
+    }
+
+    pub fn sign_out(&mut self) {
+        let _ = zee_core::gdrive::GDriveManager::sign_out();
+        self.items.clear();
+        self.selected_idx = 0;
+        self.error_message = None;
+    }
+
+    pub fn open_selected(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        let item = match self.items.get(self.selected_idx) {
+            Some(it) => it.clone(),
+            None => return,
+        };
+
+        if item.is_folder {
+            self.current_folder_id = Some(item.id.clone());
+            self.folder_stack.push((Some(item.id), item.name));
+            self.search_query.clear();
+            self.fetch_files();
+        } else {
+            self.is_loading = true;
+            self.error_message = None;
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let res = zee_core::gdrive::GDriveManager::download_and_cache(&item)
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(GDriveMsg::DownloadDone(res));
+            });
+        }
+    }
+}
+
+impl Dialog for GoogleDriveDialog {
+    fn title(&self) -> &str {
+        &self.i18n_title
+    }
+
+    fn dimensions(&self) -> (u16, u16) {
+        (76, 22)
+    }
+
+    fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
+        render_base_dialog(renderer, theme, self.title(), x, y, w, h);
+
+        let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
+        let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let active_bg = to_ct_color(theme.ui.button_active_bg, theme);
+        let active_fg = to_ct_color(theme.ui.button_active_fg, theme);
+
+        let is_auth = zee_core::gdrive::GDriveManager::is_authenticated();
+
+        if !is_auth {
+            // Not connected view
+            let msg = "Connect Google Drive to edit cloud files";
+            let mx = x + (w.saturating_sub(msg.len() as u16)) / 2;
+            let my = y + 6;
+            for (i, c) in msg.chars().enumerate() {
+                renderer.set_cell(mx + i as u16, my, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, ..Default::default() });
+            }
+
+            let btn_label = if self.is_loading { &self.i18n_connecting } else { &self.i18n_connect };
+            let btn_text = format!("[ {} ]", btn_label);
+            let bx = x + (w.saturating_sub(btn_text.len() as u16)) / 2;
+            let by = y + 10;
+            let btn_bg = if self.selected_btn == 0 { active_bg } else { to_ct_color(theme.ui.status_bar_bg, theme) };
+            let btn_fg = if self.selected_btn == 0 { active_fg } else { to_ct_color(theme.ui.status_bar_fg, theme) };
+
+            for (i, c) in btn_text.chars().enumerate() {
+                renderer.set_cell(bx + i as u16, by, Cell { ch: c, bg: btn_bg, fg: btn_fg, ..Default::default() });
+            }
+
+            if let Some(ref err) = self.error_message {
+                let err_text = format!("Error: {}", err);
+                let ex = x + 3;
+                let ey = y + 14;
+                for (i, c) in err_text.chars().take((w - 6) as usize).enumerate() {
+                    renderer.set_cell(ex + i as u16, ey, Cell { ch: c, bg: dialog_bg, fg: Color::Red, ..Default::default() });
+                }
+            }
+            return;
+        }
+
+        // Top info: Breadcrumb on left, Account/Sign Out on right
+        let breadcrumb = self.folder_stack.iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>().join(" / ");
+        let mut cur_bx = x + 2;
+        for c in breadcrumb.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            if cur_bx + cw < x + w / 2 {
+                renderer.set_cell(cur_bx, y + 2, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.keyword.unwrap_or(theme.editor.cursor), theme), width: cw as u8, ..Default::default() });
+                cur_bx += cw;
+            } else {
+                break;
+            }
+        }
+
+        if let Some(email) = zee_core::gdrive::GDriveManager::connected_account_email() {
+            let email_str = format!("({})", email);
+            let ex = x + w - 2 - email_str.len() as u16;
+            for (i, c) in email_str.chars().enumerate() {
+                renderer.set_cell(ex + i as u16, y + 2, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, ..Default::default() });
+            }
+        }
+
+        // Search query row
+        let search_y = y + 3;
+        let search_label = "Search: ";
+        for (i, c) in search_label.chars().enumerate() {
+            renderer.set_cell(x + 2 + i as u16, search_y, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, ..Default::default() });
+        }
+        let search_box_x = x + 2 + search_label.len() as u16;
+        let search_box_w = (w.saturating_sub(search_label.len() as u16 + 4)).min(40);
+        for dx in 0..search_box_w {
+            renderer.set_cell(search_box_x + dx, search_y, Cell { ch: ' ', bg: to_ct_color(theme.ui.panel_bg, theme), ..Default::default() });
+        }
+        let display_search = if self.search_query.is_empty() { &self.i18n_search_placeholder } else { &self.search_query };
+        let search_fg = if self.search_query.is_empty() { to_ct_color(theme.editor.line_number, theme) } else { to_ct_color(theme.ui.panel_fg, theme) };
+        for (i, c) in display_search.chars().take(search_box_w as usize).enumerate() {
+            renderer.set_cell(search_box_x + i as u16, search_y, Cell { ch: c, bg: to_ct_color(theme.ui.panel_bg, theme), fg: search_fg, ..Default::default() });
+        }
+
+        // File list area: rows from y+5 to y+h-4
+        let list_top = y + 5;
+        let list_height = (h.saturating_sub(9)).max(1);
+
+        if self.is_loading {
+            let loading_str = "Loading Google Drive...";
+            let lx = x + (w.saturating_sub(loading_str.len() as u16)) / 2;
+            let ly = list_top + list_height / 2;
+            for (i, c) in loading_str.chars().enumerate() {
+                renderer.set_cell(lx + i as u16, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, ..Default::default() });
+            }
+        } else if self.items.is_empty() {
+            let empty_str = "No files found in folder";
+            let ex = x + (w.saturating_sub(empty_str.len() as u16)) / 2;
+            let ey = list_top + list_height / 2;
+            for (i, c) in empty_str.chars().enumerate() {
+                renderer.set_cell(ex + i as u16, ey, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, ..Default::default() });
+            }
+        } else {
+            let start_idx = if self.selected_idx >= list_height as usize {
+                self.selected_idx - list_height as usize + 1
+            } else {
+                0
+            };
+
+            for row in 0..list_height {
+                let item_idx = start_idx + row as usize;
+                let iy = list_top + row;
+                if let Some(item) = self.items.get(item_idx) {
+                    let is_sel = item_idx == self.selected_idx;
+                    let sel_bg = to_ct_color(theme.editor.selection, theme);
+                    let (bg, fg) = if is_sel { (sel_bg, dialog_fg) } else { (dialog_bg, dialog_fg) };
+
+                    // Clear line
+                    for dx in 2..w - 2 {
+                        renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg, ..Default::default() });
+                    }
+
+                    // Icon + Name
+                    let icon = if item.is_folder { "📁 " } else { "📄 " };
+                    let mut cur_x = x + 3;
+                    for c in icon.chars() {
+                        renderer.set_cell(cur_x, iy, Cell { ch: c, bg, fg, ..Default::default() });
+                        cur_x += 1;
+                    }
+
+                    for c in item.name.chars() {
+                        let cw = c.width().unwrap_or(0) as u16;
+                        if cur_x + cw < x + w - 16 {
+                            renderer.set_cell(cur_x, iy, Cell { ch: c, bg, fg, width: cw as u8, ..Default::default() });
+                            cur_x += cw;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    // Size
+                    if let Some(sz) = item.size {
+                        let sz_str = if sz < 1024 {
+                            format!("{} B", sz)
+                        } else if sz < 1024 * 1024 {
+                            format!("{:.1} KB", sz as f64 / 1024.0)
+                        } else {
+                            format!("{:.1} MB", sz as f64 / (1024.0 * 1024.0))
+                        };
+                        let sx = x + w - 14;
+                        for (i, c) in sz_str.chars().enumerate() {
+                            renderer.set_cell(sx + i as u16, iy, Cell { ch: c, bg, fg, ..Default::default() });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Bottom error / status
+        if let Some(ref err) = self.error_message {
+            let ey = y + h - 3;
+            for (i, c) in err.chars().take((w - 6) as usize).enumerate() {
+                renderer.set_cell(x + 3 + i as u16, ey, Cell { ch: c, bg: dialog_bg, fg: Color::Red, ..Default::default() });
+            }
+        }
+
+        // Bottom buttons: Open, Cancel, Sign Out
+        let buttons = [&self.i18n_open, &self.i18n_cancel, &self.i18n_sign_out];
+        let by = y + h - 2;
+        let mut bx = x + w - 35;
+        for (idx, btn) in buttons.iter().enumerate() {
+            let is_sel = idx == self.selected_btn;
+            let (bbg, bfg) = if is_sel {
+                (active_bg, active_fg)
+            } else {
+                (to_ct_color(theme.ui.status_bar_bg, theme), to_ct_color(theme.ui.status_bar_fg, theme))
+            };
+            let text = format!("[ {} ]", btn);
+            for c in text.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                renderer.set_cell(bx, by, Cell { ch: c, bg: bbg, fg: bfg, width: cw as u8, ..Default::default() });
+                bx += cw;
+            }
+            bx += 2;
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> DialogResult<Action> {
+        if let Some(path) = self.poll_messages() {
+            return DialogResult::Ok(Action::ConfirmPath(path));
+        }
+
+        let is_auth = zee_core::gdrive::GDriveManager::is_authenticated();
+        if !is_auth {
+            match key.code {
+                KeyCode::Esc => DialogResult::Cancel,
+                KeyCode::Enter => {
+                    self.start_auth();
+                    DialogResult::Pending
+                }
+                _ => DialogResult::Pending,
+            }
+        } else {
+            match key.code {
+                KeyCode::Esc => DialogResult::Cancel,
+                KeyCode::Up => {
+                    self.selected_idx = self.selected_idx.saturating_sub(1);
+                    DialogResult::Pending
+                }
+                KeyCode::Down => {
+                    if !self.items.is_empty() {
+                        self.selected_idx = (self.selected_idx + 1).min(self.items.len() - 1);
+                    }
+                    DialogResult::Pending
+                }
+                KeyCode::Left | KeyCode::BackTab => {
+                    self.selected_btn = (self.selected_btn + 2) % 3;
+                    DialogResult::Pending
+                }
+                KeyCode::Right | KeyCode::Tab => {
+                    self.selected_btn = (self.selected_btn + 1) % 3;
+                    DialogResult::Pending
+                }
+                KeyCode::Backspace => {
+                    if !self.search_query.is_empty() {
+                        self.search_query.pop();
+                        self.fetch_files();
+                    } else if self.folder_stack.len() > 1 {
+                        self.folder_stack.pop();
+                        self.current_folder_id = self.folder_stack.last().and_then(|(id, _)| id.clone());
+                        self.fetch_files();
+                    }
+                    DialogResult::Pending
+                }
+                KeyCode::Enter => {
+                    if self.selected_btn == 0 {
+                        self.open_selected();
+                    } else if self.selected_btn == 1 {
+                        return DialogResult::Cancel;
+                    } else if self.selected_btn == 2 {
+                        self.sign_out();
+                    }
+                    DialogResult::Pending
+                }
+                KeyCode::Char(c) if key.modifiers.is_empty() => {
+                    self.search_query.push(c);
+                    self.fetch_files();
+                    DialogResult::Pending
+                }
+                _ => DialogResult::Pending,
+            }
+        }
+    }
+
+    fn handle_mouse(&mut self, _mouse: MouseEvent, _x: u16, _y: u16, _w: u16, _h: u16) -> DialogResult<Action> {
+        if let Some(path) = self.poll_messages() {
+            return DialogResult::Ok(Action::ConfirmPath(path));
+        }
+        DialogResult::Pending
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

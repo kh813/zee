@@ -38,6 +38,7 @@ pub enum DialogType {
     NewFolder { parent_dir: std::path::PathBuf },
     Rename { target_path: std::path::PathBuf },
     ConfirmDelete { target_path: std::path::PathBuf },
+    GoogleDrive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +72,14 @@ pub struct Dialog {
     registry_error: Option<String>,
     plugin_show_add_repo: bool,
     plugin_new_repo_url: String,
+    // Google Drive state
+    gdrive_items: Vec<zee_core::gdrive::GDriveItem>,
+    gdrive_selected_idx: usize,
+    gdrive_loading: bool,
+    gdrive_error: Option<String>,
+    gdrive_current_folder_id: Option<String>,
+    gdrive_folder_stack: Vec<(Option<String>, String)>, // (id, display_name)
+    gdrive_search_query: String,
 }
 
 #[derive(Clone)]
@@ -129,10 +138,22 @@ impl Dialog {
             registry_error: None,
             plugin_show_add_repo: false,
             plugin_new_repo_url: String::new(),
+            gdrive_items: Vec::new(),
+            gdrive_selected_idx: 0,
+            gdrive_loading: false,
+            gdrive_error: None,
+            gdrive_current_folder_id: None,
+            gdrive_folder_stack: vec![(None, "My Drive".to_string())],
+            gdrive_search_query: String::new(),
         };
         this.refresh_files();
         if is_update {
             this.start_update_check(cx);
+        }
+        if matches!(this.dialog_type, DialogType::GoogleDrive) {
+            if zee_core::gdrive::GDriveManager::is_authenticated() {
+                this.load_gdrive_files(cx);
+            }
         }
         this
     }
@@ -315,6 +336,141 @@ impl Dialog {
         }).detach();
     }
 
+    fn load_gdrive_files(&mut self, cx: &mut Context<Self>) {
+        if self.gdrive_loading {
+            return;
+        }
+        self.gdrive_loading = true;
+        self.gdrive_error = None;
+        cx.notify();
+
+        let parent_id = self.gdrive_current_folder_id.clone();
+        let search_query = if self.gdrive_search_query.trim().is_empty() {
+            None
+        } else {
+            Some(self.gdrive_search_query.trim().to_string())
+        };
+
+        cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let p_id = parent_id.clone();
+                let sq = search_query.clone();
+                let res = std::thread::spawn(move || {
+                    zee_core::gdrive::GDriveManager::list_files(p_id.as_deref(), sq.as_deref())
+                }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Google Drive list thread panicked")));
+
+                let _ = this.update(&mut cx.clone(), |this, cx| {
+                    this.gdrive_loading = false;
+                    match res {
+                        Ok(items) => {
+                            this.gdrive_items = items;
+                            this.gdrive_selected_idx = 0;
+                        }
+                        Err(err) => {
+                            this.gdrive_error = Some(err.to_string());
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        }).detach();
+    }
+
+    fn start_gdrive_auth(&mut self, cx: &mut Context<Self>) {
+        if self.gdrive_loading {
+            return;
+        }
+        self.gdrive_loading = true;
+        self.gdrive_error = None;
+        cx.notify();
+
+        cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let res = std::thread::spawn(|| {
+                    zee_core::gdrive::GDriveManager::start_oauth_flow()
+                }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Google OAuth thread panicked")));
+
+                let _ = this.update(&mut cx.clone(), |this, cx| {
+                    this.gdrive_loading = false;
+                    match res {
+                        Ok(_) => {
+                            this.gdrive_current_folder_id = None;
+                            this.gdrive_folder_stack = vec![(None, "My Drive".to_string())];
+                            this.gdrive_search_query.clear();
+                            this.load_gdrive_files(cx);
+                        }
+                        Err(err) => {
+                            this.gdrive_error = Some(err.to_string());
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        }).detach();
+    }
+
+    fn gdrive_sign_out(&mut self, cx: &mut Context<Self>) {
+        let _ = zee_core::gdrive::GDriveManager::sign_out();
+        self.gdrive_items.clear();
+        self.gdrive_selected_idx = 0;
+        self.gdrive_error = None;
+        cx.notify();
+    }
+
+    fn open_selected_gdrive_item(&mut self, cx: &mut Context<Self>) {
+        if self.gdrive_items.is_empty() {
+            return;
+        }
+        let item = match self.gdrive_items.get(self.gdrive_selected_idx) {
+            Some(it) => it.clone(),
+            None => return,
+        };
+
+        if item.is_folder {
+            self.gdrive_current_folder_id = Some(item.id.clone());
+            self.gdrive_folder_stack.push((Some(item.id.clone()), item.name));
+            self.gdrive_search_query.clear();
+            self.load_gdrive_files(cx);
+        } else {
+            self.gdrive_loading = true;
+            self.gdrive_error = None;
+            cx.notify();
+
+            let workspace = self.workspace.clone();
+            cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    let it = item.clone();
+                    let res = std::thread::spawn(move || {
+                        zee_core::gdrive::GDriveManager::download_and_cache(&it)
+                    }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Google Drive download thread panicked")));
+
+                    let _ = this.update(&mut cx.clone(), |this, cx| {
+                        this.gdrive_loading = false;
+                        match res {
+                            Ok(path) => {
+                                workspace.update(cx, |w, cx| {
+                                    if let Ok(editor) = zee_core::buffer::Editor::from_file(&path) {
+                                        w.add_editor(editor);
+                                        w.update_outline();
+                                    }
+                                    cx.notify();
+                                });
+                                this.close(cx);
+                            }
+                            Err(e) => {
+                                this.gdrive_error = Some(e.to_string());
+                                cx.notify();
+                            }
+                        }
+                    });
+                }
+            }).detach();
+        }
+    }
+
     fn refresh_files(&mut self) {
         self.files.clear();
         if let Ok(entries) = std::fs::read_dir(&self.current_dir) {
@@ -379,18 +535,27 @@ impl Dialog {
                     if !self.files.is_empty() {
                         self.input_text = self.files[self.selected_idx].name.clone();
                     }
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
+                    self.gdrive_selected_idx = self.gdrive_selected_idx.saturating_sub(1);
                 }
             }
-            "down"
+            "down" => {
                 if matches!(self.dialog_type, DialogType::OpenFile | DialogType::SaveAs)
-                    && !self.files.is_empty() => {
+                    && !self.files.is_empty() {
                         self.selected_idx = (self.selected_idx + 1).min(self.files.len() - 1);
                         self.input_text = self.files[self.selected_idx].name.clone();
-                    }
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive)
+                    && !self.gdrive_items.is_empty() {
+                        self.gdrive_selected_idx = (self.gdrive_selected_idx + 1).min(self.gdrive_items.len() - 1);
+                }
+            }
             "v" if event.keystroke.modifiers.platform || event.keystroke.modifiers.control => {
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
                     if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
                         self.plugin_new_repo_url.push_str(text.trim());
+                    } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
+                        self.gdrive_search_query.push_str(text.trim());
+                        self.load_gdrive_files(cx);
                     } else {
                         self.input_text.push_str(text.trim());
                     }
@@ -403,6 +568,15 @@ impl Dialog {
                     if let Some(parent) = self.current_dir.parent() {
                         self.current_dir = parent.to_path_buf();
                         self.refresh_files();
+                    }
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
+                    if !self.gdrive_search_query.is_empty() {
+                        self.gdrive_search_query.pop();
+                        self.load_gdrive_files(cx);
+                    } else if self.gdrive_folder_stack.len() > 1 {
+                        self.gdrive_folder_stack.pop();
+                        self.gdrive_current_folder_id = self.gdrive_folder_stack.last().and_then(|(id, _)| id.clone());
+                        self.load_gdrive_files(cx);
                     }
                 } else {
                     self.input_text.pop();
@@ -418,6 +592,8 @@ impl Dialog {
                         });
                         self.fetch_online_plugins(cx);
                     }
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
+                    self.open_selected_gdrive_item(cx);
                 } else if let DialogType::UnsavedChanges { intent, .. } = &self.dialog_type {
                     match self.button_idx {
                         0 => {
@@ -447,6 +623,9 @@ impl Dialog {
             k if k.len() == 1 && !event.keystroke.modifiers.platform && !event.keystroke.modifiers.control => {
                 if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
                     self.plugin_new_repo_url.push_str(k);
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
+                    self.gdrive_search_query.push_str(k);
+                    self.load_gdrive_files(cx);
                 } else {
                     self.input_text.push_str(k);
                 }
@@ -560,7 +739,7 @@ impl Render for Dialog {
         let fg = led_color_to_gpui(theme.editor.foreground);
         let border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
 
-        let is_wide = matches!(self.dialog_type, DialogType::Settings | DialogType::PluginManager);
+        let is_wide = matches!(self.dialog_type, DialogType::Settings | DialogType::PluginManager | DialogType::GoogleDrive);
         let dialog_width = if is_wide { px(560.0) } else { px(460.0) };
         let dialog_max_h = if is_wide { px(640.0) } else { px(580.0) };
 
@@ -3371,6 +3550,286 @@ impl Dialog {
                                     .child(self.i18n.get("sidebar.delete").to_string())
                             )
                     )
+            }
+            DialogType::GoogleDrive => {
+                let is_auth = zee_core::gdrive::GDriveManager::is_authenticated();
+                let email = zee_core::gdrive::GDriveManager::connected_account_email();
+                let border_color = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
+
+                let mut content = div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    // Title bar
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_size(px(16.0))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(self.i18n.get("gdrive.title").to_string())
+                                    )
+                                    .children(email.map(|em| {
+                                        div()
+                                            .text_size(px(12.0))
+                                            .text_color(with_alpha(fg, 0.6))
+                                            .child(format!("({})", em))
+                                    }))
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .children(if is_auth {
+                                        Some(
+                                            div()
+                                                .text_size(px(11.5))
+                                                .text_color(with_alpha(fg, 0.7))
+                                                .cursor_pointer()
+                                                .hover(|s| s.opacity(0.8))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.gdrive_sign_out(cx)))
+                                                .child(self.i18n.get("gdrive.sign_out").to_string())
+                                        )
+                                    } else {
+                                        None
+                                    })
+                                    .child(
+                                        div()
+                                            .text_size(px(14.0))
+                                            .text_color(with_alpha(fg, 0.6))
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.8))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                            .child("✕")
+                                    )
+                            )
+                    );
+
+                if !is_auth {
+                    // Not authenticated view
+                    content = content.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap_4()
+                            .py_8()
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .text_color(with_alpha(fg, 0.8))
+                                    .child("Sign in with your Google account to browse and edit files.")
+                            )
+                            .child(
+                                div()
+                                    .h(px(34.0))
+                                    .px_5()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(accent)
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.start_gdrive_auth(cx)))
+                                    .child(if self.gdrive_loading {
+                                        self.i18n.get("gdrive.connecting").to_string()
+                                    } else {
+                                        self.i18n.get("gdrive.connect").to_string()
+                                    })
+                            )
+                            .children(self.gdrive_error.as_ref().map(|err| {
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(gpui::rgb(0xff5555))
+                                    .child(err.clone())
+                            }))
+                    );
+                } else {
+                    // Authenticated file browser view
+                    // Breadcrumb & Search bar
+                    let breadcrumb_text = self.gdrive_folder_stack.iter()
+                        .map(|(_, name)| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" / ");
+
+                    content = content
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(with_alpha(fg, 0.7))
+                                        .child(breadcrumb_text)
+                                )
+                                .child(
+                                    div()
+                                        .w(px(200.0))
+                                        .h(px(26.0))
+                                        .bg(input_bg)
+                                        .border_1()
+                                        .border_color(border_color)
+                                        .rounded_md()
+                                        .px_2()
+                                        .flex()
+                                        .items_center()
+                                        .text_size(px(11.5))
+                                        .child(if self.gdrive_search_query.is_empty() {
+                                            div().text_color(with_alpha(fg, 0.4)).child(self.i18n.get("gdrive.search_placeholder").to_string())
+                                        } else {
+                                            div().child(self.gdrive_search_query.clone())
+                                        })
+                                )
+                        )
+                        // File list container
+                        .child(
+                            div()
+                                .flex_grow()
+                                .min_h(px(280.0))
+                                .max_h(px(360.0))
+                                .overflow_hidden()
+                                .bg(input_bg)
+                                .border_1()
+                                .border_color(border_color)
+                                .rounded_md()
+                                .children(if self.gdrive_loading {
+                                    vec![
+                                        div()
+                                            .p_4()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_size(px(13.0))
+                                            .text_color(with_alpha(fg, 0.6))
+                                            .child("Loading...")
+                                    ]
+                                } else if self.gdrive_items.is_empty() {
+                                    vec![
+                                        div()
+                                            .p_4()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_size(px(13.0))
+                                            .text_color(with_alpha(fg, 0.5))
+                                            .child("No files found")
+                                    ]
+                                } else {
+                                    self.gdrive_items.iter().enumerate().map(|(idx, item)| {
+                                        let is_selected = idx == self.gdrive_selected_idx;
+                                        let is_folder = item.is_folder;
+                                        let icon = if is_folder { "📁 " } else { "📄 " };
+                                        let size_str = item.size.map(|s| self.format_size(s)).unwrap_or_else(|| if is_folder { "--".to_string() } else { "".to_string() });
+
+                                        div()
+                                            .h(px(26.0))
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .px_2()
+                                            .text_size(px(12.0))
+                                            .rounded_sm()
+                                            .cursor_pointer()
+                                            .bg(if is_selected { led_color_to_gpui(theme.editor.selection) } else { hsla(0.,0.,0.,0.).into() })
+                                            .hover(|s| s.bg(with_alpha(fg, 0.08)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                this.gdrive_selected_idx = idx;
+                                                this.open_selected_gdrive_item(cx);
+                                            }))
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1p5()
+                                                    .child(icon)
+                                                    .child(item.name.clone())
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(with_alpha(fg, 0.5))
+                                                    .text_size(px(11.0))
+                                                    .child(size_str)
+                                            )
+                                    }).collect()
+                                })
+                        )
+                        .children(self.gdrive_error.as_ref().map(|err| {
+                            div()
+                                .text_size(px(11.5))
+                                .text_color(gpui::rgb(0xff5555))
+                                .child(err.clone())
+                        }))
+                        // Footer buttons
+                        .child(
+                            div()
+                                .flex()
+                                .justify_between()
+                                .items_center()
+                                .mt_1()
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .text_color(with_alpha(fg, 0.5))
+                                        .child("Press Enter or double-click to open")
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .h(px(28.0))
+                                                .px_3()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded_md()
+                                                .bg(button_bg)
+                                                .text_size(px(12.0))
+                                                .cursor_pointer()
+                                                .hover(move |s| s.bg(button_hover))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                                .child(self.i18n.get("dialog.cancel").to_string())
+                                        )
+                                        .child(
+                                            div()
+                                                .h(px(28.0))
+                                                .px_4()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded_md()
+                                                .bg(accent)
+                                                .text_color(gpui::rgb(0xffffff))
+                                                .text_size(px(12.0))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .cursor_pointer()
+                                                .hover(|s| s.opacity(0.9))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.open_selected_gdrive_item(cx)))
+                                                .child(self.i18n.get("gdrive.open").to_string())
+                                        )
+                                )
+                        );
+                }
+
+                content
             }
         }
     }

@@ -508,17 +508,24 @@ impl WindowView {
         }).detach();
     }
 
+    fn handle_open_gdrive(&mut self, _: &OpenGoogleDrive, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_dialog(DialogType::GoogleDrive, Some(window), cx);
+    }
+
     fn handle_save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
         let path_opt = workspace.read(cx).active_editor().and_then(|e| e.path.clone());
         if path_opt.is_none() && workspace.read(cx).active_editor().is_none() {
             return;
         }
-        if let Some(_path) = path_opt {
+        if let Some(path) = path_opt {
             workspace.update(cx, |w, cx| {
                 let _ = w.save_active_editor();
                 cx.notify();
             });
+            if zee_core::gdrive::GDriveManager::is_gdrive_path(&path) {
+                zee_core::gdrive::GDriveManager::sync_in_background(&path, None);
+            }
         } else {
             cx.spawn(|_, cx: &mut AsyncApp| {
                 let cx = cx.clone();
@@ -1363,6 +1370,7 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_new_window))
             .on_action(cx.listener(Self::handle_open))
             .on_action(cx.listener(Self::handle_open_folder))
+            .on_action(cx.listener(Self::handle_open_gdrive))
             .on_action(cx.listener(Self::handle_save))
             .on_action(cx.listener(Self::handle_save_as))
             .on_action(cx.listener(Self::handle_close_tab))
@@ -1671,6 +1679,7 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.file.new_window").to_string(), Some("Ctrl+N"), false, NewWindow {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open").to_string(), Some("Ctrl+O"), false, Open {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open_folder").to_string(), Some("Ctrl+Shift+O"), false, OpenFolder {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.open_gdrive").to_string(), None, false, OpenGoogleDrive {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.file.reload").to_string(), Some("Ctrl+Shift+R"), false, ReloadFile {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border));

@@ -401,6 +401,7 @@ impl App {
                 menu: Menu::new("Templates", template_items),
             },
             MenuItem::Action { label: i18n.get("menu.file.open").to_string(), action: Action::Open, shortcut: Some("Ctrl+O".to_string()) },
+            MenuItem::Action { label: i18n.get("menu.file.open_gdrive").to_string(), action: Action::OpenGoogleDrive, shortcut: None },
             MenuItem::Separator,
             MenuItem::Action { label: i18n.get("menu.file.reload").to_string(), action: Action::ReloadFile, shortcut: Some("Ctrl+Shift+R".to_string()) },
             MenuItem::Separator,
@@ -3843,7 +3844,15 @@ impl App {
     pub fn save_buffer(&mut self, idx: usize) -> anyhow::Result<()> {
         if let Some(buffer) = self.buffers.get_mut(idx) {
             buffer.cleanup_on_save(self.config.trim_trailing_whitespace, self.config.ensure_final_newline);
-            buffer.save()
+            let res = buffer.save();
+            if res.is_ok() {
+                if let Some(path) = &buffer.path {
+                    if zee_core::gdrive::GDriveManager::is_gdrive_path(path) {
+                        zee_core::gdrive::GDriveManager::sync_in_background(path, None);
+                    }
+                }
+            }
+            res
         } else {
             anyhow::bail!("Buffer not found")
         }
@@ -3852,7 +3861,13 @@ impl App {
     pub fn save_as_buffer(&mut self, idx: usize, path: &std::path::Path) -> anyhow::Result<()> {
         if let Some(buffer) = self.buffers.get_mut(idx) {
             buffer.cleanup_on_save(self.config.trim_trailing_whitespace, self.config.ensure_final_newline);
-            buffer.save_as(path)
+            let res = buffer.save_as(path);
+            if res.is_ok() {
+                if zee_core::gdrive::GDriveManager::is_gdrive_path(path) {
+                    zee_core::gdrive::GDriveManager::sync_in_background(path, None);
+                }
+            }
+            res
         } else {
             anyhow::bail!("Buffer not found")
         }
@@ -3914,6 +3929,11 @@ impl App {
                 self.focus = Focus::Dialog;
                 self.pending_op = PendingOp::Open;
                 self.current_dialog = Some(Box::new(dialog::OpenDialog::new(&self.i18n)));
+            }
+            Action::OpenGoogleDrive => {
+                self.focus = Focus::Dialog;
+                self.pending_op = PendingOp::Open;
+                self.current_dialog = Some(Box::new(dialog::GoogleDriveDialog::new(&self.i18n)));
             }
             Action::ReloadFile => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {

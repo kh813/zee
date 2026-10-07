@@ -182,6 +182,7 @@ impl I18n {
         m.insert("menu.file.open_templates_folder".to_string(), "Open Templates Folder".to_string());
         m.insert("menu.file.open".to_string(), "Open…".to_string());
         m.insert("menu.file.open_folder".to_string(), "Open Folder…".to_string());
+        m.insert("menu.file.open_gdrive".to_string(), "Open from Google Drive…".to_string());
         m.insert("menu.file.open_recent".to_string(), "Open Recent".to_string());
         m.insert("menu.file.clear_recent".to_string(), "Clear Recent".to_string());
         m.insert("menu.file.no_recent".to_string(), "No Recent Files".to_string());
@@ -370,6 +371,18 @@ impl I18n {
 
         m.insert("about.version".to_string(), "Version".to_string());
         m.insert("about.license".to_string(), "License".to_string());
+
+        m.insert("gdrive.title".to_string(), "Google Drive".to_string());
+        m.insert("gdrive.connect".to_string(), "Connect Google Drive".to_string());
+        m.insert("gdrive.connecting".to_string(), "Authenticating in browser...".to_string());
+        m.insert("gdrive.connected".to_string(), "Connected".to_string());
+        m.insert("gdrive.sign_out".to_string(), "Sign Out".to_string());
+        m.insert("gdrive.syncing".to_string(), "Syncing with Google Drive...".to_string());
+        m.insert("gdrive.synced".to_string(), "Google Drive Synced".to_string());
+        m.insert("gdrive.sync_error".to_string(), "Google Drive Sync Failed".to_string());
+        m.insert("gdrive.open".to_string(), "Open".to_string());
+        m.insert("gdrive.cancel".to_string(), "Cancel".to_string());
+        m.insert("gdrive.search_placeholder".to_string(), "Search Google Drive...".to_string());
         m
     }
 
@@ -389,6 +402,7 @@ impl I18n {
         m.insert("menu.file.open_templates_folder".to_string(), "テンプレートフォルダを開く".to_string());
         m.insert("menu.file.open".to_string(), "開く…".to_string());
         m.insert("menu.file.open_folder".to_string(), "フォルダを開く…".to_string());
+        m.insert("menu.file.open_gdrive".to_string(), "Google ドライブから開く…".to_string());
         m.insert("menu.file.open_recent".to_string(), "最近開いたファイル".to_string());
         m.insert("menu.file.clear_recent".to_string(), "履歴を消去".to_string());
         m.insert("menu.file.no_recent".to_string(), "履歴なし".to_string());
@@ -577,6 +591,18 @@ impl I18n {
 
         m.insert("about.version".to_string(), "バージョン".to_string());
         m.insert("about.license".to_string(), "ライセンス".to_string());
+
+        m.insert("gdrive.title".to_string(), "Google ドライブ".to_string());
+        m.insert("gdrive.connect".to_string(), "Google ドライブに接続".to_string());
+        m.insert("gdrive.connecting".to_string(), "ブラウザで認証待機中...".to_string());
+        m.insert("gdrive.connected".to_string(), "接続中".to_string());
+        m.insert("gdrive.sign_out".to_string(), "ログアウト".to_string());
+        m.insert("gdrive.syncing".to_string(), "Google ドライブへ同期中...".to_string());
+        m.insert("gdrive.synced".to_string(), "Google ドライブ同期完了".to_string());
+        m.insert("gdrive.sync_error".to_string(), "Google ドライブ同期失敗".to_string());
+        m.insert("gdrive.open".to_string(), "開く".to_string());
+        m.insert("gdrive.cancel".to_string(), "キャンセル".to_string());
+        m.insert("gdrive.search_placeholder".to_string(), "Google ドライブ内を検索...".to_string());
         m
     }
 

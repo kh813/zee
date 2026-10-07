@@ -864,6 +864,7 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
                     MenuItem::action(i18n.get("menu.file.new_window"), NewWindow {}),
                     MenuItem::action(i18n.get("menu.file.open"), Open {}),
                     MenuItem::action(i18n.get("menu.file.open_folder"), OpenFolder {}),
+                    MenuItem::action(i18n.get("menu.file.open_gdrive"), OpenGoogleDrive {}),
                     MenuItem::submenu(Menu {
                         name: i18n.get("menu.file.open_recent").into(),
                         items: recent_items,
@@ -997,7 +998,7 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
 
 actions!(zee, [
     // App/File
-    About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, Save, SaveAs, CloseTab,
+    About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, OpenGoogleDrive, Save, SaveAs, CloseTab,
     ReloadFile, ClearRecent,
     ToggleTrimTrailingWhitespace, ToggleEnsureFinalNewline,
     ExportConfig, ExportAll, ImportConfig, ManagePlugins, OpenPluginsFolder, OpenTemplatesFolder,

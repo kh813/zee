@@ -13,6 +13,7 @@ pub mod session;
 pub mod cli;
 pub mod recent;
 pub mod template;
+pub mod gdrive;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -21,6 +22,7 @@ pub enum Action {
     NewFromTemplate(String),
     OpenTemplatesFolder,
     Open,
+    OpenGoogleDrive,
     ReloadFile,
     OpenRecent(std::path::PathBuf),
     ClearRecent,

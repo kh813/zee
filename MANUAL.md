@@ -140,7 +140,19 @@ zee file1.txt file2.txt  # Open multiple files in tabs
 
 Toggle the sidebar with `View > [x] Sidebar` or `Ctrl+B` / `⌘B`:
 - **Files Tab**:
-  Interactive file tree explorer for the workspace directory. Supports folder expansion, click-to-open, and smooth vertical/horizontal scrolling.
+  Interactive file tree explorer for the workspace directory. Supports folder expansion, click-to-open, smooth vertical/horizontal scrolling, and full file system management:
+  - **Clean Context Menu**: Keeps the file tree clean without cluttering action icons. Right-click on any file or folder (or press `m` / `F10` in TUI) to open a context menu with:
+    - `📄 New File`: Create a new file inside the directory (or next to the file).
+    - `📁 New Folder`: Create a new directory.
+    - `✏️ Rename`: Rename the selected file or directory.
+    - `🗑️ Delete`: Delete the selected item (with confirmation prompt).
+    - `↻ Refresh`: Rescan the file tree.
+    - `👁 Show/Hide Hidden Files`: Toggle dotfiles visibility (`.gitignore`, `.env`, `.cargo/`, etc.).
+  - **Show/Hide Hidden Files (Dotfiles)**:
+    - In GUI: Click the `👁` button in the sidebar header, or toggle from the right-click context menu.
+    - In TUI / CLI: Press `h` (while sidebar is focused) or choose from the right-click context menu (`m`).
+    - The setting is automatically saved to `config.toml` (`show_hidden = true/false`) and restored on restart.
+  - **Refresh File Tree**: Detects external changes made outside the editor (e.g. in macOS Finder, Windows Explorer, or shell commands) while preserving your expanded/collapsed folder states. Trigger via the header `↻` button, right-click context menu, shortcut `F5` / `⌘⌥R` (`Ctrl+Alt+R`), or the menu `View > Refresh File Tree` (in TUI: press `F5` or `r` while sidebar is focused).
 - **Outline Tab**:
   Fast code symbol navigator. Automatically recognizes and extracts code structures:
   - **Markdown**: Heading hierarchy (`#`, `##`, etc.).
@@ -247,6 +259,12 @@ In the desktop GUI, hold the `Alt` key (Option on macOS) while dragging the mous
 | Previous tab | `Ctrl+Shift+Tab` |
 | Toggle Line Numbers | `View > [x] Line Numbers` |
 | Toggle Word Wrap | `View > [x] Word Wrap` |
+| Refresh File Tree | `F5` / `Ctrl+Alt+R` (`⌘⌥R` on macOS) |
+
+> **Preferences / Settings Dialog (`Ctrl+,` / `⌘,`)**:
+> - Available in both GUI (`zeeg`) and TUI (`zee`).
+> - In TUI, multi-choice items (such as **Language**, **Theme**, **Sidebar Position**, **Tab Size**) display as pseudo pull-down menus (e.g. `[ 日本語  ▼ ]`). Press `Enter` on a highlighted row to open the dropdown list, use `↑`/`↓` (or `k`/`j`) to navigate options, and press `Enter` to confirm your selection. Press `Esc` to close the dropdown without changes. Mouse clicks and mouse wheel scrolling are also fully supported.
+> - Press `s` or click `[ Save & Apply ]` to save and apply settings.
 
 ### Vi / Vim Mode Commands (Normal, Visual, Visual Line & Visual Block Modes)
 

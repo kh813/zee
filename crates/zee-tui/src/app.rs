@@ -35,6 +35,10 @@ pub enum PendingOp {
     Exit,
     Close,
     Reload,
+    NewFile,
+    NewFolder,
+    Rename,
+    Delete,
 }
 
 pub struct App {
@@ -54,7 +58,7 @@ pub struct App {
     pub active_menu: Option<usize>,
     pub selected_item: usize,
     pub submenu_stack: Vec<(usize, usize)>, // (menu_idx, item_idx)
-    pub dropdown_rects: Vec<(u16, u16, u16, u16, usize)>, // x, y, w, h, item_idx
+    pub dropdown_rects: Vec<(u16, u16, u16, u16, usize, usize)>, // x, y, w, h, depth, item_idx
     pub current_dialog: Option<Box<dyn Dialog>>,
     pub pending_op: PendingOp,
     pub target_encoding: Option<Encoding>,
@@ -177,10 +181,11 @@ impl App {
         let menus = Self::build_menus(&i18n, &config, buffers.get(active_buffer), &themes, &syntax_defs);
 
         let mut layout = Layout::new(width, height);
-        layout.recompute(&menus, &buffers, active_buffer, config.line_numbers, config.sidebar, config.vi_mode);
+        layout.recompute(&menus, &buffers, active_buffer, config.line_numbers, config.sidebar, &config.sidebar_position, config.vi_mode);
 
         let root_dir = root_dir.unwrap_or_else(zee_core::file_tree::user_root_dir);
-        let sidebar = crate::widgets::sidebar::Sidebar::new(root_dir, config.sidebar);
+        let mut sidebar = crate::widgets::sidebar::Sidebar::new(root_dir, config.sidebar);
+        sidebar.file_tree.set_show_hidden(config.show_hidden);
 
         let mut app = App {
             focus: Focus::Editor,
@@ -437,6 +442,8 @@ impl App {
             is_radio: false,
         });
         file_items.push(MenuItem::Separator);
+        file_items.push(MenuItem::Action { label: i18n.get("menu.app.preferences").to_string(), action: Action::OpenSettings, shortcut: Some("Ctrl+,".to_string()) });
+        file_items.push(MenuItem::Separator);
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.close").to_string(), action: Action::Close, shortcut: Some("Ctrl+W".to_string()) });
         file_items.push(MenuItem::Separator);
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.exit").to_string(), action: Action::Exit, shortcut: Some("Ctrl+Q".to_string()) });
@@ -498,6 +505,7 @@ impl App {
             self.active_buffer,
             self.config.line_numbers,
             self.sidebar.visible,
+            &self.config.sidebar_position,
             self.config.vi_mode,
         );
     }
@@ -661,7 +669,36 @@ impl App {
                         self.ensure_cursor_visible();
                         self.focus = Focus::Editor;
                     }
+                    crate::widgets::sidebar::SidebarAction::ToggleHidden => {
+                        let new_val = self.sidebar.toggle_show_hidden();
+                        self.config.show_hidden = new_val;
+                        let _ = zee_core::Config::save_show_hidden(new_val);
+                    }
                     crate::widgets::sidebar::SidebarAction::None => {}
+                }
+            }
+            KeyCode::F(5) | KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.sidebar.refresh_files();
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                if self.sidebar.active_tab == crate::widgets::sidebar::SidebarTab::Files {
+                    let new_val = self.sidebar.toggle_show_hidden();
+                    self.config.show_hidden = new_val;
+                    let _ = zee_core::Config::save_show_hidden(new_val);
+                }
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') | KeyCode::F(10) => {
+                if self.sidebar.active_tab == crate::widgets::sidebar::SidebarTab::Files {
+                    let items = self.sidebar.flatten_files();
+                    if let Some(item) = items.get(self.sidebar.selected_file_idx) {
+                        self.current_dialog = Some(Box::new(dialog::FileContextMenuDialog::new(
+                            item.path.clone(),
+                            item.is_dir,
+                            self.sidebar.file_tree.show_hidden,
+                            &self.i18n,
+                        )));
+                        self.focus = Focus::Dialog;
+                    }
                 }
             }
             _ => {}
@@ -678,6 +715,7 @@ impl App {
             is_focused,
             &self.theme,
             active_path,
+            self.layout.is_right_sidebar,
         );
     }
 
@@ -757,6 +795,13 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) {
+        // Modal dialog ALWAYS captures all keyboard input!
+        if self.current_dialog.is_some() {
+            self.focus = Focus::Dialog;
+            self.handle_dialog_key(key);
+            return;
+        }
+
         // Global shortcuts (Ctrl+...) only if not in a dialog
         if self.focus != Focus::Dialog && key.modifiers == KeyModifiers::CONTROL {
             match key.code {
@@ -777,6 +822,7 @@ impl App {
                 KeyCode::Char('b') => { self.perform_action(Action::ToggleSidebar); return; }
                 KeyCode::Char('h') => { self.perform_action(Action::About); return; }
                 KeyCode::Char('i') => { self.perform_action(Action::ToggleViMode); return; }
+                KeyCode::Char(',') => { self.perform_action(Action::OpenSettings); return; }
                 KeyCode::Tab | KeyCode::PageDown | KeyCode::Char(']') => {
                     self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
                     self.update_active_outline();
@@ -2901,7 +2947,7 @@ impl App {
         }
     }
 
-    fn handle_dialog_result(&mut self, result: DialogResult<dialog::Action>) {
+    pub(crate) fn handle_dialog_result(&mut self, result: DialogResult<dialog::Action>) {
         match result {
             DialogResult::Ok(action) => {
                 match action {
@@ -2972,7 +3018,140 @@ impl App {
                             self.ensure_cursor_visible();
                         }
                     }
-                    dialog::Action::Confirm => {}
+                    dialog::Action::FileContextMenuAction { action, path, is_dir: _ } => {
+                        match action {
+                            "new_file" => {
+                                self.pending_op = PendingOp::NewFile;
+                                self.target_path = Some(path);
+                                self.current_dialog = Some(Box::new(dialog::InputDialog::new(
+                                    self.i18n.get("sidebar.new_file").to_string(),
+                                    self.i18n.get("sidebar.prop_file").to_string(),
+                                    String::new(),
+                                )));
+                                self.focus = Focus::Dialog;
+                                return;
+                            }
+                            "new_folder" => {
+                                self.pending_op = PendingOp::NewFolder;
+                                self.target_path = Some(path);
+                                self.current_dialog = Some(Box::new(dialog::InputDialog::new(
+                                    self.i18n.get("sidebar.new_folder").to_string(),
+                                    self.i18n.get("sidebar.new_folder").to_string(),
+                                    String::new(),
+                                )));
+                                self.focus = Focus::Dialog;
+                                return;
+                            }
+                            "rename" => {
+                                self.pending_op = PendingOp::Rename;
+                                let curr_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                                self.target_path = Some(path);
+                                self.current_dialog = Some(Box::new(dialog::InputDialog::new(
+                                    self.i18n.get("sidebar.rename").to_string(),
+                                    self.i18n.get("sidebar.rename").to_string(),
+                                    curr_name,
+                                )));
+                                self.focus = Focus::Dialog;
+                                return;
+                            }
+                            "delete" => {
+                                self.pending_op = PendingOp::Delete;
+                                self.target_path = Some(path);
+                                self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                                    self.i18n.get("sidebar.delete").to_string(),
+                                    self.i18n.get("sidebar.delete_confirm").to_string(),
+                                    vec![
+                                        (self.i18n.get("dialog.yes").to_string(), dialog::Action::Confirm),
+                                        (self.i18n.get("dialog.no").to_string(), dialog::Action::Cancel),
+                                    ],
+                                )));
+                                self.focus = Focus::Dialog;
+                                return;
+                            }
+                            "refresh" => {
+                                self.sidebar.refresh_files();
+                                self.current_dialog = None;
+                                self.pending_op = PendingOp::None;
+                                self.focus = Focus::Sidebar;
+                                return;
+                            }
+                            "toggle_hidden" => {
+                                let new_val = self.sidebar.toggle_show_hidden();
+                                self.config.show_hidden = new_val;
+                                let _ = zee_core::Config::save_show_hidden(new_val);
+                                self.current_dialog = None;
+                                self.pending_op = PendingOp::None;
+                                self.focus = Focus::Sidebar;
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                    dialog::Action::InputName(name) => {
+                        let op = self.pending_op;
+                        let target = self.target_path.take();
+                        self.pending_op = PendingOp::None;
+                        if let Some(target_dir) = target {
+                            match op {
+                                PendingOp::NewFile => {
+                                    if let Ok(new_path) = self.sidebar.file_tree.create_file(&target_dir, &name) {
+                                        self.sidebar.refresh_files();
+                                        self.sidebar.file_tree.ensure_expanded(&new_path);
+                                        self.open_or_switch_to_file(new_path);
+                                    }
+                                }
+                                PendingOp::NewFolder => {
+                                    if let Ok(new_path) = self.sidebar.file_tree.create_folder(&target_dir, &name) {
+                                        self.sidebar.refresh_files();
+                                        self.sidebar.file_tree.ensure_expanded(&new_path);
+                                    }
+                                }
+                                PendingOp::Rename => {
+                                    if let Ok(new_path) = self.sidebar.file_tree.rename_item(&target_dir, &name) {
+                                        self.sidebar.refresh_files();
+                                        // Update open buffer paths if matching
+                                        for buf in &mut self.buffers {
+                                            if buf.path.as_deref() == Some(&target_dir) {
+                                                buf.path = Some(new_path.clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        self.current_dialog = None;
+                        self.focus = Focus::Sidebar;
+                        return;
+                    }
+                    dialog::Action::Confirm => {
+                        if self.pending_op == PendingOp::Delete {
+                            if let Some(target) = self.target_path.take() {
+                                if let Ok(()) = self.sidebar.file_tree.delete_item(&target) {
+                                    self.sidebar.refresh_files();
+                                    // If deleted file was open, remove buffer
+                                    let mut i = 0;
+                                    while i < self.buffers.len() {
+                                        if self.buffers[i].path.as_deref() == Some(&target) {
+                                            self.buffers.remove(i);
+                                            if self.buffers.is_empty() {
+                                                self.buffers.push(self.new_editor());
+                                            }
+                                            self.active_buffer = self.active_buffer.min(self.buffers.len() - 1);
+                                        } else {
+                                            i += 1;
+                                        }
+                                    }
+                                    self.update_active_outline();
+                                    self.recompute_layout();
+                                }
+                            }
+                            self.current_dialog = None;
+                            self.pending_op = PendingOp::None;
+                            self.focus = Focus::Sidebar;
+                            return;
+                        }
+                    }
                     dialog::Action::Save => {
                         let op = self.pending_op;
                         self.pending_op = PendingOp::None;
@@ -3058,6 +3237,41 @@ impl App {
                             }
                             _ => {}
                         }
+                    }
+                    dialog::Action::SaveSettings(new_cfg) => {
+                        let old_theme = self.config.theme.clone();
+                        let old_lang = self.config.language.clone();
+                        let old_show_hidden = self.config.show_hidden;
+
+                        let _ = Config::write_key("theme", &new_cfg.theme);
+                        let _ = Config::write_key("language", &new_cfg.language);
+                        let _ = Config::write_key("sidebar_position", &new_cfg.sidebar_position);
+                        let _ = Config::write_key("tab_size", &new_cfg.tab_size.to_string());
+                        let _ = Config::write_key("expand_tab", &new_cfg.expand_tab.to_string());
+                        let _ = Config::write_key("line_numbers", &new_cfg.line_numbers.to_string());
+                        let _ = Config::write_key("word_wrap", &new_cfg.word_wrap.to_string());
+                        let _ = Config::write_key("vi_mode", &new_cfg.vi_mode.to_string());
+                        let _ = Config::save_show_hidden(new_cfg.show_hidden);
+
+                        self.config = *new_cfg;
+
+                        if self.config.show_hidden != old_show_hidden {
+                            self.sidebar.file_tree.set_show_hidden(self.config.show_hidden);
+                            self.sidebar.refresh_files();
+                        }
+
+                        if self.config.theme != old_theme {
+                            if let Some(t) = self.themes.iter().find(|t| t.meta.name.to_lowercase().replace(" ", "-") == self.config.theme) {
+                                self.theme = t.clone();
+                            }
+                        }
+
+                        if self.config.language != old_lang {
+                            self.i18n = I18n::load(&self.config.language);
+                        }
+
+                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                        self.recompute_layout();
                     }
                     dialog::Action::Cancel => {}
                 }
@@ -3326,14 +3540,21 @@ impl App {
         self.submenu_stack.clear();
     }
 
+    fn close_menu(&mut self) {
+        if self.focus == Focus::Menu {
+            self.focus = Focus::Editor;
+        }
+        self.active_menu = None;
+        self.submenu_stack.clear();
+    }
+
     fn handle_menu_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
                 if let Some((_, parent_selected)) = self.submenu_stack.pop() {
                     self.selected_item = parent_selected;
                 } else {
-                    self.focus = Focus::Editor;
-                    self.active_menu = None;
+                    self.close_menu();
                 }
             }
             KeyCode::Left => {
@@ -3397,8 +3618,11 @@ impl App {
                 match item {
                     MenuItem::Action { action, .. } | MenuItem::Toggle { action, .. } => {
                         self.perform_action(action);
-                        self.focus = Focus::Editor;
+                        if self.current_dialog.is_none() && self.focus != Focus::Panel {
+                            self.focus = Focus::Editor;
+                        }
                         self.active_menu = None;
+                        self.submenu_stack.clear();
                     }
                     MenuItem::Submenu { .. } => {
                         self.submenu_stack.push((self.active_menu.unwrap(), self.selected_item));
@@ -3941,8 +4165,21 @@ impl App {
                 self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
                 self.recompute_layout();
             }
+            Action::OpenSettings => {
+                self.open_settings_dialog();
+            }
             _ => {} // TODO: other actions
         }
+    }
+
+    pub fn open_settings_dialog(&mut self) {
+        let dialog = crate::widgets::dialog::SettingsDialog::new(
+            self.config.clone(),
+            &self.themes,
+            &self.i18n,
+        );
+        self.current_dialog = Some(Box::new(dialog));
+        self.focus = Focus::Dialog;
     }
 
     fn mouse_to_buffer_pos(&self, x: u16, y: u16) -> Option<usize> {
@@ -4014,7 +4251,9 @@ impl App {
         let now = Instant::now();
         let (x, y) = (mouse.column, mouse.row);
 
-        if self.focus == Focus::Dialog {
+        // Modal dialog ALWAYS captures all mouse events!
+        if self.focus == Focus::Dialog || self.current_dialog.is_some() {
+            self.focus = Focus::Dialog;
             if let Some(ref mut dialog) = self.current_dialog {
                 let (dx, dy, dw, dh) = self.layout.dialog_bounds(dialog.dimensions());
                 let result = dialog.handle_mouse(mouse, dx, dy, dw, dh);
@@ -4040,24 +4279,30 @@ impl App {
 
                 // Handle Menu interaction (Left click only)
                 if !is_middle && self.focus == Focus::Menu {
-                    for (rx, ry, rw, rh, item_idx) in &self.dropdown_rects {
+                    for (rx, ry, rw, rh, depth, item_idx) in self.dropdown_rects.iter().rev() {
                         if x >= *rx && x < *rx + *rw && y >= *ry && y < *ry + *rh {
-                            self.selected_item = *item_idx;
-                            let menu = self.get_current_active_menu();
-                            let item = menu.items[self.selected_item].clone();
-                            match item {
-                                MenuItem::Action { action, .. } | MenuItem::Toggle { action, .. } => {
-                                    self.perform_action(action);
-                                    self.focus = Focus::Editor;
-                                    self.active_menu = None;
+                            if *depth <= self.submenu_stack.len() {
+                                self.submenu_stack.truncate(*depth);
+                                self.selected_item = *item_idx;
+                                let menu = self.get_current_active_menu();
+                                let item = menu.items[self.selected_item].clone();
+                                match item {
+                                    MenuItem::Action { action, .. } | MenuItem::Toggle { action, .. } => {
+                                        self.perform_action(action);
+                                        if self.current_dialog.is_none() && self.focus != Focus::Panel {
+                                            self.focus = Focus::Editor;
+                                        }
+                                        self.active_menu = None;
+                                        self.submenu_stack.clear();
+                                    }
+                                    MenuItem::Submenu { .. } => {
+                                        self.submenu_stack.push((self.active_menu.unwrap(), self.selected_item));
+                                        self.selected_item = 0;
+                                    }
+                                    MenuItem::Separator => {}
                                 }
-                                MenuItem::Submenu { .. } => {
-                                    self.submenu_stack.push((self.active_menu.unwrap(), self.selected_item));
-                                    self.selected_item = 0;
-                                }
-                                MenuItem::Separator => {}
+                                return;
                             }
-                            return;
                         }
                     }
                 }
@@ -4075,11 +4320,13 @@ impl App {
                         }
                     }
                     if self.focus == Focus::Menu {
-                        self.focus = Focus::Editor;
-                        self.active_menu = None;
+                        self.close_menu();
                     }
                 } else if y >= ty && y < ty + th {
                     // Tab Bar
+                    if self.focus == Focus::Menu {
+                        self.close_menu();
+                    }
                     for (idx, start, end) in &self.layout.tab_rects {
                         if x >= *start && x < *end {
                             if is_middle {
@@ -4104,14 +4351,20 @@ impl App {
                     }
                 } else if y >= self.height.saturating_sub(self.layout.status_height) {
                     // Status Bar
+                    if self.focus == Focus::Menu {
+                        self.close_menu();
+                    }
                 } else {
                     // Sidebar
                     let (sx, sy, sw, sh) = self.layout.sidebar_bounds();
                     if sw > 0 && x >= sx && x < sx + sw && y >= sy && y < sy + sh {
+                        if self.focus == Focus::Menu {
+                            self.close_menu();
+                        }
                         let rel_x = x - sx;
                         let rel_y = y - sy;
                         self.focus = Focus::Sidebar;
-                        let action = self.sidebar.handle_click(rel_x, rel_y, sh.saturating_sub(1) as usize);
+                        let action = self.sidebar.handle_click(rel_x, rel_y, self.layout.is_right_sidebar, sw, sh.saturating_sub(1) as usize);
                         match action {
                             crate::widgets::sidebar::SidebarAction::OpenFile(path) => {
                                 self.open_or_switch_to_file(path);
@@ -4128,6 +4381,11 @@ impl App {
                                 self.ensure_cursor_visible();
                                 self.focus = Focus::Editor;
                             }
+                            crate::widgets::sidebar::SidebarAction::ToggleHidden => {
+                                let new_val = self.sidebar.toggle_show_hidden();
+                                self.config.show_hidden = new_val;
+                                let _ = zee_core::Config::save_show_hidden(new_val);
+                            }
                             crate::widgets::sidebar::SidebarAction::None => {}
                         }
                         return;
@@ -4135,8 +4393,7 @@ impl App {
 
                     // Editor or Panel
                     if self.focus == Focus::Menu {
-                        self.focus = Focus::Editor;
-                        self.active_menu = None;
+                        self.close_menu();
                     } else {
                         let (gx, gy, gw, gh) = self.layout.gutter_bounds();
                         if x >= gx && x < gx + gw && y >= gy && y < gy + gh {
@@ -4194,6 +4451,24 @@ impl App {
                         buffer.cursor = pos;
                         buffer.update_selection();
                     }
+                }
+            }
+            MouseEventKind::Down(event::MouseButton::Right) => {
+                let (sx, sy, sw, sh) = self.layout.sidebar_bounds();
+                if sw > 0 && x >= sx && x < sx + sw && y >= sy && y < sy + sh {
+                    let rel_x = x - sx;
+                    let rel_y = y - sy;
+                    self.focus = Focus::Sidebar;
+                    if let Some((path, is_dir)) = self.sidebar.item_at_click(rel_x, rel_y) {
+                        self.current_dialog = Some(Box::new(dialog::FileContextMenuDialog::new(
+                            path,
+                            is_dir,
+                            self.sidebar.file_tree.show_hidden,
+                            &self.i18n,
+                        )));
+                        self.focus = Focus::Dialog;
+                    }
+                    return;
                 }
             }
             MouseEventKind::Up(event::MouseButton::Left) => {
@@ -4433,9 +4708,8 @@ impl App {
         }
     }
 
-    fn render_dropdown(&mut self, x: u16, y: u16, menu: &Menu, depth: usize) {
-        let items = &menu.items;
-        let mut max_width = items.iter().map(|item| match item {
+    fn calculate_dropdown_width(menu: &Menu) -> u16 {
+        let max_width = menu.items.iter().map(|item| match item {
             MenuItem::Action { label, shortcut, .. } => {
                 let lw: usize = label.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)).sum();
                 let sw: usize = shortcut.as_ref().map(|s| s.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)).sum::<usize>() + 2).unwrap_or(0);
@@ -4451,14 +4725,60 @@ impl App {
             }
             MenuItem::Separator => 5,
         }).max().unwrap_or(10) as u16;
-        max_width += 2; // Padding
+        max_width + 3 + 2 // max_width + padding (3) + borders (2)
+    }
 
-        let bg = self.to_ct_color(self.theme.ui.dialog_bg);
+    fn render_dropdown(&mut self, mut x: u16, mut y: u16, menu: &Menu, depth: usize) {
+        let items = &menu.items;
+        let box_w = Self::calculate_dropdown_width(menu);
+        let max_width = box_w.saturating_sub(5); // box_w - padding(3) - borders(2)
+        let total_h = items.len() as u16 + 2;
+
+        // Clamp dropdown within screen bounds
+        if x + box_w > self.width {
+            x = self.width.saturating_sub(box_w);
+        }
+        if y + total_h > self.height {
+            y = self.height.saturating_sub(total_h);
+        }
+
+        let editor_bg = self.to_ct_color(self.theme.editor.background);
+        let mut bg = self.to_ct_color(self.theme.ui.dialog_bg);
+        // Ensure menu background is clearly distinct from editor background (e.g. pure black)
+        if bg == editor_bg || bg == crossterm::style::Color::Reset || matches!(bg, crossterm::style::Color::Rgb { r: 0, g: 0, b: 0 }) {
+            bg = crossterm::style::Color::AnsiValue(236);
+        }
+
         let fg = self.to_ct_color(self.theme.ui.menu_bar_fg);
-        let active_bg = self.to_ct_color(self.theme.ui.menu_item_active_bg);
+        let mut active_bg = self.to_ct_color(self.theme.ui.menu_item_active_bg);
+        if active_bg == bg || active_bg == crossterm::style::Color::Reset || active_bg == editor_bg {
+            active_bg = crossterm::style::Color::AnsiValue(240);
+        }
         let active_fg = self.to_ct_color(self.theme.ui.menu_item_active_fg);
-        let border_fg = self.to_ct_color(self.theme.ui.dialog_border);
+
+        let mut border_fg = self.to_ct_color(self.theme.ui.dialog_border);
+        if border_fg == crossterm::style::Color::Reset || border_fg == bg || border_fg == editor_bg {
+            border_fg = crossterm::style::Color::AnsiValue(245);
+        }
         let sc_fg = self.to_ct_color(self.theme.editor.line_number);
+
+        let box_w = max_width + 2;
+        let top_y = y;
+        let bot_y = y + 1 + items.len() as u16;
+
+        // Render top border
+        self.renderer.set_cell(x, top_y, Cell { ch: '┌', fg: border_fg, bg, ..Default::default() });
+        for dx in 1..=max_width {
+            self.renderer.set_cell(x + dx, top_y, Cell { ch: '─', fg: border_fg, bg, ..Default::default() });
+        }
+        self.renderer.set_cell(x + max_width + 1, top_y, Cell { ch: '┐', fg: border_fg, bg, ..Default::default() });
+
+        // Render bottom border
+        self.renderer.set_cell(x, bot_y, Cell { ch: '└', fg: border_fg, bg, ..Default::default() });
+        for dx in 1..=max_width {
+            self.renderer.set_cell(x + dx, bot_y, Cell { ch: '─', fg: border_fg, bg, ..Default::default() });
+        }
+        self.renderer.set_cell(x + max_width + 1, bot_y, Cell { ch: '┘', fg: border_fg, bg, ..Default::default() });
 
         let is_current_level = depth == self.submenu_stack.len();
         let selected_at_this_level = if depth < self.submenu_stack.len() {
@@ -4470,37 +4790,37 @@ impl App {
         };
 
         for (i, item) in items.iter().enumerate() {
-            let iy = y + i as u16;
+            let iy = y + 1 + i as u16;
             let is_selected = selected_at_this_level == Some(i);
             let item_bg = if is_selected { active_bg } else { bg };
             let item_fg = if is_selected { active_fg } else { fg };
 
-            // Fill background
-            for dx in 0..max_width {
-                self.renderer.set_cell(x + dx, iy, Cell {
-                    ch: ' ',
-                    bg: item_bg,
-                    ..Default::default()
-                });
-            }
-
-            if is_current_level {
-                self.dropdown_rects.push((x, iy, max_width, 1, i));
-            }
+            self.dropdown_rects.push((x, iy, box_w, 1, depth, i));
 
             match item {
                 MenuItem::Separator => {
-                    for dx in 0..max_width {
+                    self.renderer.set_cell(x, iy, Cell { ch: '├', fg: border_fg, bg, ..Default::default() });
+                    for dx in 1..=max_width {
                         self.renderer.set_cell(x + dx, iy, Cell {
                             ch: '─',
-                            bg: item_bg,
+                            bg,
                             fg: border_fg,
                             ..Default::default()
                         });
                     }
+                    self.renderer.set_cell(x + max_width + 1, iy, Cell { ch: '┤', fg: border_fg, bg, ..Default::default() });
                 }
                 MenuItem::Action { label, shortcut, .. } => {
-                    let mut cur_ix = x + 1;
+                    // Left and right borders
+                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(x + max_width + 1, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+
+                    // Background fill
+                    for dx in 1..=max_width {
+                        self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
+                    }
+
+                    let mut cur_ix = x + 2;
                     for c in label.chars() {
                         let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
                         self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
@@ -4508,7 +4828,7 @@ impl App {
                     }
                     if let Some(s) = shortcut {
                         let sw: u16 = s.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16).sum();
-                        let mut sx = x + max_width - sw - 1;
+                        let mut sx = x + max_width - sw;
                         for c in s.chars() {
                             let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
                             self.renderer.set_cell(sx, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: if is_selected { active_fg } else { sc_fg }, ..Default::default() });
@@ -4517,12 +4837,21 @@ impl App {
                     }
                 }
                 MenuItem::Toggle { label, checked, is_radio, .. } => {
+                    // Left and right borders
+                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(x + max_width + 1, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+
+                    // Background fill
+                    for dx in 1..=max_width {
+                        self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
+                    }
+
                     let prefix = if *is_radio {
-                        if *checked { "✓ " } else { "  " }
+                        if *checked { "● " } else { "○ " }
                     } else {
-                        if *checked { "[x] " } else { "[ ] " }
+                        if *checked { "[✓] " } else { "[ ] " }
                     };
-                    let mut cur_ix = x + 1;
+                    let mut cur_ix = x + 2;
                     for c in prefix.chars().chain(label.chars()) {
                         let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
                         self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
@@ -4530,17 +4859,32 @@ impl App {
                     }
                 }
                 MenuItem::Submenu { label, menu: sub } => {
-                    let mut cur_ix = x + 1;
+                    // Left and right borders
+                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(x + max_width + 1, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+
+                    // Background fill
+                    for dx in 1..=max_width {
+                        self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
+                    }
+
+                    let mut cur_ix = x + 2;
                     for c in label.chars() {
                         let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
                         self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
                         cur_ix += cw as u16;
                     }
-                    self.renderer.set_cell(x + max_width - 2, iy, Cell { ch: '▶', bg: item_bg, fg: item_fg, ..Default::default() });
+                    self.renderer.set_cell(x + max_width, iy, Cell { ch: '▶', bg: item_bg, fg: item_fg, ..Default::default() });
 
                     if selected_at_this_level == Some(i) && depth < self.submenu_stack.len() {
                         let sub_clone = sub.clone();
-                        self.render_dropdown(x + max_width, iy, &sub_clone, depth + 1);
+                        let sub_w = Self::calculate_dropdown_width(&sub_clone);
+                        let sub_x = if x + box_w - 1 + sub_w <= self.width {
+                            x + box_w - 1
+                        } else {
+                            x.saturating_sub(sub_w).max(1)
+                        };
+                        self.render_dropdown(sub_x, iy.saturating_sub(1), &sub_clone, depth + 1);
                     }
                 }
             }
@@ -6099,6 +6443,404 @@ mod tests {
         // Close active buffer
         app.perform_action(Action::Close);
         assert_eq!(app.buffers.len(), 2);
+    }
+
+    #[test]
+    fn test_settings_dialog_open_from_menu_and_keyboard_navigation() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.sidebar_position = "left".to_string();
+
+        // Open File menu (index 0)
+        app.open_menu(0);
+        assert_eq!(app.focus, Focus::Menu);
+
+        // Find Preferences menu item index
+        let pref_idx = app.menus[0].items.iter().position(|item| match item {
+            MenuItem::Action { action, .. } => *action == Action::OpenSettings,
+            _ => false,
+        }).expect("Preferences menu item not found in File menu");
+
+        // Navigate to Preferences in menu
+        app.selected_item = pref_idx;
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Dialog must be open and focus MUST be Focus::Dialog
+        assert!(app.current_dialog.is_some());
+        assert_eq!(app.focus, Focus::Dialog);
+
+        // Navigate down to row 2 (Sidebar Position)
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        // Toggle sidebar position using Right arrow
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
+
+        // Save & Apply using 's' key
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+
+        // Dialog should be closed and setting applied
+        assert!(app.current_dialog.is_none());
+        assert_eq!(app.focus, Focus::Editor);
+        assert_eq!(app.config.sidebar_position, "right");
+        assert!(app.layout.is_right_sidebar);
+    }
+
+    #[test]
+    fn test_settings_dialog_open_and_mouse_click_navigation() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.sidebar_position = "left".to_string();
+
+        // Open settings via Ctrl+, shortcut
+        app.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::CONTROL));
+        assert!(app.current_dialog.is_some());
+        assert_eq!(app.focus, Focus::Dialog);
+
+        let (dx, dy, dw, _dh) = {
+            let d = app.current_dialog.as_ref().unwrap();
+            app.layout.dialog_bounds(d.dimensions())
+        };
+
+        // Simulate click on row 2 (Sidebar Position: dy + 2 + 2 = dy + 4)
+        // Click on right half to cycle to next value ("right")
+        let click_x = dx + dw - 5;
+        let click_y = dy + 4;
+        let mouse_down = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: click_x,
+            row: click_y,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse_down);
+
+        // Simulate click on Save & Apply button (row 9: dy + 2 + 9 = dy + 11)
+        // Click left half of buttons row (Save button is on left half)
+        let save_click_x = dx + 10;
+        let save_click_y = dy + 11;
+        let mouse_save = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: save_click_x,
+            row: save_click_y,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(mouse_save);
+
+        // Dialog should be closed and settings saved
+        assert!(app.current_dialog.is_none());
+        assert_eq!(app.config.sidebar_position, "right");
+        assert!(app.layout.is_right_sidebar);
+    }
+
+    #[test]
+    fn test_context_menu_no_refresh_item() {
+        let i18n = zee_core::I18n::load("en");
+        let path = std::path::PathBuf::from("/test/sample.rs");
+        let dialog = crate::widgets::dialog::FileContextMenuDialog::new(path, false, false, &i18n);
+
+        // Ensure "refresh" is NOT present in context menu options
+        assert!(!dialog.options.iter().any(|(action, _)| *action == "refresh"));
+    }
+
+    #[test]
+    fn test_settings_dialog_dropdown_language_selection_in_app() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.language = "auto".to_string();
+
+        // Open settings via Ctrl+, shortcut
+        app.handle_key(KeyEvent::new(KeyCode::Char(','), KeyModifiers::CONTROL));
+        assert!(app.current_dialog.is_some());
+        assert_eq!(app.focus, Focus::Dialog);
+
+        // Move Down to Language row (row 1)
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        // Press Enter to open dropdown menu
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Move Down inside dropdown to select next language (e.g. "en")
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+
+        // Press Enter to confirm and select from dropdown
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Press 's' to Save & Apply
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+
+        // Dialog should be closed and setting applied
+        assert!(app.current_dialog.is_none());
+        assert_eq!(app.focus, Focus::Editor);
+        assert_eq!(app.config.language, "en");
+    }
+
+    #[test]
+    fn test_sidebar_context_menu_new_file_and_open_workflow() {
+        let temp_dir = std::env::temp_dir().join("zee_test_tui_sidebar_new_file");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.sidebar.file_tree.set_root(&temp_dir);
+
+        // 1. Simulate selecting "new_file" action from context menu on root directory
+        let action = dialog::Action::FileContextMenuAction {
+            action: "new_file",
+            path: temp_dir.clone(),
+            is_dir: true,
+        };
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Ok(action));
+
+        // Input dialog must now be open
+        assert!(app.current_dialog.is_some());
+        assert_eq!(app.focus, Focus::Dialog);
+
+        // 2. Type "sample.txt" in InputDialog
+        for c in "sample.txt".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+
+        // 3. Confirm with Enter
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Dialog should be closed, and file should be created on disk and opened in buffer
+        assert!(app.current_dialog.is_none());
+        let expected_file = temp_dir.join("sample.txt");
+        assert!(expected_file.exists());
+        assert_eq!(app.buffers[app.active_buffer].path.as_deref(), Some(expected_file.as_path()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_sidebar_context_menu_rename_and_delete_workflow() {
+        let temp_dir = std::env::temp_dir().join("zee_test_tui_sidebar_rename_delete");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let initial_file = temp_dir.join("origin.txt");
+        std::fs::write(&initial_file, "hello world").unwrap();
+
+        let mut app = App::new(vec![initial_file.clone()]).expect("Failed to init App");
+        app.sidebar.file_tree.set_root(&temp_dir);
+        assert_eq!(app.buffers[app.active_buffer].path.as_deref(), Some(initial_file.as_path()));
+
+        // 1. Rename file: trigger "rename" from context menu
+        let action = dialog::Action::FileContextMenuAction {
+            action: "rename",
+            path: initial_file.clone(),
+            is_dir: false,
+        };
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Ok(action));
+        assert!(app.current_dialog.is_some());
+
+        // Backspace to clear "origin.txt" and type "renamed.txt"
+        for _ in 0.."origin.txt".len() {
+            app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        }
+        for c in "renamed.txt".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // File on disk must be renamed and buffer path updated
+        let renamed_file = temp_dir.join("renamed.txt");
+        assert!(!initial_file.exists());
+        assert!(renamed_file.exists());
+        assert_eq!(app.buffers[app.active_buffer].path.as_deref(), Some(renamed_file.as_path()));
+
+        // 2. Delete file: trigger "delete" from context menu
+        let action_delete = dialog::Action::FileContextMenuAction {
+            action: "delete",
+            path: renamed_file.clone(),
+            is_dir: false,
+        };
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Ok(action_delete));
+        assert!(app.current_dialog.is_some());
+
+        // Confirm deletion with Enter (Yes button)
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // File should be deleted on disk and removed from buffers
+        assert!(!renamed_file.exists());
+        assert!(app.current_dialog.is_none());
+        assert_ne!(app.buffers[app.active_buffer].path.as_deref(), Some(renamed_file.as_path()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_menu_and_submenu_mouse_click_interaction() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.width = 80;
+        app.height = 24;
+        app.recompute_layout();
+
+        // 1. Click on "View" menu in menu bar (index 2)
+        let view_start = app.layout.menu_bar_items[2].1;
+        let menu_bar_click = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: view_start,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(menu_bar_click);
+
+        assert_eq!(app.focus, Focus::Menu);
+        assert_eq!(app.active_menu, Some(2));
+        assert_eq!(app.submenu_stack.len(), 0);
+
+        // Render to populate dropdown_rects
+        let mut sink = std::io::sink();
+        let _ = app.renderer.present(&mut sink);
+        app.dropdown_rects.clear();
+        let menu = app.menus[2].clone();
+        app.render_dropdown(view_start, 1, &menu, 0);
+
+        // Find Encoding submenu item in View menu
+        let encoding_label = app.i18n.get("menu.view.encoding").to_string();
+        let (enc_rx, enc_ry, enc_rw, _enc_rh, enc_depth, enc_idx) = app.dropdown_rects
+            .iter()
+            .find(|(_rx, _ry, _rw, _rh, depth, idx)| {
+                *depth == 0 && matches!(&menu.items[*idx], MenuItem::Submenu { label, .. } if label == &encoding_label)
+            })
+            .copied()
+            .expect("Encoding submenu item not found in dropdown_rects");
+
+        assert_eq!(enc_depth, 0);
+
+        // 2. Click on the Encoding submenu item using mouse
+        let click_encoding = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: enc_rx + enc_rw / 2,
+            row: enc_ry,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(click_encoding);
+
+        // Submenu should be open!
+        assert_eq!(app.focus, Focus::Menu);
+        assert_eq!(app.active_menu, Some(2));
+        assert_eq!(app.submenu_stack.len(), 1);
+        assert_eq!(app.submenu_stack[0], (2, enc_idx));
+
+        // Re-render dropdowns including opened submenu
+        app.dropdown_rects.clear();
+        app.render_dropdown(view_start, 1, &menu, 0);
+
+        // Both parent menu items (depth 0) and submenu items (depth 1) must be in dropdown_rects!
+        let has_depth_0 = app.dropdown_rects.iter().any(|(_, _, _, _, depth, _)| *depth == 0);
+        let has_depth_1 = app.dropdown_rects.iter().any(|(_, _, _, _, depth, _)| *depth == 1);
+        assert!(has_depth_0, "Parent menu rects should still be registered in dropdown_rects");
+        assert!(has_depth_1, "Submenu rects should be registered in dropdown_rects");
+
+        // 3. Click on a submenu item: "Reopen with Encoding"
+        let reopen_label = app.i18n.get("menu.view.reopen_with_encoding").to_string();
+        let sub_menu = app.get_current_active_menu().clone();
+        let (reopen_rx, reopen_ry, reopen_rw, _reopen_rh, reopen_depth, reopen_idx) = app.dropdown_rects
+            .iter()
+            .find(|(_rx, _ry, _rw, _rh, depth, idx)| {
+                *depth == 1 && matches!(&sub_menu.items[*idx], MenuItem::Submenu { label, .. } if label == &reopen_label)
+            })
+            .copied()
+            .expect("Reopen with Encoding submenu not found in dropdown_rects");
+
+        assert_eq!(reopen_depth, 1);
+
+        let click_reopen = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: reopen_rx + reopen_rw / 2,
+            row: reopen_ry,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(click_reopen);
+
+        // Should now be at submenu depth 2
+        assert_eq!(app.submenu_stack.len(), 2);
+        assert_eq!(app.submenu_stack[1], (2, reopen_idx));
+
+        // 4. Click back on the parent menu item at depth 0 (e.g. Word Wrap toggle)
+        app.dropdown_rects.clear();
+        app.render_dropdown(view_start, 1, &menu, 0);
+
+        let word_wrap_label = app.i18n.get("menu.view.word_wrap").to_string();
+        let (ww_rx, ww_ry, ww_rw, _ww_rh, _ww_depth, _ww_idx) = app.dropdown_rects
+            .iter()
+            .find(|(_rx, _ry, _rw, _rh, depth, idx)| {
+                *depth == 0 && matches!(&menu.items[*idx], MenuItem::Toggle { label, .. } if label == &word_wrap_label)
+            })
+            .copied()
+            .expect("Word Wrap toggle not found in dropdown_rects");
+
+        let initial_wrap = app.config.word_wrap;
+        let click_word_wrap = MouseEvent {
+            kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: ww_rx + ww_rw / 2,
+            row: ww_ry,
+            modifiers: KeyModifiers::NONE,
+        };
+        app.handle_mouse(click_word_wrap);
+
+        // Clicking an action/toggle in parent menu should execute it, close the menu, and clear submenu_stack!
+        assert_eq!(app.active_menu, None);
+        assert_eq!(app.focus, Focus::Editor);
+        assert_eq!(app.submenu_stack.len(), 0);
+        assert_eq!(app.config.word_wrap, !initial_wrap);
+    }
+
+    #[test]
+    fn test_submenu_edge_screen_bounds_clamping() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        // Narrow terminal to test right-edge clamping
+        app.width = 50;
+        app.height = 20;
+        app.recompute_layout();
+
+        // Open View menu
+        app.open_menu(2);
+        let encoding_label = app.i18n.get("menu.view.encoding").to_string();
+        let encoding_idx = app.menus[2]
+            .items
+            .iter()
+            .position(|item| matches!(item, MenuItem::Submenu { label, .. } if label == &encoding_label))
+            .expect("Encoding submenu not found");
+
+        app.selected_item = encoding_idx;
+        app.submenu_stack.push((2, encoding_idx));
+
+        // Render dropdown near the right edge
+        app.dropdown_rects.clear();
+        let menu = app.menus[2].clone();
+        app.render_dropdown(35, 1, &menu, 0);
+
+        // Every registered dropdown rectangle must be completely within [0, app.width) horizontally
+        // and [0, app.height) vertically!
+        for (rx, ry, rw, rh, depth, idx) in &app.dropdown_rects {
+            assert!(
+                *rx + *rw <= app.width,
+                "Rect for depth {} item {} exceeds screen width: rx={}, rw={}, width={}",
+                depth, idx, rx, rw, app.width
+            );
+            assert!(
+                *ry + *rh <= app.height,
+                "Rect for depth {} item {} exceeds screen height: ry={}, rh={}, height={}",
+                depth, idx, ry, rh, app.height
+            );
+        }
+    }
+
+    #[test]
+    fn test_sidebar_context_menu_toggle_hidden_workflow() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        let initial_hidden = app.config.show_hidden;
+
+        // Trigger toggle_hidden from context menu action
+        let action = dialog::Action::FileContextMenuAction {
+            action: "toggle_hidden",
+            path: std::path::PathBuf::from("/dummy"),
+            is_dir: false,
+        };
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Ok(action));
+
+        assert_eq!(app.config.show_hidden, !initial_hidden);
+        assert_eq!(app.sidebar.file_tree.show_hidden, !initial_hidden);
     }
 }
 

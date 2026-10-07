@@ -89,6 +89,9 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         KeyBinding::new("ctrl-pageup", PrevTab {}, None),
         #[cfg(target_os = "macos")]
         KeyBinding::new("ctrl-pagedown", NextTab {}, None),
+        KeyBinding::new("f5", RefreshFileTree {}, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-alt-r", RefreshFileTree {}, None),
 
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-t", NewTab {}, None),
@@ -152,6 +155,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         KeyBinding::new("alt-1", ToggleFiles {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("alt-2", ToggleOutline {}, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-alt-r", RefreshFileTree {}, None),
     ]);
 
     // App-level action handlers to handle actions when no window is open or globally
@@ -917,6 +922,7 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
             name: i18n.get("menu.view").into(),
             items: vec![
                 MenuItem::action(i18n.get("menu.view.sidebar"), ToggleSidebar {}),
+                MenuItem::action(i18n.get("menu.view.refresh_files"), RefreshFileTree {}),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.view.go_to_line"), GoToLine {}),
                 MenuItem::separator(),
@@ -1002,7 +1008,7 @@ actions!(zee, [
     // Tabs
     NextTab, PrevTab,
     // View
-    ToggleSidebar, ToggleOutline, ToggleFiles,
+    ToggleSidebar, ToggleOutline, ToggleFiles, RefreshFileTree,
     GoToLine, ZoomIn, ZoomOut, ResetZoom, ToggleLineNumbers, ToggleWordWrap, ToggleViMode,
     SetEncodingUtf8, SetEncodingUtf8Bom, SetEncodingUtf16Le, SetEncodingUtf16Be,
     SetEncodingShiftJis, SetEncodingEucJp, SetEncodingIso2022Jp, SetEncodingLatin1,

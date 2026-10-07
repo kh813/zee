@@ -137,6 +137,38 @@ impl WindowView {
             }
         }).detach();
 
+        cx.subscribe(&sidebar, |this, _sidebar, event: &crate::widgets::sidebar_view::SidebarEvent, cx| {
+            match event {
+                crate::widgets::sidebar_view::SidebarEvent::NewFile(parent) => {
+                    this.show_dialog(DialogType::NewFile { parent_dir: parent.clone() }, None, cx);
+                }
+                crate::widgets::sidebar_view::SidebarEvent::NewFolder(parent) => {
+                    this.show_dialog(DialogType::NewFolder { parent_dir: parent.clone() }, None, cx);
+                }
+                crate::widgets::sidebar_view::SidebarEvent::Rename(target) => {
+                    this.show_dialog(DialogType::Rename { target_path: target.clone() }, None, cx);
+                }
+                crate::widgets::sidebar_view::SidebarEvent::Delete(target) => {
+                    this.show_dialog(DialogType::ConfirmDelete { target_path: target.clone() }, None, cx);
+                }
+                crate::widgets::sidebar_view::SidebarEvent::Refresh => {
+                    this.workspace.update(cx, |w, cx| {
+                        w.file_tree.refresh();
+                        w.update_outline();
+                        cx.notify();
+                    });
+                }
+                crate::widgets::sidebar_view::SidebarEvent::ToggleShowHidden => {
+                    this.workspace.update(cx, |w, cx| {
+                        let new_val = w.file_tree.toggle_show_hidden();
+                        w.config.show_hidden = new_val;
+                        let _ = zee_core::config::Config::save_show_hidden(new_val);
+                        cx.notify();
+                    });
+                }
+            }
+        }).detach();
+
         cx.subscribe(&find_panel, |_this, _find_panel, event: &FindPanelEvent, cx| {
             match event {
                 FindPanelEvent::Close => {
@@ -299,6 +331,82 @@ impl WindowView {
                     this.dialog = None;
                     cx.notify();
                     Self::trigger_import(this.i18n.clone(), cx);
+                }
+                DialogEvent::CreateFile { parent_dir, filename } => {
+                    this.dialog = None;
+                    let parent_dir = parent_dir.clone();
+                    let filename = filename.clone();
+                    this.workspace.update(cx, |w, cx| {
+                        match w.file_tree.create_file(&parent_dir, &filename) {
+                            Ok(path) => {
+                                if let Ok(editor) = zee_core::buffer::Editor::from_file(&path) {
+                                    w.add_editor(editor);
+                                    w.update_outline();
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to create file: {}", e);
+                            }
+                        }
+                        cx.notify();
+                    });
+                    cx.notify();
+                }
+                DialogEvent::CreateFolder { parent_dir, folder_name } => {
+                    this.dialog = None;
+                    let parent_dir = parent_dir.clone();
+                    let folder_name = folder_name.clone();
+                    this.workspace.update(cx, |w, cx| {
+                        if let Err(e) = w.file_tree.create_folder(&parent_dir, &folder_name) {
+                            eprintln!("Failed to create folder: {}", e);
+                        }
+                        cx.notify();
+                    });
+                    cx.notify();
+                }
+                DialogEvent::RenameItem { target_path, new_name } => {
+                    this.dialog = None;
+                    let target_path = target_path.clone();
+                    let new_name = new_name.clone();
+                    this.workspace.update(cx, |w, cx| {
+                        match w.file_tree.rename_item(&target_path, &new_name) {
+                            Ok(new_path) => {
+                                for editor in &mut w.editors {
+                                    if editor.path.as_ref() == Some(&target_path) {
+                                        editor.path = Some(new_path.clone());
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Failed to rename item: {}", e);
+                            }
+                        }
+                        cx.notify();
+                    });
+                    cx.notify();
+                }
+                DialogEvent::DeleteItem { target_path } => {
+                    this.dialog = None;
+                    let target_path = target_path.clone();
+                    this.workspace.update(cx, |w, cx| {
+                        if let Ok(()) = w.file_tree.delete_item(&target_path) {
+                            let to_close: Vec<usize> = w.editors.iter().enumerate()
+                                .filter_map(|(idx, e)| {
+                                    if let Some(p) = &e.path {
+                                        if p == &target_path || p.starts_with(&target_path) {
+                                            return Some(idx);
+                                        }
+                                    }
+                                    None
+                                })
+                                .collect();
+                            for idx in to_close.into_iter().rev() {
+                                w.close_editor(idx);
+                            }
+                        }
+                        cx.notify();
+                    });
+                    cx.notify();
                 }
                 _ => {}
             }
@@ -652,6 +760,15 @@ impl WindowView {
         self.workspace.update(cx, |w, cx| {
             w.sidebar_visible = true;
             w.sidebar_tab = crate::workspace::SidebarTab::Files;
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    fn handle_refresh_file_tree(&mut self, _: &RefreshFileTree, _window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |w, cx| {
+            w.file_tree.refresh();
+            w.update_outline();
             cx.notify();
         });
         cx.notify();
@@ -1253,6 +1370,7 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_toggle_sidebar))
             .on_action(cx.listener(Self::handle_toggle_outline))
             .on_action(cx.listener(Self::handle_toggle_files))
+            .on_action(cx.listener(Self::handle_refresh_file_tree))
             .on_action(cx.listener(Self::handle_toggle_line_numbers))
             .on_action(cx.listener(Self::handle_toggle_word_wrap))
             .on_action(cx.listener(Self::handle_toggle_vi_mode))

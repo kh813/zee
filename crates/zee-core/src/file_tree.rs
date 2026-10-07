@@ -92,6 +92,19 @@ impl FileTree {
         Self::refresh_node(&mut self.root_node, self.show_hidden);
     }
 
+    pub fn set_show_hidden(&mut self, show_hidden: bool) {
+        if self.show_hidden != show_hidden {
+            self.show_hidden = show_hidden;
+            self.refresh();
+        }
+    }
+
+    pub fn toggle_show_hidden(&mut self) -> bool {
+        self.show_hidden = !self.show_hidden;
+        self.refresh();
+        self.show_hidden
+    }
+
     pub fn expanded_paths(&self) -> Vec<PathBuf> {
         let mut list = Vec::new();
         Self::collect_expanded(&self.root_node, &mut list);
@@ -139,6 +152,112 @@ impl FileTree {
 
     pub fn toggle_expand(&mut self, target_path: &Path) -> bool {
         Self::toggle_expand_node(&mut self.root_node, target_path, self.show_hidden)
+    }
+
+    pub fn ensure_expanded(&mut self, dir_path: &Path) {
+        Self::ensure_expanded_node(&mut self.root_node, dir_path, self.show_hidden);
+    }
+
+    fn ensure_expanded_node(node: &mut FileTreeNode, dir_path: &Path, show_hidden: bool) -> bool {
+        if node.path == dir_path {
+            if node.is_dir {
+                node.is_expanded = true;
+                if node.children.is_empty() {
+                    Self::populate_children(node, show_hidden);
+                }
+                return true;
+            }
+            return false;
+        }
+
+        if dir_path.starts_with(&node.path) && node.is_dir {
+            node.is_expanded = true;
+            if node.children.is_empty() {
+                Self::populate_children(node, show_hidden);
+            }
+            for child in &mut node.children {
+                if Self::ensure_expanded_node(child, dir_path, show_hidden) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Create a new file in `parent_dir` with the given `filename`.
+    pub fn create_file<P: AsRef<Path>>(&mut self, parent_dir: P, filename: &str) -> std::io::Result<PathBuf> {
+        let filename = filename.trim();
+        if filename.is_empty() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Filename cannot be empty"));
+        }
+        let mut parent = parent_dir.as_ref().to_path_buf();
+        if parent.is_file() {
+            if let Some(p) = parent.parent() {
+                parent = p.to_path_buf();
+            }
+        }
+        let target = parent.join(filename);
+        if target.exists() {
+            return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "File already exists"));
+        }
+        std::fs::File::create(&target)?;
+        self.ensure_expanded(&parent);
+        self.refresh();
+        Ok(target)
+    }
+
+    /// Create a new folder in `parent_dir` with the given `folder_name`.
+    pub fn create_folder<P: AsRef<Path>>(&mut self, parent_dir: P, folder_name: &str) -> std::io::Result<PathBuf> {
+        let folder_name = folder_name.trim();
+        if folder_name.is_empty() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Folder name cannot be empty"));
+        }
+        let mut parent = parent_dir.as_ref().to_path_buf();
+        if parent.is_file() {
+            if let Some(p) = parent.parent() {
+                parent = p.to_path_buf();
+            }
+        }
+        let target = parent.join(folder_name);
+        if target.exists() {
+            return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "Folder already exists"));
+        }
+        std::fs::create_dir_all(&target)?;
+        self.ensure_expanded(&parent);
+        self.refresh();
+        Ok(target)
+    }
+
+    /// Rename a file or directory at `old_path` to `new_name`.
+    pub fn rename_item<P: AsRef<Path>>(&mut self, old_path: P, new_name: &str) -> std::io::Result<PathBuf> {
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Name cannot be empty"));
+        }
+        let old = old_path.as_ref();
+        let parent = old.parent().unwrap_or(old);
+        let new_target = parent.join(new_name);
+        if new_target.exists() {
+            return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "Destination already exists"));
+        }
+        std::fs::rename(old, &new_target)?;
+        self.refresh();
+        Ok(new_target)
+    }
+
+    /// Delete a file or directory at `target_path`.
+    pub fn delete_item<P: AsRef<Path>>(&mut self, target_path: P) -> std::io::Result<()> {
+        let target = target_path.as_ref();
+        if !target.exists() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "Target does not exist"));
+        }
+        if target.is_dir() {
+            std::fs::remove_dir_all(target)?;
+        } else {
+            std::fs::remove_file(target)?;
+        }
+        self.refresh();
+        Ok(())
     }
 
     fn toggle_expand_node(node: &mut FileTreeNode, target_path: &Path, show_hidden: bool) -> bool {
@@ -281,6 +400,109 @@ mod tests {
         // Restore expanded paths
         new_tree.restore_expanded_paths(&expanded);
         assert_eq!(new_tree.flatten().len(), 4); // root + dir1 + dir2 + file.txt
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_tree_file_and_folder_operations() {
+        let temp_dir = std::env::temp_dir().join("zee_test_tree_ops");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut tree = FileTree::new(&temp_dir, false);
+
+        // 1. Create file
+        let new_file = tree.create_file(&temp_dir, "new_doc.txt").unwrap();
+        assert!(new_file.exists());
+        let names: Vec<String> = tree.flatten().into_iter().map(|item| item.name).collect();
+        assert!(names.contains(&"new_doc.txt".to_string()));
+
+        // 2. Create folder
+        let new_folder = tree.create_folder(&temp_dir, "src_dir").unwrap();
+        assert!(new_folder.is_dir());
+        let names: Vec<String> = tree.flatten().into_iter().map(|item| item.name).collect();
+        assert!(names.contains(&"src_dir".to_string()));
+
+        // 3. Create file inside folder
+        let nested_file = tree.create_file(&new_folder, "mod.rs").unwrap();
+        assert!(nested_file.exists());
+        let names: Vec<String> = tree.flatten().into_iter().map(|item| item.name).collect();
+        assert!(names.contains(&"mod.rs".to_string()));
+
+        // 4. Rename file
+        let renamed = tree.rename_item(&nested_file, "lib.rs").unwrap();
+        assert!(renamed.exists());
+        assert!(!nested_file.exists());
+        let names: Vec<String> = tree.flatten().into_iter().map(|item| item.name).collect();
+        assert!(names.contains(&"lib.rs".to_string()));
+        assert!(!names.contains(&"mod.rs".to_string()));
+
+        // 5. Delete file
+        tree.delete_item(&renamed).unwrap();
+        assert!(!renamed.exists());
+        let names: Vec<String> = tree.flatten().into_iter().map(|item| item.name).collect();
+        assert!(!names.contains(&"lib.rs".to_string()));
+
+        // 6. Delete folder
+        tree.delete_item(&new_folder).unwrap();
+        assert!(!new_folder.exists());
+        let names: Vec<String> = tree.flatten().into_iter().map(|item| item.name).collect();
+        assert!(!names.contains(&"src_dir".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_tree_refresh_detects_external_changes() {
+        let temp_dir = std::env::temp_dir().join("zee_test_tree_refresh");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("sub")).unwrap();
+        fs::write(temp_dir.join("initial.txt"), "hello").unwrap();
+
+        let mut tree = FileTree::new(&temp_dir, false);
+        tree.toggle_expand(&temp_dir.join("sub"));
+        assert_eq!(tree.flatten().len(), 3); // root, sub, initial.txt
+
+        // External change (e.g. via Finder): create external.txt and remove initial.txt
+        fs::write(temp_dir.join("sub").join("external.txt"), "external").unwrap();
+        fs::remove_file(temp_dir.join("initial.txt")).unwrap();
+
+        // Before refresh, tree hasn't seen the change
+        let names_before: Vec<String> = tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(names_before.contains(&"initial.txt".to_string()));
+        assert!(!names_before.contains(&"external.txt".to_string()));
+
+        // Refresh
+        tree.refresh();
+
+        // After refresh, external change is reflected and sub remains expanded
+        let names_after: Vec<String> = tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(!names_after.contains(&"initial.txt".to_string()));
+        assert!(names_after.contains(&"external.txt".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_tree_toggle_show_hidden() {
+        let temp_dir = std::env::temp_dir().join("zee_test_tree_hidden");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join(".env"), "SECRET=1").unwrap();
+        fs::write(temp_dir.join("main.rs"), "fn main() {}").unwrap();
+
+        let mut tree = FileTree::new(&temp_dir, false);
+        let names_hidden: Vec<String> = tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(!names_hidden.contains(&".env".to_string()));
+        assert!(names_hidden.contains(&"main.rs".to_string()));
+
+        // Toggle show_hidden
+        let new_state = tree.toggle_show_hidden();
+        assert!(new_state);
+        let names_visible: Vec<String> = tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(names_visible.contains(&".env".to_string()));
+        assert!(names_visible.contains(&"main.rs".to_string()));
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

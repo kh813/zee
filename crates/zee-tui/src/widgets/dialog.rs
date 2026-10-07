@@ -33,6 +33,9 @@ pub enum Action {
     DontSave,
     Discard,
     Cancel,
+    FileContextMenuAction { action: &'static str, path: PathBuf, #[allow(dead_code)] is_dir: bool },
+    InputName(String),
+    SaveSettings(Box<zee_core::Config>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -958,7 +961,21 @@ impl Dialog for MessageDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        (40, 8)
+        let title_w: u16 = self.title.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let max_line_w: u16 = self.message.lines().map(|line| {
+            line.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>()
+        }).max().unwrap_or(0);
+        let spacer = 2u16;
+        let btns_w: u16 = self.buttons.iter().map(|(s, _)| {
+            s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4
+        }).sum::<u16>() + (self.buttons.len().saturating_sub(1) as u16 * spacer);
+
+        let content_w = title_w.max(max_line_w).max(btns_w);
+        // Ensure generous dialog width with padding, minimum 58
+        let w = ((content_w + 12).max(58)).min(74);
+        let line_count = self.message.lines().count().max(1) as u16;
+        let h = (line_count + 6).max(8);
+        (w, h)
     }
 
     fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
@@ -967,20 +984,25 @@ impl Dialog for MessageDialog {
         let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
         let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
 
-        let msg_w: u16 = self.message.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
-        let lx = x + (w.saturating_sub(msg_w)) / 2;
-        let ly = y + 2;
-        let mut cur_lx = lx;
-        for c in self.message.chars() {
-            let cw = c.width().unwrap_or(0) as u16;
-            if cur_lx + cw < x + w {
-                renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
+        let lines: Vec<&str> = self.message.lines().collect();
+        let start_y = y + 2;
+        for (i, line) in lines.iter().enumerate() {
+            let line_w: u16 = line.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+            let lx = x + (w.saturating_sub(line_w)) / 2;
+            let ly = start_y + i as u16;
+            let mut cur_lx = lx;
+            for c in line.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_lx + cw < x + w - 1 {
+                    renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
+                }
+                cur_lx += cw;
             }
-            cur_lx += cw;
         }
 
         // Buttons
-        let total_btns_width: u16 = self.buttons.iter().map(|(s, _)| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + (self.buttons.len() as u16 - 1);
+        let spacer = 2u16;
+        let total_btns_width: u16 = self.buttons.iter().map(|(s, _)| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + (self.buttons.len().saturating_sub(1) as u16 * spacer);
         let mut bx = x + (w.saturating_sub(total_btns_width)) / 2;
         let by = y + h - 2;
 
@@ -995,7 +1017,7 @@ impl Dialog for MessageDialog {
                 renderer.set_cell(bx, by, Cell { ch: c, bg, fg, width: cw as u8, ..Default::default() });
                 bx += cw;
             }
-            bx += 1; // Spacer
+            bx += spacer;
         }
     }
 
@@ -1030,14 +1052,15 @@ impl Dialog for MessageDialog {
 
         let (mx, my) = (mouse.column, mouse.row);
         if my == y + h - 2 {
-            let total_btns_width: u16 = self.buttons.iter().map(|(s, _)| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + (self.buttons.len() as u16 - 1);
+            let spacer = 2u16;
+            let total_btns_width: u16 = self.buttons.iter().map(|(s, _)| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + (self.buttons.len().saturating_sub(1) as u16 * spacer);
             let mut bx = x + (w.saturating_sub(total_btns_width)) / 2;
             for (i, (s, _)) in self.buttons.iter().enumerate() {
                 let btn_len = s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4;
                 if mx >= bx && mx < bx + btn_len {
                     return DialogResult::Ok(self.buttons[i].1.clone());
                 }
-                bx += btn_len + 1;
+                bx += btn_len + spacer;
             }
         }
         DialogResult::Pending
@@ -1068,7 +1091,7 @@ impl Dialog for AboutDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        (40, 10)
+        (50, 10)
     }
 
     fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
@@ -1498,7 +1521,14 @@ impl Dialog for ReopenConfirmationDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        (40, 8)
+        let title_w: u16 = self.i18n_title.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let msg_w: u16 = self.i18n_message.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let buttons = [&self.i18n_discard, &self.i18n_cancel];
+        let spacer = 2u16;
+        let btns_w: u16 = buttons.iter().map(|s| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + spacer;
+        let content_w = title_w.max(msg_w).max(btns_w);
+        let w = ((content_w + 12).max(58)).min(74);
+        (w, 8)
     }
 
     fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
@@ -1513,14 +1543,15 @@ impl Dialog for ReopenConfirmationDialog {
         let mut cur_lx = lx;
         for c in self.i18n_message.chars() {
             let cw = c.width().unwrap_or(0) as u16;
-            if cur_lx + cw < x + w {
+            if cur_lx + cw < x + w - 1 {
                 renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
             }
             cur_lx += cw;
         }
 
         let buttons = [&self.i18n_discard, &self.i18n_cancel];
-        let total_btns_width: u16 = buttons.iter().map(|s| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + 1;
+        let spacer = 2u16;
+        let total_btns_width: u16 = buttons.iter().map(|s| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + spacer;
         let mut bx = x + (w.saturating_sub(total_btns_width)) / 2;
         let by = y + h - 2;
 
@@ -1535,7 +1566,7 @@ impl Dialog for ReopenConfirmationDialog {
                 renderer.set_cell(bx, by, Cell { ch: c, bg, fg, width: cw as u8, ..Default::default() });
                 bx += cw;
             }
-            bx += 1;
+            bx += spacer;
         }
     }
 
@@ -1564,7 +1595,8 @@ impl Dialog for ReopenConfirmationDialog {
         let (mx, my) = (mouse.column, mouse.row);
         if my == y + h - 2 {
             let buttons = [&self.i18n_discard, &self.i18n_cancel];
-            let total_btns_width: u16 = buttons.iter().map(|s| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + 1;
+            let spacer = 2u16;
+            let total_btns_width: u16 = buttons.iter().map(|s| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + spacer;
             let mut bx = x + (w.saturating_sub(total_btns_width)) / 2;
             for (i, s) in buttons.iter().enumerate() {
                 let btn_len = s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4;
@@ -1572,7 +1604,7 @@ impl Dialog for ReopenConfirmationDialog {
                     if i == 0 { return DialogResult::Ok(Action::Discard); }
                     else { return DialogResult::Cancel; }
                 }
-                bx += btn_len + 1;
+                bx += btn_len + spacer;
             }
         }
         DialogResult::Pending
@@ -1669,6 +1701,928 @@ impl Dialog for GoToLineDialog {
     }
 }
 
+pub struct FileContextMenuDialog {
+    pub target_path: PathBuf,
+    pub is_dir: bool,
+    pub title: String,
+    pub options: Vec<(&'static str, String)>,
+    pub selected_idx: usize,
+}
+
+impl FileContextMenuDialog {
+    pub fn new(path: PathBuf, is_dir: bool, show_hidden: bool, i18n: &zee_core::I18n) -> Self {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "Workspace".to_string());
+        let mut options = Vec::new();
+        if is_dir {
+            options.push(("new_file", format!("📄 {}", i18n.get("sidebar.new_file"))));
+            options.push(("new_folder", format!("📁 {}", i18n.get("sidebar.new_folder"))));
+        }
+        options.push(("rename", format!("✏️ {}", i18n.get("sidebar.rename"))));
+        options.push(("delete", format!("🗑️ {}", i18n.get("sidebar.delete"))));
+        if show_hidden {
+            options.push(("toggle_hidden", format!(".* {}", i18n.get("sidebar.hide_hidden"))));
+        } else {
+            options.push(("toggle_hidden", format!(".* {}", i18n.get("sidebar.show_hidden"))));
+        }
+
+        Self {
+            target_path: path,
+            is_dir,
+            title: name,
+            options,
+            selected_idx: 0,
+        }
+    }
+}
+
+impl Dialog for FileContextMenuDialog {
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn dimensions(&self) -> (u16, u16) {
+        let max_len = self.options.iter().map(|(_, l)| l.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>()).max().unwrap_or(16);
+        let w = (max_len + 8).max(24);
+        let h = self.options.len() as u16 + 4;
+        (w, h)
+    }
+
+    fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
+        render_base_dialog(renderer, theme, self.title(), x, y, w, h);
+
+        let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
+        let normal_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let sel_bg = to_ct_color(theme.ui.button_active_bg, theme);
+        let sel_fg = to_ct_color(theme.ui.button_active_fg, theme);
+
+        for (i, (_, label)) in self.options.iter().enumerate() {
+            let row_y = y + 2 + i as u16;
+            let is_selected = i == self.selected_idx;
+            let bg = if is_selected { sel_bg } else { dialog_bg };
+            let fg = if is_selected { sel_fg } else { normal_fg };
+
+            // Fill row bg
+            for col in 1..w - 1 {
+                renderer.set_cell(x + col, row_y, Cell { ch: ' ', bg, fg, ..Default::default() });
+            }
+
+            let mut cur_x = x + 3;
+            for c in label.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_x + cw < x + w - 1 {
+                    renderer.set_cell(cur_x, row_y, Cell { ch: c, bg, fg, width: cw as u8, ..Default::default() });
+                }
+                cur_x += cw;
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> DialogResult<Action> {
+        match key.code {
+            KeyCode::Up => {
+                if self.selected_idx > 0 {
+                    self.selected_idx -= 1;
+                } else {
+                    self.selected_idx = self.options.len().saturating_sub(1);
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Down => {
+                if self.selected_idx + 1 < self.options.len() {
+                    self.selected_idx += 1;
+                } else {
+                    self.selected_idx = 0;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Enter => {
+                if let Some((action_key, _)) = self.options.get(self.selected_idx) {
+                    DialogResult::Ok(Action::FileContextMenuAction {
+                        action: action_key,
+                        path: self.target_path.clone(),
+                        is_dir: self.is_dir,
+                    })
+                } else {
+                    DialogResult::Cancel
+                }
+            }
+            KeyCode::Esc => DialogResult::Cancel,
+            _ => DialogResult::Pending,
+        }
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent, x: u16, y: u16, w: u16, _h: u16) -> DialogResult<Action> {
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            let (mx, my) = (mouse.column, mouse.row);
+            if mx > x && mx < x + w - 1 {
+                for i in 0..self.options.len() {
+                    let row_y = y + 2 + i as u16;
+                    if my == row_y {
+                        self.selected_idx = i;
+                        let (action_key, _) = &self.options[i];
+                        return DialogResult::Ok(Action::FileContextMenuAction {
+                            action: action_key,
+                            path: self.target_path.clone(),
+                            is_dir: self.is_dir,
+                        });
+                    }
+                }
+            }
+        }
+        DialogResult::Pending
+    }
+}
+
+pub struct InputDialog {
+    pub title: String,
+    pub prompt: String,
+    pub input_text: String,
+}
+
+impl InputDialog {
+    pub fn new(title: String, prompt: String, initial_value: String) -> Self {
+        Self {
+            title,
+            prompt,
+            input_text: initial_value,
+        }
+    }
+}
+
+impl Dialog for InputDialog {
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn dimensions(&self) -> (u16, u16) {
+        let title_w: u16 = self.title.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let prompt_w: u16 = self.prompt.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let input_w: u16 = self.input_text.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let w = ((prompt_w + input_w + 14).max(title_w + 12).max(52)).min(74);
+        (w, 6)
+    }
+
+    fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
+        render_base_dialog(renderer, theme, self.title(), x, y, w, h);
+
+        let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
+        let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let input_bg = to_ct_color(theme.ui.panel_bg, theme);
+        let input_fg = to_ct_color(theme.ui.panel_fg, theme);
+
+        let label = format!("{}: ", self.prompt);
+        let mut cur_lx = x + 2;
+        let ly = y + 2;
+        for c in label.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
+            cur_lx += cw;
+        }
+
+        let input_x = cur_lx;
+        let input_w = (x + w - 2).saturating_sub(input_x);
+        for dx in 0..input_w {
+            renderer.set_cell(input_x + dx, ly, Cell { ch: ' ', bg: input_bg, ..Default::default() });
+        }
+        let mut cur_tx = input_x;
+        for c in self.input_text.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            if cur_tx + cw <= input_x + input_w {
+                renderer.set_cell(cur_tx, ly, Cell { ch: c, bg: input_bg, fg: input_fg, width: cw as u8, ..Default::default() });
+                cur_tx += cw;
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> DialogResult<Action> {
+        match key.code {
+            KeyCode::Char(c) => {
+                self.input_text.push(c);
+                DialogResult::Pending
+            }
+            KeyCode::Backspace => {
+                self.input_text.pop();
+                DialogResult::Pending
+            }
+            KeyCode::Enter => {
+                let trimmed = self.input_text.trim().to_string();
+                if !trimmed.is_empty() {
+                    DialogResult::Ok(Action::InputName(trimmed))
+                } else {
+                    DialogResult::Cancel
+                }
+            }
+            KeyCode::Esc => DialogResult::Cancel,
+            _ => DialogResult::Pending,
+        }
+    }
+
+    fn handle_mouse(&mut self, _mouse: MouseEvent, _x: u16, _y: u16, _w: u16, _h: u16) -> DialogResult<Action> {
+        DialogResult::Pending
+    }
+
+    fn cursor_pos(&self) -> Option<(u16, u16)> {
+        let label_len: u16 = format!("{}: ", self.prompt).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let text_len: u16 = self.input_text.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        Some((2 + label_len + text_len, 2))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DropdownState {
+    pub row: usize,
+    pub items: Vec<(String, String)>, // (id, display_label)
+    pub selected_idx: usize,
+    pub scroll_offset: usize,
+}
+
+pub struct SettingsDialog {
+    pub config: zee_core::Config,
+    pub themes: Vec<(String, String)>,
+    pub languages: Vec<(String, String)>,
+    pub selected_row: usize,
+    pub selected_btn: usize,
+    pub active_dropdown: Option<DropdownState>,
+    pub i18n_title: String,
+    pub i18n_theme: String,
+    pub i18n_lang: String,
+    pub i18n_sidebar_pos: String,
+    pub i18n_left: String,
+    pub i18n_right: String,
+    pub i18n_tab_size: String,
+    pub i18n_expand_tab: String,
+    pub i18n_line_numbers: String,
+    pub i18n_word_wrap: String,
+    pub i18n_vi_mode: String,
+    pub i18n_show_hidden: String,
+    pub i18n_save: String,
+    pub i18n_cancel: String,
+}
+
+impl SettingsDialog {
+    pub fn new(config: zee_core::Config, themes: &[zee_core::theme::Theme], i18n: &zee_core::I18n) -> Self {
+        let theme_list: Vec<(String, String)> = themes.iter().map(|t| {
+            let id = t.meta.name.to_lowercase().replace(" ", "-");
+            (id, t.meta.name.clone())
+        }).collect();
+
+        let lang_list: Vec<(String, String)> = zee_core::i18n::AVAILABLE_LANGUAGES.iter().map(|l| {
+            let name = if l.id == "auto" {
+                i18n.get("dialog.settings.language_auto").to_string()
+            } else {
+                l.name.to_string()
+            };
+            (l.id.to_string(), name)
+        }).collect();
+
+        Self {
+            config,
+            themes: theme_list,
+            languages: lang_list,
+            selected_row: 0,
+            selected_btn: 0,
+            active_dropdown: None,
+            i18n_title: i18n.get("dialog.settings.title").to_string(),
+            i18n_theme: i18n.get("dialog.settings.theme").to_string(),
+            i18n_lang: i18n.get("dialog.settings.language").to_string(),
+            i18n_sidebar_pos: i18n.get("dialog.settings.sidebar_position").to_string(),
+            i18n_left: i18n.get("dialog.settings.sidebar_left").to_string(),
+            i18n_right: i18n.get("dialog.settings.sidebar_right").to_string(),
+            i18n_tab_size: i18n.get("dialog.settings.tab_size").to_string(),
+            i18n_expand_tab: "Expand Tab (Spaces)".to_string(),
+            i18n_line_numbers: i18n.get("menu.view.line_numbers").to_string(),
+            i18n_word_wrap: i18n.get("menu.view.word_wrap").to_string(),
+            i18n_vi_mode: i18n.get("menu.view.vi_mode").to_string(),
+            i18n_show_hidden: i18n.get("sidebar.show_hidden").to_string(),
+            i18n_save: i18n.get("dialog.save").to_string(),
+            i18n_cancel: i18n.get("dialog.cancel").to_string(),
+        }
+    }
+
+    pub fn open_dropdown(&mut self, row: usize) {
+        match row {
+            0 => {
+                let cur_idx = self.themes.iter().position(|(id, _)| id == &self.config.theme).unwrap_or(0);
+                let scroll_offset = if cur_idx >= 6 { cur_idx - 5 } else { 0 };
+                self.active_dropdown = Some(DropdownState {
+                    row: 0,
+                    items: self.themes.clone(),
+                    selected_idx: cur_idx,
+                    scroll_offset,
+                });
+            }
+            1 => {
+                let cur_idx = self.languages.iter().position(|(id, _)| id == &self.config.language).unwrap_or(0);
+                let scroll_offset = if cur_idx >= 6 { cur_idx - 5 } else { 0 };
+                self.active_dropdown = Some(DropdownState {
+                    row: 1,
+                    items: self.languages.clone(),
+                    selected_idx: cur_idx,
+                    scroll_offset,
+                });
+            }
+            2 => {
+                let cur_idx = if self.config.sidebar_position == "right" { 1 } else { 0 };
+                self.active_dropdown = Some(DropdownState {
+                    row: 2,
+                    items: vec![
+                        ("left".to_string(), self.i18n_left.clone()),
+                        ("right".to_string(), self.i18n_right.clone()),
+                    ],
+                    selected_idx: cur_idx,
+                    scroll_offset: 0,
+                });
+            }
+            3 => {
+                let cur_idx = match self.config.tab_size {
+                    2 => 0,
+                    8 => 2,
+                    _ => 1,
+                };
+                self.active_dropdown = Some(DropdownState {
+                    row: 3,
+                    items: vec![
+                        ("2".to_string(), "2 spaces".to_string()),
+                        ("4".to_string(), "4 spaces".to_string()),
+                        ("8".to_string(), "8 spaces".to_string()),
+                    ],
+                    selected_idx: cur_idx,
+                    scroll_offset: 0,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    pub fn apply_dropdown_selection(&mut self) {
+        if let Some(drop) = self.active_dropdown.take() {
+            if let Some((id, _)) = drop.items.get(drop.selected_idx) {
+                match drop.row {
+                    0 => self.config.theme = id.clone(),
+                    1 => self.config.language = id.clone(),
+                    2 => self.config.sidebar_position = id.clone(),
+                    3 => {
+                        if let Ok(sz) = id.parse::<usize>() {
+                            self.config.tab_size = sz;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn dropdown_bounds(&self, x: u16, y: u16, w: u16, h: u16) -> Option<(u16, u16, u16, u16, usize)> {
+        let drop = self.active_dropdown.as_ref()?;
+        let row_y = y + 2 + drop.row as u16;
+        let visible_count = 6.min(drop.items.len());
+        let drop_h = (visible_count as u16) + 2;
+        let drop_w = 28.min(w.saturating_sub(4));
+        let drop_x = (x + 25).min(x + w - drop_w - 1);
+        let mut drop_y = row_y + 1;
+        if drop_y + drop_h > y + h - 1 {
+            drop_y = (y + h - 1).saturating_sub(drop_h);
+        }
+        Some((drop_x, drop_y, drop_w, drop_h, visible_count))
+    }
+
+    fn cycle_theme(&mut self, next: bool) {
+        if self.themes.is_empty() { return; }
+        let cur_idx = self.themes.iter().position(|(id, _)| id == &self.config.theme).unwrap_or(0);
+        let next_idx = if next {
+            (cur_idx + 1) % self.themes.len()
+        } else {
+            (cur_idx + self.themes.len() - 1) % self.themes.len()
+        };
+        self.config.theme = self.themes[next_idx].0.clone();
+    }
+
+    fn cycle_lang(&mut self, next: bool) {
+        if self.languages.is_empty() { return; }
+        let cur_idx = self.languages.iter().position(|(id, _)| id == &self.config.language).unwrap_or(0);
+        let next_idx = if next {
+            (cur_idx + 1) % self.languages.len()
+        } else {
+            (cur_idx + self.languages.len() - 1) % self.languages.len()
+        };
+        self.config.language = self.languages[next_idx].0.clone();
+    }
+
+    fn cycle_sidebar_pos(&mut self) {
+        if self.config.sidebar_position == "left" {
+            self.config.sidebar_position = "right".to_string();
+        } else {
+            self.config.sidebar_position = "left".to_string();
+        }
+    }
+
+    fn cycle_tab_size(&mut self, next: bool) {
+        let sizes = [2, 4, 8];
+        let cur_idx = sizes.iter().position(|&s| s == self.config.tab_size).unwrap_or(1);
+        let next_idx = if next {
+            (cur_idx + 1) % sizes.len()
+        } else {
+            (cur_idx + sizes.len() - 1) % sizes.len()
+        };
+        self.config.tab_size = sizes[next_idx];
+    }
+
+    fn cycle_row(&mut self, row: usize, next: bool) {
+        match row {
+            0 => self.cycle_theme(next),
+            1 => self.cycle_lang(next),
+            2 => self.cycle_sidebar_pos(),
+            3 => self.cycle_tab_size(next),
+            4 => self.config.expand_tab = !self.config.expand_tab,
+            5 => self.config.line_numbers = !self.config.line_numbers,
+            6 => self.config.word_wrap = !self.config.word_wrap,
+            7 => self.config.vi_mode = !self.config.vi_mode,
+            8 => self.config.show_hidden = !self.config.show_hidden,
+            _ => {}
+        }
+    }
+}
+
+impl Dialog for SettingsDialog {
+    fn title(&self) -> &str {
+        &self.i18n_title
+    }
+
+    fn dimensions(&self) -> (u16, u16) {
+        (56, 14)
+    }
+
+    fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
+        render_base_dialog(renderer, theme, self.title(), x, y, w, h);
+
+        let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
+        let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let accent = to_ct_color(theme.ui.tab_active_fg, theme);
+        let sel_bg = to_ct_color(theme.editor.selection, theme);
+        let border_fg = to_ct_color(theme.ui.dialog_border, theme);
+
+        let cur_theme_name = self.themes.iter().find(|(id, _)| id == &self.config.theme).map(|(_, n)| n.as_str()).unwrap_or(&self.config.theme);
+        let cur_lang_name = self.languages.iter().find(|(id, _)| id == &self.config.language).map(|(_, n)| n.as_str()).unwrap_or(&self.config.language);
+        let cur_sidebar_pos = if self.config.sidebar_position == "left" { &self.i18n_left } else { &self.i18n_right };
+
+        let format_dropdown_box = |val: &str, max_inner_w: usize| -> String {
+            let mut truncated = String::new();
+            let mut cur_w = 0;
+            for c in val.chars() {
+                let cw = c.width().unwrap_or(1);
+                if cur_w + cw > max_inner_w {
+                    break;
+                }
+                truncated.push(c);
+                cur_w += cw;
+            }
+            let pad = max_inner_w.saturating_sub(cur_w);
+            format!("[ {}{} ▼ ]", truncated, " ".repeat(pad))
+        };
+
+        let rows: [(&str, String); 9] = [
+            (&self.i18n_theme, format_dropdown_box(cur_theme_name, 16)),
+            (&self.i18n_lang, format_dropdown_box(cur_lang_name, 16)),
+            (&self.i18n_sidebar_pos, format_dropdown_box(cur_sidebar_pos, 16)),
+            (&self.i18n_tab_size, format_dropdown_box(&format!("{} spaces", self.config.tab_size), 16)),
+            (&self.i18n_expand_tab, if self.config.expand_tab { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
+            (&self.i18n_line_numbers, if self.config.line_numbers { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
+            (&self.i18n_word_wrap, if self.config.word_wrap { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
+            (&self.i18n_vi_mode, if self.config.vi_mode { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
+            (&self.i18n_show_hidden, if self.config.show_hidden { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
+        ];
+
+        for (i, (label, val)) in rows.iter().enumerate() {
+            let row_y = y + 2 + i as u16;
+            let is_sel = self.selected_row == i;
+            let row_bg = if is_sel { sel_bg } else { dialog_bg };
+            let row_fg = if is_sel { accent } else { dialog_fg };
+
+            // Fill row background
+            for dx in 1..w - 1 {
+                renderer.set_cell(x + dx, row_y, Cell { ch: ' ', bg: row_bg, fg: row_fg, ..Default::default() });
+            }
+
+            // Draw label
+            let mut cur_x = x + 3;
+            for c in label.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                renderer.set_cell(cur_x, row_y, Cell { ch: c, bg: row_bg, fg: row_fg, bold: is_sel, width: cw as u8, ..Default::default() });
+                cur_x += cw;
+            }
+
+            // Draw value
+            let mut val_x = x + 26;
+            for c in val.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                renderer.set_cell(val_x, row_y, Cell { ch: c, bg: row_bg, fg: row_fg, bold: is_sel, width: cw as u8, ..Default::default() });
+                val_x += cw;
+            }
+        }
+
+        // Row 9: Buttons
+        let btn_y = y + 2 + 9 as u16;
+        let is_btn_row = self.selected_row == 9;
+
+        // Button 1: Save
+        let save_str = format!(" [ {} ] ", self.i18n_save);
+        let save_x = x + 8;
+        let save_sel = is_btn_row && self.selected_btn == 0;
+        let mut bx = save_x;
+        for c in save_str.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            renderer.set_cell(bx, btn_y, Cell {
+                ch: c,
+                bg: if save_sel { sel_bg } else { dialog_bg },
+                fg: if save_sel { accent } else { border_fg },
+                bold: save_sel,
+                width: cw as u8,
+                ..Default::default()
+            });
+            bx += cw;
+        }
+
+        // Button 2: Cancel
+        let cancel_str = format!(" [ {} ] ", self.i18n_cancel);
+        let cancel_x = x + 32;
+        let cancel_sel = is_btn_row && self.selected_btn == 1;
+        let mut cx_btn = cancel_x;
+        for c in cancel_str.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            renderer.set_cell(cx_btn, btn_y, Cell {
+                ch: c,
+                bg: if cancel_sel { sel_bg } else { dialog_bg },
+                fg: if cancel_sel { accent } else { border_fg },
+                bold: cancel_sel,
+                width: cw as u8,
+                ..Default::default()
+            });
+            cx_btn += cw;
+        }
+
+        // Render pseudo pull-down popup overlay if open
+        if let Some((drop_x, drop_y, drop_w, drop_h, visible_count)) = self.dropdown_bounds(x, y, w, h) {
+            if let Some(ref drop) = self.active_dropdown {
+                let popup_bg = Color::AnsiValue(236);
+                let popup_border_fg = Color::AnsiValue(248);
+                let active_row_bg = Color::AnsiValue(24);
+                let active_row_fg = Color::White;
+                let normal_item_fg = Color::AnsiValue(252);
+                let checkmark_fg = Color::AnsiValue(114);
+
+                // Clear popup background
+                for dy in 0..drop_h {
+                    for dx in 0..drop_w {
+                        renderer.set_cell(drop_x + dx, drop_y + dy, Cell {
+                            ch: ' ',
+                            bg: popup_bg,
+                            fg: normal_item_fg,
+                            ..Default::default()
+                        });
+                    }
+                }
+
+                // Top border: ┌──────────── ▲ ────────────┐
+                renderer.set_cell(drop_x, drop_y, Cell { ch: '┌', fg: popup_border_fg, bg: popup_bg, ..Default::default() });
+                for dx in 1..drop_w - 1 {
+                    let ch = if drop.scroll_offset > 0 && dx == drop_w / 2 { '▲' } else { '─' };
+                    renderer.set_cell(drop_x + dx, drop_y, Cell { ch, fg: popup_border_fg, bg: popup_bg, ..Default::default() });
+                }
+                renderer.set_cell(drop_x + drop_w - 1, drop_y, Cell { ch: '┐', fg: popup_border_fg, bg: popup_bg, ..Default::default() });
+
+                // Items
+                let cur_config_val = match drop.row {
+                    0 => self.config.theme.as_str(),
+                    1 => self.config.language.as_str(),
+                    2 => self.config.sidebar_position.as_str(),
+                    _ => "",
+                };
+
+                for vi in 0..visible_count {
+                    let item_idx = drop.scroll_offset + vi;
+                    if item_idx >= drop.items.len() { break; }
+                    let (id, label) = &drop.items[item_idx];
+                    let item_y = drop_y + 1 + vi as u16;
+                    let is_sel = item_idx == drop.selected_idx;
+                    let is_current = if drop.row == 3 {
+                        id.parse::<usize>().ok() == Some(self.config.tab_size)
+                    } else {
+                        id == cur_config_val
+                    };
+
+                    let row_bg = if is_sel { active_row_bg } else { popup_bg };
+                    let row_fg = if is_sel { active_row_fg } else { normal_item_fg };
+
+                    for dx in 1..drop_w - 1 {
+                        renderer.set_cell(drop_x + dx, item_y, Cell {
+                            ch: ' ',
+                            bg: row_bg,
+                            fg: row_fg,
+                            ..Default::default()
+                        });
+                    }
+
+                    // Selection cursor prefix
+                    let prefix = if is_sel { "▶ " } else { "  " };
+                    let mut cur_ix = drop_x + 1;
+                    for c in prefix.chars() {
+                        let cw = c.width().unwrap_or(1) as u16;
+                        renderer.set_cell(cur_ix, item_y, Cell { ch: c, bg: row_bg, fg: row_fg, bold: is_sel, width: cw as u8, ..Default::default() });
+                        cur_ix += cw;
+                    }
+
+                    // Label
+                    let max_label_w = drop_w.saturating_sub(6);
+                    let mut label_w = 0;
+                    for c in label.chars() {
+                        let cw = c.width().unwrap_or(1) as u16;
+                        if label_w + cw > max_label_w { break; }
+                        renderer.set_cell(cur_ix, item_y, Cell { ch: c, bg: row_bg, fg: row_fg, bold: is_sel, width: cw as u8, ..Default::default() });
+                        cur_ix += cw;
+                        label_w += cw;
+                    }
+
+                    // Checkmark if current config value
+                    if is_current {
+                        renderer.set_cell(drop_x + drop_w - 3, item_y, Cell {
+                            ch: '✓',
+                            bg: row_bg,
+                            fg: if is_sel { active_row_fg } else { checkmark_fg },
+                            bold: true,
+                            width: 1,
+                            ..Default::default()
+                        });
+                    }
+
+                    // Side borders
+                    renderer.set_cell(drop_x, item_y, Cell { ch: '│', fg: popup_border_fg, bg: popup_bg, ..Default::default() });
+                    renderer.set_cell(drop_x + drop_w - 1, item_y, Cell { ch: '│', fg: popup_border_fg, bg: popup_bg, ..Default::default() });
+                }
+
+                // Bottom border: └──────────── ▼ ────────────┘
+                let bot_y = drop_y + drop_h - 1;
+                let has_more_below = drop.scroll_offset + visible_count < drop.items.len();
+                renderer.set_cell(drop_x, bot_y, Cell { ch: '└', fg: popup_border_fg, bg: popup_bg, ..Default::default() });
+                for dx in 1..drop_w - 1 {
+                    let ch = if has_more_below && dx == drop_w / 2 { '▼' } else { '─' };
+                    renderer.set_cell(drop_x + dx, bot_y, Cell { ch, fg: popup_border_fg, bg: popup_bg, ..Default::default() });
+                }
+                renderer.set_cell(drop_x + drop_w - 1, bot_y, Cell { ch: '┘', fg: popup_border_fg, bg: popup_bg, ..Default::default() });
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> DialogResult<Action> {
+        // If dropdown is open, process dropdown keyboard interaction
+        if let Some(ref mut drop) = self.active_dropdown {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                    if drop.selected_idx > 0 {
+                        drop.selected_idx -= 1;
+                        if drop.selected_idx < drop.scroll_offset {
+                            drop.scroll_offset = drop.selected_idx;
+                        }
+                    }
+                    return DialogResult::Pending;
+                }
+                KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                    if drop.selected_idx + 1 < drop.items.len() {
+                        drop.selected_idx += 1;
+                        let visible_count = 6.min(drop.items.len());
+                        if drop.selected_idx >= drop.scroll_offset + visible_count {
+                            drop.scroll_offset = drop.selected_idx + 1 - visible_count;
+                        }
+                    }
+                    return DialogResult::Pending;
+                }
+                KeyCode::Enter => {
+                    self.apply_dropdown_selection();
+                    return DialogResult::Pending;
+                }
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => {
+                    self.active_dropdown = None;
+                    return DialogResult::Pending;
+                }
+                _ => return DialogResult::Pending,
+            }
+        }
+
+        // When dropdown is closed: normal settings dialog navigation
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                if self.selected_row > 0 {
+                    self.selected_row -= 1;
+                } else {
+                    self.selected_row = 9;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                if self.selected_row < 9 {
+                    self.selected_row += 1;
+                } else {
+                    self.selected_row = 0;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Tab => {
+                if self.selected_row < 9 {
+                    self.selected_row += 1;
+                } else {
+                    self.selected_row = 0;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::BackTab => {
+                if self.selected_row > 0 {
+                    self.selected_row -= 1;
+                } else {
+                    self.selected_row = 9;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {
+                if self.selected_row == 9 {
+                    self.selected_btn = 0;
+                } else {
+                    self.cycle_row(self.selected_row, false);
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
+                if self.selected_row == 9 {
+                    self.selected_btn = 1;
+                } else {
+                    self.cycle_row(self.selected_row, true);
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Enter => {
+                if self.selected_row < 4 {
+                    // Open pseudo pull-down menu for multi-choice settings
+                    self.open_dropdown(self.selected_row);
+                    DialogResult::Pending
+                } else if self.selected_row < 9 {
+                    // Toggle boolean settings
+                    self.cycle_row(self.selected_row, true);
+                    DialogResult::Pending
+                } else {
+                    // Button row
+                    if self.selected_btn == 0 {
+                        DialogResult::Ok(Action::SaveSettings(Box::new(self.config.clone())))
+                    } else {
+                        DialogResult::Cancel
+                    }
+                }
+            }
+            KeyCode::Char(' ') => {
+                if self.selected_row < 4 {
+                    self.open_dropdown(self.selected_row);
+                    DialogResult::Pending
+                } else if self.selected_row < 9 {
+                    self.cycle_row(self.selected_row, true);
+                    DialogResult::Pending
+                } else {
+                    if self.selected_btn == 0 {
+                        DialogResult::Ok(Action::SaveSettings(Box::new(self.config.clone())))
+                    } else {
+                        DialogResult::Cancel
+                    }
+                }
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                DialogResult::Ok(Action::SaveSettings(Box::new(self.config.clone())))
+            }
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => DialogResult::Cancel,
+            _ => DialogResult::Pending,
+        }
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent, x: u16, y: u16, w: u16, h: u16) -> DialogResult<Action> {
+        let (mx, my) = (mouse.column, mouse.row);
+
+        // If dropdown is open, process dropdown mouse events
+        if let Some((drop_x, drop_y, drop_w, drop_h, visible_count)) = self.dropdown_bounds(x, y, w, h) {
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if mx >= drop_x && mx < drop_x + drop_w && my >= drop_y && my < drop_y + drop_h {
+                        if my > drop_y && my < drop_y + drop_h - 1 {
+                            let clicked_visible = (my - (drop_y + 1)) as usize;
+                            if let Some(ref mut drop) = self.active_dropdown {
+                                let clicked_idx = drop.scroll_offset + clicked_visible;
+                                if clicked_idx < drop.items.len() {
+                                    drop.selected_idx = clicked_idx;
+                                    self.apply_dropdown_selection();
+                                    return DialogResult::Pending;
+                                }
+                            }
+                        } else if my == drop_y {
+                            if let Some(ref mut drop) = self.active_dropdown {
+                                if drop.scroll_offset > 0 {
+                                    drop.scroll_offset -= 1;
+                                    drop.selected_idx = drop.selected_idx.min(drop.scroll_offset + visible_count - 1);
+                                }
+                            }
+                            return DialogResult::Pending;
+                        } else if my == drop_y + drop_h - 1 {
+                            if let Some(ref mut drop) = self.active_dropdown {
+                                if drop.scroll_offset + visible_count < drop.items.len() {
+                                    drop.scroll_offset += 1;
+                                    drop.selected_idx = drop.selected_idx.max(drop.scroll_offset);
+                                }
+                            }
+                            return DialogResult::Pending;
+                        }
+                    } else {
+                        // Click outside closes dropdown
+                        self.active_dropdown = None;
+                        return DialogResult::Pending;
+                    }
+                }
+                MouseEventKind::ScrollUp => {
+                    if let Some(ref mut drop) = self.active_dropdown {
+                        if drop.selected_idx > 0 {
+                            drop.selected_idx -= 1;
+                            if drop.selected_idx < drop.scroll_offset {
+                                drop.scroll_offset = drop.selected_idx;
+                            }
+                        }
+                    }
+                    return DialogResult::Pending;
+                }
+                MouseEventKind::ScrollDown => {
+                    if let Some(ref mut drop) = self.active_dropdown {
+                        if drop.selected_idx + 1 < drop.items.len() {
+                            drop.selected_idx += 1;
+                            if drop.selected_idx >= drop.scroll_offset + visible_count {
+                                drop.scroll_offset = drop.selected_idx + 1 - visible_count;
+                            }
+                        }
+                    }
+                    return DialogResult::Pending;
+                }
+                _ => return DialogResult::Pending,
+            }
+        }
+
+        // When dropdown is closed: normal settings dialog mouse interaction
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if mx >= x && mx < x + w && my >= y && my < y + h {
+                    let rel_y = my.saturating_sub(y);
+                    let rel_x = mx.saturating_sub(x);
+                    if (2..=10).contains(&rel_y) {
+                        let row = (rel_y - 2) as usize;
+                        self.selected_row = row;
+                        if row < 2 {
+                            // Theme or Language: open dropdown
+                            self.open_dropdown(row);
+                        } else if row < 4 {
+                            let mid_x = w / 2;
+                            if rel_x < mid_x {
+                                self.cycle_row(row, false);
+                            } else {
+                                self.cycle_row(row, true);
+                            }
+                        } else {
+                            self.cycle_row(row, true);
+                        }
+                        return DialogResult::Pending;
+                    } else if rel_y == 11 {
+                        self.selected_row = 9;
+                        let mid_x = w / 2;
+                        if rel_x < mid_x {
+                            self.selected_btn = 0;
+                            return DialogResult::Ok(Action::SaveSettings(Box::new(self.config.clone())));
+                        } else {
+                            self.selected_btn = 1;
+                            return DialogResult::Cancel;
+                        }
+                    }
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if self.selected_row > 0 {
+                    self.selected_row -= 1;
+                } else {
+                    self.selected_row = 9;
+                }
+                return DialogResult::Pending;
+            }
+            MouseEventKind::ScrollDown => {
+                if self.selected_row < 9 {
+                    self.selected_row += 1;
+                } else {
+                    self.selected_row = 0;
+                }
+                return DialogResult::Pending;
+            }
+            _ => {}
+        }
+        DialogResult::Pending
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1710,6 +2664,69 @@ mod tests {
         match dialog.handle_key(make_key(KeyCode::Enter)) {
             DialogResult::Ok(Action::DontSave) => {}
             _ => panic!("Expected Action::DontSave on Enter"),
+        }
+    }
+
+    #[test]
+    fn test_unsaved_changes_dialog_dimensions_and_rendering_japanese() {
+        let i18n = zee_core::I18n::load("ja");
+        let title = i18n.get("dialog.unsaved_changes_title").to_string(); // "保存されていない変更"
+        let filename = i18n.get("status.no_name").to_string(); // "[無題]"
+        let message = i18n.get("dialog.unsaved_changes").replace("{filename}", &filename); // "\"[無題]\" は変更されています。保存しますか？"
+        let buttons = vec![
+            (i18n.get("dialog.save").to_string(), Action::Save),            // "保存"
+            (i18n.get("dialog.dont_save").to_string(), Action::DontSave),    // "保存しない"
+            (i18n.get("dialog.cancel").to_string(), Action::Cancel),        // "キャンセル"
+        ];
+
+        let mut dialog = MessageDialog::new(title, message.clone(), buttons);
+        let (dw, dh) = dialog.dimensions();
+
+        // Must be wide enough to comfortably contain the 42-cell message and 40-cell buttons with generous margins
+        assert!(dw >= 56, "Expected dialog width >= 56 for Japanese UI, got {}", dw);
+        assert!(dh >= 8, "Expected dialog height >= 8, got {}", dh);
+
+        // Test rendering with Renderer
+        let theme = zee_core::theme::Theme::load_all().into_iter().next().unwrap();
+        let mut renderer = Renderer::new(dw, dh);
+        dialog.render(&mut renderer, &theme, 0, 0, dw, dh);
+
+        // Test mouse click coordinates on each button at bottom row (dh - 2)
+        let click_y = dh - 2;
+        // 1. Click Save button on left
+        let click_save = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: dw / 2 - 14,
+            row: click_y,
+            modifiers: KeyModifiers::NONE,
+        };
+        match dialog.handle_mouse(click_save, 0, 0, dw, dh) {
+            DialogResult::Ok(Action::Save) => {}
+            _ => panic!("Expected Action::Save when clicking Save button"),
+        }
+
+        // 2. Click Don't Save button in center
+        let click_dont_save = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: dw / 2,
+            row: click_y,
+            modifiers: KeyModifiers::NONE,
+        };
+        match dialog.handle_mouse(click_dont_save, 0, 0, dw, dh) {
+            DialogResult::Ok(Action::DontSave) => {}
+            _ => panic!("Expected Action::DontSave when clicking Don't Save button"),
+        }
+
+        // 3. Click Cancel button on right
+        let click_cancel = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: dw / 2 + 14,
+            row: click_y,
+            modifiers: KeyModifiers::NONE,
+        };
+        match dialog.handle_mouse(click_cancel, 0, 0, dw, dh) {
+            DialogResult::Ok(Action::Cancel) => {}
+            _ => panic!("Expected Action::Cancel when clicking Cancel button"),
         }
     }
 
@@ -1756,6 +2773,172 @@ mod tests {
             }
             _ => panic!("Expected Action::ConfirmPath"),
         }
+    }
+
+    #[test]
+    fn test_settings_dialog_workflow() {
+        let i18n = zee_core::I18n::load("en");
+        let themes = zee_core::theme::Theme::load_all();
+        let mut config = zee_core::Config::default();
+        config.sidebar_position = "left".to_string();
+        config.tab_size = 4;
+
+        let mut dialog = SettingsDialog::new(config, &themes, &i18n);
+        assert_eq!(dialog.selected_row, 0);
+
+        // Navigate Down to Sidebar Position (row 2)
+        dialog.handle_key(make_key(KeyCode::Down));
+        assert_eq!(dialog.selected_row, 1);
+        dialog.handle_key(make_key(KeyCode::Down));
+        assert_eq!(dialog.selected_row, 2);
+
+        // Toggle Sidebar Position from left to right
+        assert_eq!(dialog.config.sidebar_position, "left");
+        dialog.handle_key(make_key(KeyCode::Right));
+        assert_eq!(dialog.config.sidebar_position, "right");
+
+        // Navigate Down to Tab Size (row 3) and cycle tab size
+        dialog.handle_key(make_key(KeyCode::Down));
+        assert_eq!(dialog.selected_row, 3);
+        dialog.handle_key(make_key(KeyCode::Right));
+        assert_eq!(dialog.config.tab_size, 8);
+
+        // Navigate to Buttons row (row 9)
+        dialog.selected_row = 9;
+        dialog.selected_btn = 0; // Save & Apply
+
+        match dialog.handle_key(make_key(KeyCode::Enter)) {
+            DialogResult::Ok(Action::SaveSettings(new_cfg)) => {
+                assert_eq!(new_cfg.sidebar_position, "right");
+                assert_eq!(new_cfg.tab_size, 8);
+            }
+            _ => panic!("Expected Action::SaveSettings"),
+        }
+    }
+
+    #[test]
+    fn test_settings_dialog_dropdown_keyboard_navigation_and_selection() {
+        let i18n = zee_core::I18n::load("en");
+        let themes = zee_core::theme::Theme::load_all();
+        let mut config = zee_core::Config::default();
+        config.language = "auto".to_string();
+
+        let mut dialog = SettingsDialog::new(config, &themes, &i18n);
+        assert!(dialog.active_dropdown.is_none());
+
+        // Move Down to Language row (row 1)
+        dialog.handle_key(make_key(KeyCode::Down));
+        assert_eq!(dialog.selected_row, 1);
+
+        // Press Enter to open dropdown menu
+        dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(dialog.active_dropdown.is_some());
+        {
+            let drop = dialog.active_dropdown.as_ref().unwrap();
+            assert_eq!(drop.row, 1);
+            // Current selection should be initial language index
+            assert_eq!(drop.selected_idx, 0); // "auto" is at index 0
+        }
+
+        // Navigate Down inside dropdown menu
+        dialog.handle_key(make_key(KeyCode::Down));
+        let selected_id = {
+            let drop = dialog.active_dropdown.as_ref().unwrap();
+            assert_eq!(drop.selected_idx, 1);
+            drop.items[1].0.clone()
+        };
+
+        // Press Enter to confirm and select
+        dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(dialog.active_dropdown.is_none());
+        assert_eq!(dialog.config.language, selected_id);
+
+        // Re-open dropdown with Enter
+        dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(dialog.active_dropdown.is_some());
+
+        // Navigate Down then press Esc to cancel without change
+        dialog.handle_key(make_key(KeyCode::Down));
+        dialog.handle_key(make_key(KeyCode::Esc));
+        assert!(dialog.active_dropdown.is_none());
+        assert_eq!(dialog.config.language, selected_id);
+    }
+
+    #[test]
+    fn test_settings_dialog_dropdown_mouse_click_and_scroll() {
+        let i18n = zee_core::I18n::load("en");
+        let themes = zee_core::theme::Theme::load_all();
+        let mut config = zee_core::Config::default();
+        config.language = "auto".to_string();
+
+        let mut dialog = SettingsDialog::new(config, &themes, &i18n);
+        let (x, y, w, h) = (10, 5, 56, 14);
+
+        // Mouse click on Language row (y + 2 + 1 = 8) to open dropdown
+        let click_row = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x + 15,
+            row: y + 3,
+            modifiers: KeyModifiers::NONE,
+        };
+        dialog.handle_mouse(click_row, x, y, w, h);
+        assert!(dialog.active_dropdown.is_some());
+
+        let (drop_x, drop_y, _, _, _) = dialog.dropdown_bounds(x, y, w, h).unwrap();
+
+        // Mouse click on item at index 1 (drop_y + 1 + 1 = drop_y + 2)
+        let click_item = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: drop_x + 5,
+            row: drop_y + 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        dialog.handle_mouse(click_item, x, y, w, h);
+        assert!(dialog.active_dropdown.is_none());
+        assert_eq!(dialog.config.language, dialog.languages[1].0);
+    }
+
+    #[test]
+    fn test_settings_dialog_dropdown_theme_and_tab_size() {
+        let i18n = zee_core::I18n::load("en");
+        let themes = zee_core::theme::Theme::load_all();
+        let mut config = zee_core::Config::default();
+        config.theme = themes[0].meta.name.to_lowercase().replace(" ", "-");
+        config.tab_size = 2;
+
+        let mut dialog = SettingsDialog::new(config, &themes, &i18n);
+
+        // 1. Theme dropdown on row 0
+        assert_eq!(dialog.selected_row, 0);
+        dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(dialog.active_dropdown.is_some());
+        assert_eq!(dialog.active_dropdown.as_ref().unwrap().row, 0);
+
+        // Move Down to select second theme
+        dialog.handle_key(make_key(KeyCode::Down));
+        let expected_theme = dialog.active_dropdown.as_ref().unwrap().items[1].0.clone();
+        dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(dialog.active_dropdown.is_none());
+        assert_eq!(dialog.config.theme, expected_theme);
+
+        // 2. Tab Size dropdown on row 3
+        dialog.selected_row = 3;
+        dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(dialog.active_dropdown.is_some());
+        assert_eq!(dialog.active_dropdown.as_ref().unwrap().row, 3);
+        assert_eq!(dialog.active_dropdown.as_ref().unwrap().selected_idx, 0); // 2 spaces
+
+        // Move Down to 4 spaces (index 1)
+        dialog.handle_key(make_key(KeyCode::Down));
+        dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(dialog.active_dropdown.is_none());
+        assert_eq!(dialog.config.tab_size, 4);
+
+        // Open Tab Size again and move Down to 8 spaces (index 2)
+        dialog.handle_key(make_key(KeyCode::Enter));
+        dialog.handle_key(make_key(KeyCode::Down));
+        dialog.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(dialog.config.tab_size, 8);
     }
 }
 

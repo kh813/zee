@@ -34,6 +34,10 @@ pub enum DialogType {
     Message { title: String, message: String },
     Settings,
     PluginManager,
+    NewFile { parent_dir: std::path::PathBuf },
+    NewFolder { parent_dir: std::path::PathBuf },
+    Rename { target_path: std::path::PathBuf },
+    ConfirmDelete { target_path: std::path::PathBuf },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,6 +101,10 @@ impl Dialog {
                     };
                     input_text = format!("untitled{}", ext);
                 }
+            }
+        } else if let DialogType::Rename { target_path } = &dialog_type {
+            if let Some(name) = target_path.file_name() {
+                input_text = name.to_string_lossy().to_string();
             }
         }
 
@@ -485,6 +493,38 @@ impl Dialog {
                     });
                 }
             }
+            DialogType::NewFile { parent_dir } => {
+                let filename = self.input_text.trim().to_string();
+                if !filename.is_empty() {
+                    cx.emit(DialogEvent::CreateFile {
+                        parent_dir: parent_dir.clone(),
+                        filename,
+                    });
+                }
+            }
+            DialogType::NewFolder { parent_dir } => {
+                let folder_name = self.input_text.trim().to_string();
+                if !folder_name.is_empty() {
+                    cx.emit(DialogEvent::CreateFolder {
+                        parent_dir: parent_dir.clone(),
+                        folder_name,
+                    });
+                }
+            }
+            DialogType::Rename { target_path } => {
+                let new_name = self.input_text.trim().to_string();
+                if !new_name.is_empty() {
+                    cx.emit(DialogEvent::RenameItem {
+                        target_path: target_path.clone(),
+                        new_name,
+                    });
+                }
+            }
+            DialogType::ConfirmDelete { target_path } => {
+                cx.emit(DialogEvent::DeleteItem {
+                    target_path: target_path.clone(),
+                });
+            }
             _ => {}
         }
         self.close(cx);
@@ -504,6 +544,10 @@ pub enum DialogEvent {
     ExportConfig,
     ExportAll,
     ImportBackup,
+    CreateFile { parent_dir: std::path::PathBuf, filename: String },
+    CreateFolder { parent_dir: std::path::PathBuf, folder_name: String },
+    RenameItem { target_path: std::path::PathBuf, new_name: String },
+    DeleteItem { target_path: std::path::PathBuf },
 }
 
 impl EventEmitter<DialogEvent> for Dialog {}
@@ -2997,6 +3041,334 @@ impl Dialog {
                                     .hover(|s| s.opacity(0.9))
                                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
                                     .child(self.i18n.get("dialog.ok").to_string())
+                            )
+                    )
+            }
+            DialogType::NewFile { parent_dir } => {
+                let title = self.i18n.get("sidebar.new_file");
+                let label = self.i18n.get("dialog.file_name");
+                let parent_display = parent_dir.file_name().map(|n| n.to_string_lossy()).unwrap_or_else(|| parent_dir.to_string_lossy());
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2p5()
+                    .child(
+                        div()
+                            .text_size(px(15.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title.to_string())
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(with_alpha(fg, 0.6))
+                            .child(format!("In: {}", parent_display))
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(label.to_string())
+                    )
+                    .child(
+                        div()
+                            .h(px(34.0))
+                            .bg(input_bg)
+                            .border_1()
+                            .border_color(border_color)
+                            .rounded_md()
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .child(
+                                if self.input_text.is_empty() {
+                                    div()
+                                        .text_color(with_alpha(fg, 0.45))
+                                        .text_size(px(13.0))
+                                        .child("example.txt")
+                                } else {
+                                    div()
+                                        .text_size(px(13.0))
+                                        .child(self.input_text.clone())
+                                }
+                            )
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .mt_2()
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(button_bg)
+                                    .text_size(px(12.5))
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(button_hover))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                    .child(self.i18n.get("dialog.cancel").to_string())
+                            )
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(accent)
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .text_size(px(12.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.confirm(cx)))
+                                    .child(self.i18n.get("dialog.ok").to_string())
+                            )
+                    )
+            }
+            DialogType::NewFolder { parent_dir } => {
+                let title = self.i18n.get("sidebar.new_folder");
+                let label = self.i18n.get("dialog.folder_name");
+                let parent_display = parent_dir.file_name().map(|n| n.to_string_lossy()).unwrap_or_else(|| parent_dir.to_string_lossy());
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2p5()
+                    .child(
+                        div()
+                            .text_size(px(15.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title.to_string())
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(with_alpha(fg, 0.6))
+                            .child(format!("In: {}", parent_display))
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(label.to_string())
+                    )
+                    .child(
+                        div()
+                            .h(px(34.0))
+                            .bg(input_bg)
+                            .border_1()
+                            .border_color(border_color)
+                            .rounded_md()
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .child(
+                                if self.input_text.is_empty() {
+                                    div()
+                                        .text_color(with_alpha(fg, 0.45))
+                                        .text_size(px(13.0))
+                                        .child("new_folder")
+                                } else {
+                                    div()
+                                        .text_size(px(13.0))
+                                        .child(self.input_text.clone())
+                                }
+                            )
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .mt_2()
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(button_bg)
+                                    .text_size(px(12.5))
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(button_hover))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                    .child(self.i18n.get("dialog.cancel").to_string())
+                            )
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(accent)
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .text_size(px(12.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.confirm(cx)))
+                                    .child(self.i18n.get("dialog.ok").to_string())
+                            )
+                    )
+            }
+            DialogType::Rename { target_path } => {
+                let title = self.i18n.get("sidebar.rename");
+                let label = self.i18n.get("dialog.new_name");
+                let cur_display = target_path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2p5()
+                    .child(
+                        div()
+                            .text_size(px(15.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title.to_string())
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(with_alpha(fg, 0.6))
+                            .child(format!("Current: {}", cur_display))
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(label.to_string())
+                    )
+                    .child(
+                        div()
+                            .h(px(34.0))
+                            .bg(input_bg)
+                            .border_1()
+                            .border_color(border_color)
+                            .rounded_md()
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .child(
+                                if self.input_text.is_empty() {
+                                    div()
+                                        .text_color(with_alpha(fg, 0.45))
+                                        .text_size(px(13.0))
+                                        .child("new_name")
+                                } else {
+                                    div()
+                                        .text_size(px(13.0))
+                                        .child(self.input_text.clone())
+                                }
+                            )
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .mt_2()
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(button_bg)
+                                    .text_size(px(12.5))
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(button_hover))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                    .child(self.i18n.get("dialog.cancel").to_string())
+                            )
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(accent)
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .text_size(px(12.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.confirm(cx)))
+                                    .child(self.i18n.get("sidebar.rename").to_string())
+                            )
+                    )
+            }
+            DialogType::ConfirmDelete { target_path } => {
+                let title = self.i18n.get("sidebar.delete");
+                let cur_display = target_path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+                let confirm_msg = format!("{} '{}'?", self.i18n.get("sidebar.delete_confirm"), cur_display);
+                let danger_color = led_color_to_gpui(theme.syntax.keyword.unwrap_or(zee_core::theme::Color::Ansi(1)));
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_size(px(15.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title.to_string())
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(with_alpha(fg, 0.85))
+                            .child(confirm_msg)
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .mt_2()
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(button_bg)
+                                    .text_size(px(12.5))
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(button_hover))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                    .child(self.i18n.get("dialog.cancel").to_string())
+                            )
+                            .child(
+                                div()
+                                    .h(px(30.0))
+                                    .px_4()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(danger_color)
+                                    .text_color(gpui::rgb(0xffffff))
+                                    .text_size(px(12.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.9))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.confirm(cx)))
+                                    .child(self.i18n.get("sidebar.delete").to_string())
                             )
                     )
             }

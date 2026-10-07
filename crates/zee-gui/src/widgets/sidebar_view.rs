@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 use crate::workspace::{Workspace, SidebarTab};
 use crate::widgets::{led_color_to_gpui, ui_font_family, with_alpha};
 use zee_core::outline::{self, FlatOutlineItem, OutlineNode};
@@ -26,11 +27,24 @@ fn format_file_size(bytes: usize) -> String {
     }
 }
 
+pub enum SidebarEvent {
+    NewFile(std::path::PathBuf),
+    NewFolder(std::path::PathBuf),
+    Rename(std::path::PathBuf),
+    Delete(std::path::PathBuf),
+    Refresh,
+    ToggleShowHidden,
+}
+
+impl EventEmitter<SidebarEvent> for SidebarView {}
+
 pub struct SidebarView {
     pub workspace: Entity<Workspace>,
     pub i18n: I18n,
     pub focus_handle: FocusHandle,
     pub show_properties: bool,
+    pub is_hidden_hovered: bool,
+    pub context_menu: Option<(std::path::PathBuf, bool, Point<Pixels>)>,
 }
 
 impl SidebarView {
@@ -44,6 +58,8 @@ impl SidebarView {
             i18n,
             focus_handle: cx.focus_handle(),
             show_properties: true,
+            is_hidden_hovered: false,
+            context_menu: None,
         }
     }
 
@@ -63,7 +79,7 @@ impl SidebarView {
 
 impl Render for SidebarView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (active_tab, is_right_sidebar, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props) = {
+        let (active_tab, is_right_sidebar, show_hidden, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props) = {
             let workspace = self.workspace.read(cx);
             let theme = &workspace.theme;
 
@@ -77,6 +93,7 @@ impl Render for SidebarView {
 
             let active_tab = workspace.sidebar_tab;
             let is_right_sidebar = workspace.config.sidebar_position != "left";
+            let show_hidden = workspace.file_tree.show_hidden;
             let file_items = workspace.file_tree.flatten();
             let active_path = workspace.active_editor().and_then(|e| e.path.clone());
             let outline_nodes = workspace.outline_nodes.clone();
@@ -102,7 +119,7 @@ impl Render for SidebarView {
                 }
             });
 
-            (active_tab, is_right_sidebar, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props)
+            (active_tab, is_right_sidebar, show_hidden, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props)
         };
 
         // Render header tabs
@@ -115,6 +132,12 @@ impl Render for SidebarView {
             .px_2()
             .border_b_1()
             .border_color(border_color)
+            .on_mouse_move(cx.listener(|this, _, _, cx| {
+                if this.is_hidden_hovered {
+                    this.is_hidden_hovered = false;
+                    cx.notify();
+                }
+            }))
             .child(
                 div()
                     .flex()
@@ -162,19 +185,54 @@ impl Render for SidebarView {
             )
             .child(
                 div()
-                    .px_1()
-                    .cursor_pointer()
-                    .text_size(px(11.5))
-                    .text_color(muted_fg)
-                    .hover(move |s| s.text_color(active_fg))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                        this.workspace.update(cx, |w, cx| {
-                            w.file_tree.refresh();
-                            w.update_outline();
-                            cx.notify();
-                        });
-                    }))
-                    .child("↻")
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .when(active_tab == SidebarTab::Files, |h| {
+                        h.child(
+                            div()
+                                .px_1p5()
+                                .py_0p5()
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .bg(if show_hidden { with_alpha(active_fg, 0.15) } else { Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 } })
+                                .hover(move |s| s.bg(with_alpha(active_fg, 0.22)))
+                                .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
+                                    cx.emit(SidebarEvent::ToggleShowHidden);
+                                }))
+                                .on_mouse_move(cx.listener(|this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if !this.is_hidden_hovered {
+                                        this.is_hidden_hovered = true;
+                                        cx.notify();
+                                    }
+                                }))
+                                .child(
+                                    div()
+                                        .text_size(px(11.0))
+                                        .font_weight(FontWeight::BOLD)
+                                        .text_color(if show_hidden { active_fg } else { muted_fg })
+                                        .child(".*")
+                                )
+                        )
+                    })
+                    .child(
+                        div()
+                            .px_1()
+                            .cursor_pointer()
+                            .text_size(px(11.5))
+                            .text_color(muted_fg)
+                            .hover(move |s| s.text_color(active_fg))
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                this.workspace.update(cx, |w, cx| {
+                                    w.file_tree.refresh();
+                                    w.update_outline();
+                                    cx.notify();
+                                });
+                                cx.emit(SidebarEvent::Refresh);
+                            }))
+                            .child("↻")
+                    )
             );
 
         let content = match active_tab {
@@ -207,7 +265,7 @@ impl Render for SidebarView {
             cx,
         );
 
-        container
+        let mut res = container
             .child(header)
             .child(
                 div()
@@ -218,9 +276,136 @@ impl Render for SidebarView {
                     .overflow_y_scroll()
                     .overflow_x_scroll()
                     .py_1()
+                    .on_mouse_move(cx.listener(|this, _, _, cx| {
+                        if this.is_hidden_hovered {
+                            this.is_hidden_hovered = false;
+                            cx.notify();
+                        }
+                    }))
                     .child(content)
             )
-            .child(properties_panel)
+            .child(properties_panel);
+
+        if let Some((ctx_path, is_dir, click_pos)) = &self.context_menu {
+            let p_new_file = ctx_path.clone();
+            let p_new_folder = ctx_path.clone();
+            let p_rename = ctx_path.clone();
+            let p_delete = ctx_path.clone();
+            let is_dir = *is_dir;
+
+            // Clamped coordinates relative to sidebar
+            // Sidebar width is 240px, context menu width is 160px.
+            let menu_width = px(160.0);
+            let sidebar_width = px(240.0);
+            let pos_x = click_pos.x.clamp(px(4.0), sidebar_width - menu_width - px(8.0));
+            let pos_y = click_pos.y.max(px(32.0));
+
+            let menu = div()
+                .absolute()
+                .top(pos_y)
+                .left(pos_x)
+                .w(menu_width)
+                .bg(bg_color)
+                .border_1()
+                .border_color(border_color)
+                .rounded_md()
+                .shadow_md()
+                .p_1()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.context_menu = None;
+                    cx.notify();
+                }))
+                .when(is_dir, |m| {
+                    m.child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .text_size(px(12.0))
+                            .hover(move |s| s.bg(hover_bg))
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                this.context_menu = None;
+                                cx.emit(SidebarEvent::NewFile(p_new_file.clone()));
+                            }))
+                            .child(format!("📄 {}", self.i18n.get("sidebar.new_file")))
+                    )
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .text_size(px(12.0))
+                            .hover(move |s| s.bg(hover_bg))
+                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                this.context_menu = None;
+                                cx.emit(SidebarEvent::NewFolder(p_new_folder.clone()));
+                            }))
+                            .child(format!("📁 {}", self.i18n.get("sidebar.new_folder")))
+                    )
+                })
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .text_size(px(12.0))
+                        .hover(move |s| s.bg(hover_bg))
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                            this.context_menu = None;
+                            cx.emit(SidebarEvent::Rename(p_rename.clone()));
+                        }))
+                        .child(format!("✏️ {}", self.i18n.get("sidebar.rename")))
+                )
+                .child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .rounded_sm()
+                        .cursor_pointer()
+                        .text_size(px(12.0))
+                        .hover(move |s| s.bg(hover_bg))
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                            this.context_menu = None;
+                            cx.emit(SidebarEvent::Delete(p_delete.clone()));
+                        }))
+                        .child(format!("🗑️ {}", self.i18n.get("sidebar.delete")))
+                );
+
+            res = res.child(menu);
+        }
+
+        if self.is_hidden_hovered {
+            let tooltip_text = if show_hidden {
+                self.i18n.get("sidebar.hide_hidden").to_string()
+            } else {
+                self.i18n.get("sidebar.show_hidden").to_string()
+            };
+
+            let tooltip = div()
+                .absolute()
+                .top(px(34.0))
+                .right(px(12.0))
+                .px_2()
+                .py_1()
+                .bg(bg_color)
+                .border_1()
+                .border_color(border_color)
+                .rounded_md()
+                .shadow_md()
+                .text_size(px(11.0))
+                .text_color(text_color)
+                .child(tooltip_text);
+
+            res = res.child(tooltip);
+        }
+
+        res
     }
 }
 
@@ -273,11 +458,14 @@ impl SidebarView {
                     };
 
                     let path_for_click = path.clone();
+                    let path_for_right_click = path.clone();
+
                     div()
                         .h(px(24.0))
                         .min_w_full()
                         .flex()
                         .items_center()
+                        .justify_between()
                         .pl(depth_px)
                         .pr_2()
                         .cursor_pointer()
@@ -287,6 +475,11 @@ impl SidebarView {
                         .bg(if is_current { sel_bg } else { Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 } })
                         .hover(move |s| s.bg(hover_bg))
                         .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                            if this.context_menu.is_some() {
+                                this.context_menu = None;
+                                cx.notify();
+                                return;
+                            }
                             let p = path_for_click.clone();
                             if is_dir {
                                 this.workspace.update(cx, |w, cx| {
@@ -303,18 +496,30 @@ impl SidebarView {
                                 });
                             }
                         }))
+                        .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            this.context_menu = Some((path_for_right_click.clone(), is_dir, event.position));
+                            cx.notify();
+                        }))
                         .child(
                             div()
-                                .w(px(14.0))
-                                .flex_shrink_0()
-                                .text_size(px(10.0))
-                                .text_color(if is_dir { muted_fg } else { with_alpha(muted_fg, 0.4) })
-                                .child(icon)
-                        )
-                        .child(
-                            div()
-                                .whitespace_nowrap()
-                                .child(item.name)
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .w(px(14.0))
+                                        .flex_shrink_0()
+                                        .text_size(px(10.0))
+                                        .text_color(if is_dir { muted_fg } else { with_alpha(muted_fg, 0.4) })
+                                        .child(icon)
+                                )
+                                .child(
+                                    div()
+                                        .overflow_hidden()
+                                        .whitespace_nowrap()
+                                        .child(item.name)
+                                )
                         )
                 })
             )

@@ -12,6 +12,8 @@ pub struct Config {
     pub word_wrap: bool,
     pub sidebar: bool,
     pub sidebar_position: String,
+    #[serde(default)]
+    pub show_hidden: bool,
     pub tab_size: usize,
     pub expand_tab: bool,
     pub trim_trailing_whitespace: bool,
@@ -39,7 +41,8 @@ impl Default for Config {
             vi_mode: false,
             word_wrap: true,
             sidebar: false,
-            sidebar_position: "right".to_string(),
+            sidebar_position: "left".to_string(),
+            show_hidden: false,
             tab_size: 4,
             expand_tab: false,
             trim_trailing_whitespace: true,
@@ -211,6 +214,10 @@ impl Config {
         let items: Vec<String> = registries.iter().map(|s| format!("\"{}\"", s)).collect();
         let val = format!("[{}]", items.join(", "));
         Self::write_key("plugin_registries", &val)
+    }
+
+    pub fn save_show_hidden(show_hidden: bool) -> Result<()> {
+        Self::write_key("show_hidden", &show_hidden.to_string())
     }
 
     pub fn add_plugin_registry(&mut self, url: &str) -> Result<()> {
@@ -459,7 +466,7 @@ mod tests {
         assert_eq!(config.ui_font_family, Some("Inter".to_string()));
         assert_eq!(config.ui_font_size, 13.5);
 
-        assert_eq!(Config::default().sidebar_position, "right");
+        assert_eq!(Config::default().sidebar_position, "left");
         assert_eq!(Config::default().language, "auto");
     }
 

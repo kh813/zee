@@ -34,7 +34,7 @@ impl Workspace {
     pub fn new_with_root(config: Config, root_path: Option<PathBuf>) -> Self {
         let is_custom_root = root_path.is_some();
         let root = root_path.unwrap_or_else(zee_core::file_tree::user_root_dir);
-        let file_tree = FileTree::new(&root, false);
+        let file_tree = FileTree::new(&root, config.show_hidden);
         let sidebar_visible = if is_custom_root { true } else { config.sidebar };
         let mut plugin_manager = zee_core::plugin::PluginManager::new();
         // Check local development plugins directory if present
@@ -920,6 +920,49 @@ mod tests {
                 theme.meta.name
             );
         }
+    }
+
+    #[test]
+    fn test_workspace_file_operations_and_hidden_files() {
+        let temp_dir = std::env::temp_dir().join("zee_test_gui_workspace_file_ops");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir.join(".hidden"), "secret").unwrap();
+
+        let mut workspace = Workspace::new(Config::default());
+        workspace.file_tree.set_root(&temp_dir);
+
+        // 1. Initial state without hidden files
+        workspace.file_tree.show_hidden = false;
+        let items: Vec<String> = workspace.file_tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(!items.contains(&".hidden".to_string()));
+
+        // 2. Toggle show hidden
+        let is_shown = workspace.file_tree.toggle_show_hidden();
+        assert!(is_shown);
+        let items: Vec<String> = workspace.file_tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(items.contains(&".hidden".to_string()));
+
+        // 3. Create file via workspace file tree
+        let created = workspace.file_tree.create_file(&temp_dir, "gui_new.rs").unwrap();
+        assert!(created.exists());
+        let items: Vec<String> = workspace.file_tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(items.contains(&"gui_new.rs".to_string()));
+
+        // 4. Rename file
+        let renamed = workspace.file_tree.rename_item(&created, "gui_renamed.rs").unwrap();
+        assert!(renamed.exists());
+        assert!(!created.exists());
+        let items: Vec<String> = workspace.file_tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(items.contains(&"gui_renamed.rs".to_string()));
+
+        // 5. Delete file
+        workspace.file_tree.delete_item(&renamed).unwrap();
+        assert!(!renamed.exists());
+        let items: Vec<String> = workspace.file_tree.flatten().into_iter().map(|i| i.name).collect();
+        assert!(!items.contains(&"gui_renamed.rs".to_string()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

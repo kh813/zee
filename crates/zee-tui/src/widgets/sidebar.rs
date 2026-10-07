@@ -16,6 +16,7 @@ pub enum SidebarAction {
     None,
     OpenFile(PathBuf),
     JumpToLine(usize),
+    ToggleHidden,
 }
 
 pub struct Sidebar {
@@ -74,6 +75,10 @@ impl Sidebar {
     #[allow(dead_code)]
     pub fn refresh_files(&mut self) {
         self.file_tree.refresh();
+    }
+
+    pub fn toggle_show_hidden(&mut self) -> bool {
+        self.file_tree.toggle_show_hidden()
     }
 
     pub fn update_outline(&mut self, text: &str, lang_or_ext: &str) {
@@ -235,12 +240,28 @@ impl Sidebar {
         }
     }
 
-    pub fn handle_click(&mut self, rel_x: u16, rel_y: u16, _viewport_height: usize) -> SidebarAction {
+    pub fn handle_click(&mut self, rel_x: u16, rel_y: u16, is_right: bool, bw: u16, _viewport_height: usize) -> SidebarAction {
+        let content_x = if is_right {
+            if rel_x == 0 {
+                return SidebarAction::None;
+            }
+            rel_x.saturating_sub(1)
+        } else {
+            if rel_x >= bw.saturating_sub(1) {
+                return SidebarAction::None;
+            }
+            rel_x
+        };
+
         if rel_y == 0 {
+            let content_w = bw.saturating_sub(1);
+            if content_w >= 16 && content_x >= content_w.saturating_sub(4) {
+                return SidebarAction::ToggleHidden;
+            }
             // Tab header row
-            if rel_x < 10 {
+            if content_x < 10 {
                 self.active_tab = SidebarTab::Files;
-            } else if rel_x < 22 {
+            } else if content_x < 22 {
                 self.active_tab = SidebarTab::Outline;
             }
             return SidebarAction::None;
@@ -270,6 +291,27 @@ impl Sidebar {
         SidebarAction::None
     }
 
+    pub fn item_at_click(&mut self, _rel_x: u16, rel_y: u16) -> Option<(PathBuf, bool)> {
+        if rel_y == 0 {
+            return None;
+        }
+        let item_idx = (rel_y.saturating_sub(1) as usize) + match self.active_tab {
+            SidebarTab::Files => self.file_scroll_top,
+            SidebarTab::Outline => self.outline_scroll_top,
+        };
+        match self.active_tab {
+            SidebarTab::Files => {
+                let items = self.flatten_files();
+                if item_idx < items.len() {
+                    self.selected_file_idx = item_idx;
+                    return Some((items[item_idx].path.clone(), items[item_idx].is_dir));
+                }
+            }
+            SidebarTab::Outline => {}
+        }
+        None
+    }
+
     fn to_crossterm_color(c: theme::Color, is_terminal_default: bool) -> Color {
         if is_terminal_default {
             match c {
@@ -295,6 +337,7 @@ impl Sidebar {
         is_focused: bool,
         theme: &Theme,
         active_buffer_path: Option<&Path>,
+        is_right: bool,
     ) {
         let (bx, by, bw, bh) = bounds;
         if bw == 0 || bh == 0 {
@@ -312,6 +355,10 @@ impl Sidebar {
             Self::to_crossterm_color(theme.ui.panel_bg, is_td)
         };
 
+        let content_start_x = if is_right { bx + 1 } else { bx };
+        let content_w = (bw as usize).saturating_sub(1);
+        let div_x = if is_right { bx } else { bx + bw - 1 };
+
         // 1. Fill sidebar background
         for y in 0..bh {
             for x in 0..bw {
@@ -328,10 +375,10 @@ impl Sidebar {
                     },
                 );
             }
-            // Draw right vertical divider between sidebar and main editor
+            // Draw vertical divider between sidebar and main editor
             if bw > 1 {
                 renderer.set_cell(
-                    bx + bw - 1,
+                    div_x,
                     by + y,
                     Cell {
                         ch: '│',
@@ -352,9 +399,9 @@ impl Sidebar {
         let files_active = self.active_tab == SidebarTab::Files;
         let outline_active = self.active_tab == SidebarTab::Outline;
 
-        let mut header_x = bx;
+        let mut header_x = content_start_x;
         for c in files_tab_label.chars() {
-            if header_x >= bx + bw - 1 {
+            if header_x >= content_start_x + content_w as u16 {
                 break;
             }
             renderer.set_cell(
@@ -373,7 +420,7 @@ impl Sidebar {
         }
 
         for c in outline_tab_label.chars() {
-            if header_x >= bx + bw - 1 {
+            if header_x >= content_start_x + content_w as u16 {
                 break;
             }
             renderer.set_cell(
@@ -389,6 +436,14 @@ impl Sidebar {
                 },
             );
             header_x += 1;
+        }
+
+        // Render hidden file indicator '.*' on the right of header
+        if files_active && content_w >= 16 {
+            let dot_fg = if self.file_tree.show_hidden { accent } else { border_color };
+            let dot_x = content_start_x + content_w as u16 - 3;
+            renderer.set_cell(dot_x, by, Cell { ch: '.', fg: dot_fg, bg, bold: self.file_tree.show_hidden, underline: false, width: 1 });
+            renderer.set_cell(dot_x + 1, by, Cell { ch: '*', fg: dot_fg, bg, bold: self.file_tree.show_hidden, underline: false, width: 1 });
         }
 
         // 3. Render content
@@ -425,7 +480,7 @@ impl Sidebar {
                     let full_line = format!("{}{}{}", indent, prefix, item.name);
 
                     let y = by + 1 + row_idx as u16;
-                    let mut cur_x = bx;
+                    let mut cur_x = content_start_x;
                     let mut col_used = 0;
 
                     for ch in full_line.chars() {
@@ -473,7 +528,7 @@ impl Sidebar {
                 if items.is_empty() {
                     let empty_msg = " (No headings)";
                     let y = by + 1;
-                    for (cur_x, ch) in (bx..bx + content_w as u16).zip(empty_msg.chars()) {
+                    for (cur_x, ch) in (content_start_x..content_start_x + content_w as u16).zip(empty_msg.chars()) {
                         renderer.set_cell(
                             cur_x,
                             y,
@@ -508,7 +563,7 @@ impl Sidebar {
                         let full_line = format!("{}{}{}{}", indent, prefix, h_tag, item.title);
 
                         let y = by + 1 + row_idx as u16;
-                        let mut cur_x = bx;
+                        let mut cur_x = content_start_x;
                         let mut col_used = 0;
 
                         for ch in full_line.chars() {
@@ -552,5 +607,33 @@ impl Sidebar {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sidebar_click_and_toggle_hidden() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_sb_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let mut sidebar = Sidebar::new(temp_dir.clone(), true);
+
+        // Click on Files tab (rel_y = 0, content_x = 2)
+        let action = sidebar.handle_click(2, 0, false, 26, 20);
+        assert!(matches!(action, SidebarAction::None));
+        assert_eq!(sidebar.active_tab, SidebarTab::Files);
+
+        // Click on Outline tab (rel_y = 0, content_x = 12)
+        let action = sidebar.handle_click(12, 0, false, 26, 20);
+        assert!(matches!(action, SidebarAction::None));
+        assert_eq!(sidebar.active_tab, SidebarTab::Outline);
+
+        // Click on .* (rel_y = 0, rel_x = 23 on width 26)
+        let action = sidebar.handle_click(23, 0, false, 26, 20);
+        assert!(matches!(action, SidebarAction::ToggleHidden));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -66,6 +66,9 @@ pub enum Action {
     About,
     CheckForUpdates,
 
+    // Settings / Preferences
+    OpenSettings,
+
     NoOp,
 }
 

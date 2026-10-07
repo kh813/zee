@@ -7,6 +7,7 @@ pub struct Layout {
     pub status_height: u16,
     pub cmdline_height: u16,
     pub sidebar_width: u16,
+    pub is_right_sidebar: bool,
     pub gutter_width: u16,
     pub menu_bar_items: Vec<(String, u16, u16)>, // (label, col_start, col_end)
     pub tab_rects: Vec<(usize, u16, u16)>,       // (tab_index, col_start, col_end)
@@ -25,6 +26,7 @@ impl Layout {
             status_height: 1,
             cmdline_height: 0,
             sidebar_width: 0,
+            is_right_sidebar: false,
             gutter_width: 0,
             menu_bar_items: Vec::new(),
             tab_rects: Vec::new(),
@@ -39,8 +41,10 @@ impl Layout {
         active_buffer_idx: usize,
         show_line_numbers: bool,
         show_sidebar: bool,
+        sidebar_position: &str,
         vi_mode: bool,
     ) {
+        self.is_right_sidebar = sidebar_position != "left";
         self.cmdline_height = if vi_mode { 1 } else { 0 };
         self.tab_height = 1;
 
@@ -96,14 +100,23 @@ impl Layout {
         if self.sidebar_width == 0 {
             return (0, 0, 0, 0);
         }
+        let x = if self.is_right_sidebar {
+            self.width.saturating_sub(self.sidebar_width)
+        } else {
+            0
+        };
         let y = self.menu_height + self.tab_height + self.panel_height;
         let bottom_offset = self.status_height + self.cmdline_height;
         let h = self.height.saturating_sub(y).saturating_sub(bottom_offset);
-        (0, y, self.sidebar_width, h)
+        (x, y, self.sidebar_width, h)
     }
 
     pub fn editor_bounds(&self) -> (u16, u16, u16, u16) {
-        let x = self.sidebar_width + self.gutter_width;
+        let x = if self.is_right_sidebar {
+            self.gutter_width
+        } else {
+            self.sidebar_width + self.gutter_width
+        };
         let y = self.menu_height + self.tab_height + self.panel_height;
         let w = self.width.saturating_sub(self.sidebar_width + self.gutter_width);
         let bottom_offset = self.status_height + self.cmdline_height;
@@ -112,7 +125,11 @@ impl Layout {
     }
 
     pub fn gutter_bounds(&self) -> (u16, u16, u16, u16) {
-        let x = self.sidebar_width;
+        let x = if self.is_right_sidebar {
+            0
+        } else {
+            self.sidebar_width
+        };
         let y = self.menu_height + self.tab_height + self.panel_height;
         let w = self.gutter_width;
         let bottom_offset = self.status_height + self.cmdline_height;
@@ -146,6 +163,39 @@ impl Layout {
         let x = self.width.saturating_sub(dw) / 2;
         let y = self.height.saturating_sub(dh) / 2;
         (x, y, dw, dh)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sidebar_position_layout() {
+        let mut layout = Layout::new(100, 30);
+        let menus = vec![];
+        let buffers = vec![];
+
+        // Left sidebar
+        layout.recompute(&menus, &buffers, 0, true, true, "left", false);
+        assert!(!layout.is_right_sidebar);
+        assert!(layout.sidebar_width > 0);
+        let (sx, _sy, sw, _sh) = layout.sidebar_bounds();
+        assert_eq!(sx, 0);
+        assert_eq!(sw, layout.sidebar_width);
+        let (ex, _ey, ew, _eh) = layout.editor_bounds();
+        assert_eq!(ex, layout.sidebar_width + layout.gutter_width);
+        assert_eq!(ew, 100 - layout.sidebar_width - layout.gutter_width);
+
+        // Right sidebar
+        layout.recompute(&menus, &buffers, 0, true, true, "right", false);
+        assert!(layout.is_right_sidebar);
+        let (sx, _sy, sw, _sh) = layout.sidebar_bounds();
+        assert_eq!(sx, 100 - layout.sidebar_width);
+        assert_eq!(sw, layout.sidebar_width);
+        let (ex, _ey, ew, _eh) = layout.editor_bounds();
+        assert_eq!(ex, layout.gutter_width);
+        assert_eq!(ew, 100 - layout.sidebar_width - layout.gutter_width);
     }
 }
 

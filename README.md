@@ -15,6 +15,9 @@ Whether launching `Zee.app` on your desktop or running `zee` over SSH in a termi
 - **Dual GUI & TUI Experience**: Native hardware-accelerated desktop GUI (`zeeg` on macOS, Windows, and Linux) and terminal TUI (`zee`) sharing 100% feature and shortcut parity.
 - **Sidebar (File Tree & Multi-Language Outline)**:
   - Collapsible sidebar with directory tree browser and code symbol outline tree.
+  - Full file management: create new files/folders, rename, and delete directly via right-click context menu in GUI and TUI (`m` key), keeping the file tree interface clean.
+  - Dotfiles & hidden file visibility toggle (`👁` button, right-click menu, or `h` key in TUI) with state persisted to `config.toml`.
+  - Instant file tree refresh (`F5` / `⌘⌥R` / `↻`) syncing external changes made in Finder/Explorer while preserving expanded folder states.
   - Multi-language outline navigation: **Markdown**, **Rust**, **Python**, **Go**, **JSON**, **YAML**, **Shell (bash/sh)**, **HTML**, and **CSS** supported out of the box, with plugin extension support.
   - Smooth vertical and horizontal scrolling across deep folder trees and complex symbol structures.
   - Position configurable on either the **left** or **right** side of the editor.

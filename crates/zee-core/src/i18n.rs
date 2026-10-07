@@ -297,6 +297,18 @@ impl I18n {
         m.insert("sidebar.no_file".to_string(), "(No active file)".to_string());
         m.insert("sidebar.no_files".to_string(), "(No files)".to_string());
         m.insert("sidebar.no_headings".to_string(), "(No headings in this file)".to_string());
+        m.insert("sidebar.new_file".to_string(), "New File".to_string());
+        m.insert("sidebar.new_folder".to_string(), "New Folder".to_string());
+        m.insert("sidebar.rename".to_string(), "Rename".to_string());
+        m.insert("sidebar.delete".to_string(), "Delete".to_string());
+        m.insert("sidebar.refresh".to_string(), "Refresh".to_string());
+        m.insert("sidebar.delete_confirm".to_string(), "Are you sure you want to delete this?".to_string());
+        m.insert("sidebar.show_hidden".to_string(), "Show Hidden Files".to_string());
+        m.insert("sidebar.hide_hidden".to_string(), "Hide Hidden Files".to_string());
+        m.insert("dialog.file_name".to_string(), "File name:".to_string());
+        m.insert("dialog.folder_name".to_string(), "Folder name:".to_string());
+        m.insert("dialog.new_name".to_string(), "New name:".to_string());
+        m.insert("menu.view.refresh_files".to_string(), "Refresh File Tree".to_string());
 
         m.insert("menu.view.syntax_plain".to_string(), "Plain Text".to_string());
 
@@ -492,6 +504,18 @@ impl I18n {
         m.insert("sidebar.no_file".to_string(), "（ファイルなし）".to_string());
         m.insert("sidebar.no_files".to_string(), "（ファイルなし）".to_string());
         m.insert("sidebar.no_headings".to_string(), "（見出しがありません）".to_string());
+        m.insert("sidebar.new_file".to_string(), "新規ファイル".to_string());
+        m.insert("sidebar.new_folder".to_string(), "新規フォルダ".to_string());
+        m.insert("sidebar.rename".to_string(), "名前を変更".to_string());
+        m.insert("sidebar.delete".to_string(), "削除".to_string());
+        m.insert("sidebar.refresh".to_string(), "更新".to_string());
+        m.insert("sidebar.delete_confirm".to_string(), "本当に削除しますか？".to_string());
+        m.insert("sidebar.show_hidden".to_string(), "隠しファイルを表示".to_string());
+        m.insert("sidebar.hide_hidden".to_string(), "隠しファイルを非表示".to_string());
+        m.insert("dialog.file_name".to_string(), "ファイル名:".to_string());
+        m.insert("dialog.folder_name".to_string(), "フォルダ名:".to_string());
+        m.insert("dialog.new_name".to_string(), "新しい名前:".to_string());
+        m.insert("menu.view.refresh_files".to_string(), "ファイルツリーを更新".to_string());
 
         m.insert("menu.view.syntax_plain".to_string(), "標準テキスト".to_string());
 

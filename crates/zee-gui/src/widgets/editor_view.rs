@@ -7,6 +7,11 @@ use crate::widgets::{led_color_to_gpui, mono_font_family, with_alpha};
 
 const TEXT_AREA_LEFT_PADDING: Pixels = px(6.0);
 
+#[derive(Clone, Copy, Debug)]
+struct ScrollbarDrag {
+    thumb_grab_offset: Pixels,
+}
+
 pub struct EditorView {
     pub workspace: Entity<Workspace>,
     pub focus_handle: FocusHandle,
@@ -34,6 +39,8 @@ pub struct EditorView {
     pub ascii_width_px: f32,
     pub cjk_width_px: f32,
     pub is_mouse_down: bool,
+    scrollbar_drag: Option<ScrollbarDrag>,
+    pub last_bounds: Option<Bounds<Pixels>>,
     count: usize,
     pending_op_count: usize,
 }
@@ -95,6 +102,8 @@ impl EditorView {
             ascii_width_px: ascii_width,
             cjk_width_px: cjk_width,
             is_mouse_down: false,
+            scrollbar_drag: None,
+            last_bounds: None,
             count: 0,
             pending_op_count: 0,
         }
@@ -2796,7 +2805,95 @@ impl EditorView {
         }
     }
 
+    fn get_track_bounds(&self, window: &Window) -> (Pixels, Pixels) {
+        if let Some(b) = self.last_bounds {
+            (b.origin.y, b.size.height)
+        } else {
+            let tab_bar_height = px(36.0);
+            #[cfg(not(target_os = "macos"))]
+            let menu_bar_height = px(28.0);
+            #[cfg(target_os = "macos")]
+            let menu_bar_height = px(0.0);
+            let top = tab_bar_height + menu_bar_height;
+            let h = (window.viewport_size().height - top - px(26.0)).max(px(50.0));
+            (top, h)
+        }
+    }
+
+    fn handle_scrollbar_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_handle.focus(window, cx);
+        let (track_top, track_height) = self.get_track_bounds(window);
+
+        let workspace = self.workspace.read(cx);
+        let editor = match workspace.active_editor() {
+            Some(e) => e,
+            None => return,
+        };
+        let line_height_px = px(workspace.config.line_height);
+        let line_count = editor.line_count().max(1);
+        let visible_lines = (track_height / line_height_px).floor().max(1.0);
+        let max_scroll_row = self.max_scroll_row(
+            editor,
+            workspace.config.line_height,
+            workspace.config.word_wrap,
+            workspace.config.tab_size,
+            window.viewport_size().height,
+        );
+        if max_scroll_row == 0 {
+            return;
+        }
+
+        let ratio = (visible_lines / line_count as f32).clamp(0.04, 0.95);
+        let thumb_height = (track_height * ratio).max(px(24.0)).min(track_height);
+        let scrollable_track = (track_height - thumb_height).max(px(0.0));
+        let scroll_ratio = (editor.scroll_row as f32 / max_scroll_row as f32).clamp(0.0, 1.0);
+        let thumb_top = scrollable_track * scroll_ratio;
+
+        let click_y = event.position.y - track_top;
+
+        if click_y >= thumb_top && click_y <= (thumb_top + thumb_height) {
+            let grab_offset = click_y - thumb_top;
+            self.scrollbar_drag = Some(ScrollbarDrag {
+                thumb_grab_offset: grab_offset,
+            });
+        } else {
+            let new_thumb_top = (click_y - thumb_height / 2.0).clamp(px(0.0), scrollable_track);
+            let new_scroll_ratio = if scrollable_track > px(0.0) {
+                (new_thumb_top / scrollable_track).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let target_scroll_row = (new_scroll_ratio * max_scroll_row as f32).round() as usize;
+
+            self.workspace.update(cx, |w, cx| {
+                if let Some(editor) = w.active_editor_mut() {
+                    editor.scroll_row = target_scroll_row.min(max_scroll_row);
+                }
+                cx.notify();
+            });
+
+            self.scrollbar_drag = Some(ScrollbarDrag {
+                thumb_grab_offset: thumb_height / 2.0,
+            });
+        }
+
+        cx.notify();
+    }
+
     fn handle_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(bounds) = self.last_bounds {
+            let scrollbar_left = bounds.origin.x + bounds.size.width - px(14.0);
+            if event.position.x >= scrollbar_left && event.position.x <= bounds.origin.x + bounds.size.width {
+                self.handle_scrollbar_mouse_down(event, window, cx);
+                return;
+            }
+        }
+
         self.focus_handle.focus(window, cx);
         self.is_mouse_down = true;
         let now = std::time::Instant::now();
@@ -2864,6 +2961,49 @@ impl EditorView {
     }
 
     fn handle_mouse_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(drag) = self.scrollbar_drag {
+            let (track_top, track_height) = self.get_track_bounds(window);
+            let workspace = self.workspace.read(cx);
+            let editor = match workspace.active_editor() {
+                Some(e) => e,
+                None => return,
+            };
+            let line_height_px = px(workspace.config.line_height);
+            let line_count = editor.line_count().max(1);
+            let visible_lines = (track_height / line_height_px).floor().max(1.0);
+            let max_scroll_row = self.max_scroll_row(
+                editor,
+                workspace.config.line_height,
+                workspace.config.word_wrap,
+                workspace.config.tab_size,
+                window.viewport_size().height,
+            );
+            if max_scroll_row == 0 {
+                return;
+            }
+
+            let ratio = (visible_lines / line_count as f32).clamp(0.04, 0.95);
+            let thumb_height = (track_height * ratio).max(px(24.0)).min(track_height);
+            let scrollable_track = (track_height - thumb_height).max(px(0.0));
+
+            let current_y = event.position.y - track_top;
+            let new_thumb_top = (current_y - drag.thumb_grab_offset).clamp(px(0.0), scrollable_track);
+            let new_scroll_ratio = if scrollable_track > px(0.0) {
+                (new_thumb_top / scrollable_track).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let target_scroll_row = (new_scroll_ratio * max_scroll_row as f32).round() as usize;
+
+            self.workspace.update(cx, |w, cx| {
+                if let Some(editor) = w.active_editor_mut() {
+                    editor.scroll_row = target_scroll_row.min(max_scroll_row);
+                }
+                cx.notify();
+            });
+            return;
+        }
+
         if self.is_mouse_down || event.pressed_button == Some(MouseButton::Left) {
             let tab_bar_height = px(36.0);
             #[cfg(not(target_os = "macos"))]
@@ -2903,6 +3043,11 @@ impl EditorView {
     }
 
     fn handle_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.scrollbar_drag.is_some() {
+            self.scrollbar_drag = None;
+            cx.notify();
+            return;
+        }
         self.is_mouse_down = false;
         self.workspace.update(cx, |w, cx| {
             let vi_mode_enabled = w.config.vi_mode;
@@ -3403,6 +3548,9 @@ impl Render for EditorView {
                         
                     },
                     move |bounds, (), window, cx| {
+                        entity.update(cx, |this, _| {
+                            this.last_bounds = Some(bounds);
+                        });
                         if focus_handle.is_focused(window) {
                             window.handle_input(&focus_handle, ElementInputHandler::new(bounds, entity.clone()), cx);
                         }
@@ -3421,54 +3569,74 @@ impl Render for EditorView {
                     .font_family(font_family)
                     .child(self.render_lines(workspace, editor))
             )
-            .child(self.render_scrollbar(workspace, editor))
+            .child(self.render_scrollbar(workspace, editor, window, cx))
             .into_any_element()
     }
 }
 
 impl EditorView {
-    fn render_scrollbar(&self, workspace: &Workspace, editor: &zee_core::buffer::Editor) -> impl IntoElement {
+    fn render_scrollbar(
+        &self,
+        workspace: &Workspace,
+        editor: &zee_core::buffer::Editor,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let (_track_top, track_height) = self.get_track_bounds(window);
         let line_count = editor.line_count().max(1);
-        let scroll_row = editor.scroll_row;
-        let theme = &workspace.theme;
+        let line_height_px = px(workspace.config.line_height);
+        let visible_lines = (track_height / line_height_px).floor().max(1.0);
 
-        let visible_lines = 35.0_f32;
-        let line_count_f = line_count as f32;
+        let max_scroll_row = self.max_scroll_row(
+            editor,
+            workspace.config.line_height,
+            workspace.config.word_wrap,
+            workspace.config.tab_size,
+            window.viewport_size().height,
+        );
 
-        if line_count <= 35 {
+        if max_scroll_row == 0 || line_count <= visible_lines as usize {
             return div().w_0().h_0().into_any_element();
         }
 
-        let thumb_height_ratio = (visible_lines / line_count_f).clamp(0.08, 0.95);
-        let thumb_top_ratio = (scroll_row as f32 / line_count_f).min(1.0 - thumb_height_ratio);
+        let ratio = (visible_lines / line_count as f32).clamp(0.04, 0.95);
+        let thumb_height = (track_height * ratio).max(px(24.0)).min(track_height);
+        let scrollable_track = (track_height - thumb_height).max(px(0.0));
+        let scroll_ratio = (editor.scroll_row as f32 / max_scroll_row as f32).clamp(0.0, 1.0);
+        let thumb_top = scrollable_track * scroll_ratio;
 
-        let thumb_color = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.22);
-        let thumb_hover = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.45);
+        let theme = &workspace.theme;
+        let is_dragging = self.scrollbar_drag.is_some();
+        let thumb_color = with_alpha(
+            led_color_to_gpui(theme.ui.status_bar_fg),
+            if is_dragging { 0.55 } else { 0.28 },
+        );
+        let thumb_hover = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.55);
+        let track_hover = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
 
         div()
+            .id("editor-scrollbar")
             .absolute()
             .top_0()
             .right_0()
-            .w(px(8.0))
+            .w(px(14.0))
             .h_full()
-            .py_1()
-            .pr_1()
+            .cursor_default()
+            .hover(move |s| s.bg(track_hover))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                cx.stop_propagation();
+                this.handle_scrollbar_mouse_down(event, window, cx);
+            }))
             .child(
                 div()
-                    .w_full()
-                    .h_full()
-                    .relative()
-                    .child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .w(px(5.0))
-                            .rounded_full()
-                            .bg(thumb_color)
-                            .hover(move |s| s.bg(thumb_hover))
-                            .top(rems(thumb_top_ratio * 38.0))
-                            .h(rems(thumb_height_ratio * 38.0))
-                    )
+                    .absolute()
+                    .right(px(3.0))
+                    .w(px(8.0))
+                    .top(thumb_top)
+                    .h(thumb_height)
+                    .rounded_full()
+                    .bg(thumb_color)
+                    .hover(move |s| s.bg(thumb_hover))
             )
             .into_any_element()
     }

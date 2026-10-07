@@ -1438,6 +1438,7 @@ impl WindowView {
                 )
                 .child(
                     div()
+                        .occlude()
                         .absolute()
                         .top(px(28.0))
                         .left(left_pos)

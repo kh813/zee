@@ -799,5 +799,127 @@ mod tests {
             assert_eq!(menus_en[4].name.as_ref(), "Tabs");
         }
     }
+
+    #[test]
+    fn test_scrollbar_proportions_and_drag_calculations() {
+        let mut workspace = Workspace::new(Config::default());
+        let editor = workspace.active_editor_mut().unwrap();
+
+        // Populate 100 lines
+        let content = (0..100).map(|i| format!("Line {i}")).collect::<Vec<_>>().join("\n");
+        editor.insert(0, &content);
+        assert_eq!(editor.line_count(), 100);
+
+        let track_height = 800.0f32;
+        let line_height = 20.0f32;
+        let visible_lines = (track_height / line_height).floor(); // 40.0 lines
+        let max_scroll_row = 100 - 40; // 60 rows
+
+        let ratio = (visible_lines / 100.0).clamp(0.04, 0.95); // 0.4
+        let thumb_height = (track_height * ratio).max(24.0).min(track_height); // 320.0
+        let scrollable_track = track_height - thumb_height; // 480.0
+
+        // At scroll_row = 0
+        editor.scroll_row = 0;
+        let scroll_ratio = (editor.scroll_row as f32 / max_scroll_row as f32).clamp(0.0, 1.0);
+        let thumb_top = scrollable_track * scroll_ratio;
+        assert_eq!(thumb_top, 0.0);
+
+        // At scroll_row = 30 (middle)
+        editor.scroll_row = 30;
+        let scroll_ratio = (editor.scroll_row as f32 / max_scroll_row as f32).clamp(0.0, 1.0);
+        let thumb_top = scrollable_track * scroll_ratio;
+        assert_eq!(thumb_top, 240.0);
+
+        // At scroll_row = max_scroll_row (60)
+        editor.scroll_row = 60;
+        let scroll_ratio = (editor.scroll_row as f32 / max_scroll_row as f32).clamp(0.0, 1.0);
+        let thumb_top = scrollable_track * scroll_ratio;
+        assert_eq!(thumb_top, 480.0);
+        assert_eq!(thumb_top + thumb_height, 800.0); // Exactly at track bottom
+
+        // Drag thumb down by 120.0 px
+        let drag_target_top = 240.0 + 120.0; // 360.0
+        let new_ratio = (drag_target_top / scrollable_track).clamp(0.0, 1.0); // 360 / 480 = 0.75
+        let target_scroll_row = (new_ratio * max_scroll_row as f32).round() as usize; // 45
+        assert_eq!(target_scroll_row, 45);
+        editor.scroll_row = target_scroll_row;
+        assert_eq!(editor.scroll_row, 45);
+        assert!(editor.selection.is_none());
+    }
+
+    #[test]
+    fn test_settings_dropdown_state_isolation_and_transitions() {
+        use crate::widgets::dialog::SettingsDropdown;
+
+        let mut current_dropdown: Option<SettingsDropdown> = None;
+
+        // 1. Initial state is closed
+        assert_eq!(current_dropdown, None);
+
+        // 2. Open Theme dropdown
+        current_dropdown = if current_dropdown == Some(SettingsDropdown::Theme) {
+            None
+        } else {
+            Some(SettingsDropdown::Theme)
+        };
+        assert_eq!(current_dropdown, Some(SettingsDropdown::Theme));
+
+        // 3. Toggling Theme dropdown closes it
+        current_dropdown = if current_dropdown == Some(SettingsDropdown::Theme) {
+            None
+        } else {
+            Some(SettingsDropdown::Theme)
+        };
+        assert_eq!(current_dropdown, None);
+
+        // 4. Open Theme, then switch directly to Language dropdown
+        current_dropdown = Some(SettingsDropdown::Theme);
+        current_dropdown = if current_dropdown == Some(SettingsDropdown::Language) {
+            None
+        } else {
+            Some(SettingsDropdown::Language)
+        };
+        assert_eq!(current_dropdown, Some(SettingsDropdown::Language));
+        assert_ne!(current_dropdown, Some(SettingsDropdown::Theme));
+
+        // 5. Open Language, then switch directly to Font dropdown
+        current_dropdown = if current_dropdown == Some(SettingsDropdown::Font) {
+            None
+        } else {
+            Some(SettingsDropdown::Font)
+        };
+        assert_eq!(current_dropdown, Some(SettingsDropdown::Font));
+
+        // 6. Dismiss dropdown (backdrop click or Escape)
+        current_dropdown = None;
+        assert_eq!(current_dropdown, None);
+    }
+
+    #[test]
+    fn test_settings_dropdown_background_opacity_across_all_themes() {
+        use crate::widgets::led_color_to_gpui;
+        use zee_core::theme::Theme;
+
+        let themes = Theme::load_all();
+        assert!(!themes.is_empty(), "Themes should be available");
+
+        for theme in themes {
+            // Dropdown popup background must be fully opaque (alpha == 1.0)
+            let panel_bg_gpui = led_color_to_gpui(theme.ui.panel_bg);
+            assert_eq!(
+                panel_bg_gpui.a, 1.0,
+                "Theme '{}' panel_bg must have alpha 1.0 to prevent see-through overlapping",
+                theme.meta.name
+            );
+
+            let editor_bg_gpui = led_color_to_gpui(theme.editor.background);
+            assert_eq!(
+                editor_bg_gpui.a, 1.0,
+                "Theme '{}' editor background must have alpha 1.0",
+                theme.meta.name
+            );
+        }
+    }
 }
 

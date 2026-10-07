@@ -427,6 +427,12 @@ impl Render for Dialog {
             .items_center()
             .justify_center()
             .bg(rgba(0x00000080)) // Dim backdrop overlay
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                if this.settings_dropdown.is_some() {
+                    this.settings_dropdown = None;
+                    cx.notify();
+                }
+            }))
             .child(
                 div()
                     .w(dialog_width)
@@ -1160,6 +1166,7 @@ impl Dialog {
                 let chip_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
                 let chip_active_bg = with_alpha(accent, 0.25);
                 let chip_border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
+                let dropdown_bg = led_color_to_gpui(theme.ui.panel_bg);
 
                 div()
                     .flex()
@@ -1252,64 +1259,68 @@ impl Dialog {
                                     // Floating dropdown popup
                                     .children(if is_theme_open {
                                         Some(
-                                            div()
-                                                .id("settings-theme-dropdown-list")
-                                                .absolute()
-                                                .top(px(36.0))
-                                                .left_0()
-                                                .right_0()
-                                                .w_full()
-                                                .max_h(px(200.0))
-                                                .overflow_y_scroll()
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(accent)
-                                                .bg(input_bg)
-                                                .shadow_2xl()
-                                                .p_1()
-                                                .flex()
-                                                .flex_col()
-                                                .gap_0p5()
-                                                .children(themes.into_iter().map(|t| {
-                                                    let is_active = t.meta.name == current_theme_name;
-                                                    let t_name = t.meta.name.clone();
-                                                    let t_slug = t_name.to_lowercase().replace(' ', "-");
-                                                    
-                                                    div()
-                                                        .h(px(28.0))
-                                                        .px_2p5()
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .rounded_sm()
-                                                        .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
-                                                        .cursor_pointer()
-                                                        .hover(|s| s.bg(with_alpha(fg, 0.12)))
-                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                            cx.stop_propagation();
-                                                            this.workspace.update(cx, |w, cx| {
-                                                                if let Some(theme) = zee_core::theme::Theme::find_by_name(&t_slug) {
-                                                                    w.theme = theme;
-                                                                    let _ = zee_core::config::Config::write_key("theme", &t_slug);
-                                                                    cx.notify();
-                                                                }
-                                                            });
-                                                            this.settings_dropdown = None;
-                                                            cx.notify();
-                                                        }))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(12.0))
-                                                                .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                                                                .child(t_name)
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(11.0))
-                                                                .text_color(accent)
-                                                                .child(if is_active { "✓" } else { "" })
-                                                        )
-                                                }))
+                                            deferred(
+                                                div()
+                                                    .id("settings-theme-dropdown-list")
+                                                    .occlude()
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| cx.stop_propagation()))
+                                                    .absolute()
+                                                    .top(px(36.0))
+                                                    .left_0()
+                                                    .right_0()
+                                                    .w_full()
+                                                    .max_h(px(200.0))
+                                                    .overflow_y_scroll()
+                                                    .rounded_md()
+                                                    .border_1()
+                                                    .border_color(accent)
+                                                    .bg(dropdown_bg)
+                                                    .shadow_2xl()
+                                                    .p_1()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_0p5()
+                                                    .children(themes.into_iter().map(|t| {
+                                                        let is_active = t.meta.name == current_theme_name;
+                                                        let t_name = t.meta.name.clone();
+                                                        let t_slug = t_name.to_lowercase().replace(' ', "-");
+                                                        
+                                                        div()
+                                                            .h(px(28.0))
+                                                            .px_2p5()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .rounded_sm()
+                                                            .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
+                                                            .cursor_pointer()
+                                                            .hover(|s| s.bg(with_alpha(fg, 0.12)))
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                this.workspace.update(cx, |w, cx| {
+                                                                    if let Some(theme) = zee_core::theme::Theme::find_by_name(&t_slug) {
+                                                                        w.theme = theme;
+                                                                        let _ = zee_core::config::Config::write_key("theme", &t_slug);
+                                                                        cx.notify();
+                                                                    }
+                                                                });
+                                                                this.settings_dropdown = None;
+                                                                cx.notify();
+                                                            }))
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(12.0))
+                                                                    .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                                                    .child(t_name)
+                                                                )
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(11.0))
+                                                                    .text_color(accent)
+                                                                    .child(if is_active { "✓" } else { "" })
+                                                            )
+                                                    }))
+                                            ).priority(100)
                                         )
                                     } else {
                                         None
@@ -1375,72 +1386,76 @@ impl Dialog {
                                     // Floating dropdown popup
                                     .children(if is_language_open {
                                         Some(
-                                            div()
-                                                .id("settings-language-dropdown-list")
-                                                .absolute()
-                                                .top(px(36.0))
-                                                .left_0()
-                                                .right_0()
-                                                .w_full()
-                                                .max_h(px(200.0))
-                                                .overflow_y_scroll()
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(accent)
-                                                .bg(input_bg)
-                                                .shadow_2xl()
-                                                .p_1()
-                                                .flex()
-                                                .flex_col()
-                                                .gap_0p5()
-                                                .children(zee_core::i18n::AVAILABLE_LANGUAGES.iter().map(|lang| {
-                                                    let is_active = if lang.id == "auto" {
-                                                        current_lang_id == "auto"
-                                                    } else {
-                                                        current_lang_id == lang.id
-                                                    };
-                                                    let label = if lang.id == "auto" {
-                                                        self.i18n.get("dialog.settings.language_auto").to_string()
-                                                    } else {
-                                                        lang.name.to_string()
-                                                    };
-                                                    let l_id = lang.id.to_string();
+                                            deferred(
+                                                div()
+                                                    .id("settings-language-dropdown-list")
+                                                    .occlude()
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| cx.stop_propagation()))
+                                                    .absolute()
+                                                    .top(px(36.0))
+                                                    .left_0()
+                                                    .right_0()
+                                                    .w_full()
+                                                    .max_h(px(200.0))
+                                                    .overflow_y_scroll()
+                                                    .rounded_md()
+                                                    .border_1()
+                                                    .border_color(accent)
+                                                    .bg(dropdown_bg)
+                                                    .shadow_2xl()
+                                                    .p_1()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_0p5()
+                                                    .children(zee_core::i18n::AVAILABLE_LANGUAGES.iter().map(|lang| {
+                                                        let is_active = if lang.id == "auto" {
+                                                            current_lang_id == "auto"
+                                                        } else {
+                                                            current_lang_id == lang.id
+                                                        };
+                                                        let label = if lang.id == "auto" {
+                                                            self.i18n.get("dialog.settings.language_auto").to_string()
+                                                        } else {
+                                                            lang.name.to_string()
+                                                        };
+                                                        let l_id = lang.id.to_string();
 
-                                                    div()
-                                                        .h(px(28.0))
-                                                        .px_2p5()
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .rounded_sm()
-                                                        .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
-                                                        .cursor_pointer()
-                                                        .hover(|s| s.bg(with_alpha(fg, 0.12)))
-                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                            cx.stop_propagation();
-                                                            let l_id_clone = l_id.clone();
-                                                            this.workspace.update(cx, |w, cx| {
-                                                                w.config.language = l_id_clone.clone();
-                                                                let _ = zee_core::config::Config::write_key("language", &l_id_clone);
+                                                        div()
+                                                            .h(px(28.0))
+                                                            .px_2p5()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .rounded_sm()
+                                                            .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
+                                                            .cursor_pointer()
+                                                            .hover(|s| s.bg(with_alpha(fg, 0.12)))
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                let l_id_clone = l_id.clone();
+                                                                this.workspace.update(cx, |w, cx| {
+                                                                    w.config.language = l_id_clone.clone();
+                                                                    let _ = zee_core::config::Config::write_key("language", &l_id_clone);
+                                                                    cx.notify();
+                                                                });
+                                                                this.i18n = zee_core::i18n::I18n::load(&l_id);
+                                                                this.settings_dropdown = None;
                                                                 cx.notify();
-                                                            });
-                                                            this.i18n = zee_core::i18n::I18n::load(&l_id);
-                                                            this.settings_dropdown = None;
-                                                            cx.notify();
-                                                        }))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(12.0))
-                                                                .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                                                                .child(label)
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(11.0))
-                                                                .text_color(accent)
-                                                                .child(if is_active { "✓" } else { "" })
-                                                        )
-                                                }))
+                                                            }))
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(12.0))
+                                                                    .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                                                    .child(label)
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(11.0))
+                                                                    .text_color(accent)
+                                                                    .child(if is_active { "✓" } else { "" })
+                                                            )
+                                                    }))
+                                            ).priority(100)
                                         )
                                     } else {
                                         None
@@ -1507,65 +1522,69 @@ impl Dialog {
                                     // Floating dropdown popup
                                     .children(if is_font_open {
                                         Some(
-                                            div()
-                                                .id("settings-font-dropdown-list")
-                                                .absolute()
-                                                .top(px(36.0))
-                                                .left_0()
-                                                .right_0()
-                                                .w_full()
-                                                .max_h(px(200.0))
-                                                .overflow_y_scroll()
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(accent)
-                                                .bg(input_bg)
-                                                .shadow_2xl()
-                                                .p_1()
-                                                .flex()
-                                                .flex_col()
-                                                .gap_0p5()
-                                                .children(font_options.into_iter().map(|(font_opt, label)| {
-                                                    let is_active = match (&font_opt, &workspace.config.font_family) {
-                                                        (None, None) => true,
-                                                        (Some(a), Some(b)) => a == b,
-                                                        _ => false,
-                                                    };
-                                                    let font_val = font_opt.clone();
-                                                    
-                                                    div()
-                                                        .h(px(28.0))
-                                                        .px_2p5()
-                                                        .flex()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .rounded_sm()
-                                                        .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
-                                                        .cursor_pointer()
-                                                        .hover(|s| s.bg(with_alpha(fg, 0.12)))
-                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                            cx.stop_propagation();
-                                                            this.workspace.update(cx, |w, cx| {
-                                                                w.config.font_family = font_val.clone();
-                                                                let _ = zee_core::config::Config::write_key("font_family", font_val.as_deref().unwrap_or(""));
+                                            deferred(
+                                                div()
+                                                    .id("settings-font-dropdown-list")
+                                                    .occlude()
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| cx.stop_propagation()))
+                                                    .absolute()
+                                                    .top(px(36.0))
+                                                    .left_0()
+                                                    .right_0()
+                                                    .w_full()
+                                                    .max_h(px(200.0))
+                                                    .overflow_y_scroll()
+                                                    .rounded_md()
+                                                    .border_1()
+                                                    .border_color(accent)
+                                                    .bg(dropdown_bg)
+                                                    .shadow_2xl()
+                                                    .p_1()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_0p5()
+                                                    .children(font_options.into_iter().map(|(font_opt, label)| {
+                                                        let is_active = match (&font_opt, &workspace.config.font_family) {
+                                                            (None, None) => true,
+                                                            (Some(a), Some(b)) => a == b,
+                                                            _ => false,
+                                                        };
+                                                        let font_val = font_opt.clone();
+                                                        
+                                                        div()
+                                                            .h(px(28.0))
+                                                            .px_2p5()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .rounded_sm()
+                                                            .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
+                                                            .cursor_pointer()
+                                                            .hover(|s| s.bg(with_alpha(fg, 0.12)))
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                this.workspace.update(cx, |w, cx| {
+                                                                    w.config.font_family = font_val.clone();
+                                                                    let _ = zee_core::config::Config::write_key("font_family", font_val.as_deref().unwrap_or(""));
+                                                                    cx.notify();
+                                                                });
+                                                                this.settings_dropdown = None;
                                                                 cx.notify();
-                                                            });
-                                                            this.settings_dropdown = None;
-                                                            cx.notify();
-                                                        }))
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(12.0))
-                                                                .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
-                                                                .child(label)
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_size(px(11.0))
-                                                                .text_color(accent)
-                                                                .child(if is_active { "✓" } else { "" })
-                                                        )
-                                                }))
+                                                            }))
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(12.0))
+                                                                    .font_weight(if is_active { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                                                    .child(label)
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(11.0))
+                                                                    .text_color(accent)
+                                                                    .child(if is_active { "✓" } else { "" })
+                                                            )
+                                                    }))
+                                            ).priority(100)
                                         )
                                     } else {
                                         None

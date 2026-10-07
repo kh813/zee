@@ -105,8 +105,12 @@ pub fn find_matching_asset_for_platform<'a>(
     arch: &str,
 ) -> Option<&'a ReleaseAsset> {
     let matches_app_type = |name: &str| match app_type {
-        AppType::Gui => name.starts_with("zeeg-"),
-        AppType::Cli => name.starts_with("zee-") && !name.starts_with("zeeg-"),
+        AppType::Gui => name.starts_with("zee-gui-") || name.starts_with("zeeg-"),
+        AppType::Cli => {
+            (name.starts_with("zee-cli-") || name.starts_with("zee-"))
+                && !name.starts_with("zee-gui-")
+                && !name.starts_with("zeeg-")
+        }
     };
 
     let is_arm64 = arch == "aarch64" || arch == "arm64";
@@ -696,6 +700,19 @@ mod tests {
         assert_eq!(win_gui_arm64.name, "zeeg-windows-arm64.zip");
         let win_cli_arm64 = find_matching_asset_for_platform(&release_assets, AppType::Cli, "windows", "aarch64").unwrap();
         assert_eq!(win_cli_arm64.name, "zee-windows-arm64.zip");
+
+        // Verify new zee-GUI- naming format
+        let modern_assets = vec![
+            ReleaseAsset { name: "zee-GUI-v0.1.18-macos-arm64.zip".to_string(), browser_download_url: "https://example.com/mac".to_string(), size: 1000 },
+            ReleaseAsset { name: "zee-v0.1.18-linux-x64.zip".to_string(), browser_download_url: "https://example.com/lin".to_string(), size: 2000 },
+            ReleaseAsset { name: "zee-GUI-v0.1.18-windows-x64.zip".to_string(), browser_download_url: "https://example.com/win".to_string(), size: 3000 },
+        ];
+        let mac_gui_modern = find_matching_asset_for_platform(&modern_assets, AppType::Gui, "macos", "aarch64").unwrap();
+        assert_eq!(mac_gui_modern.name, "zee-GUI-v0.1.18-macos-arm64.zip");
+        let lin_cli_modern = find_matching_asset_for_platform(&modern_assets, AppType::Cli, "linux", "x86_64").unwrap();
+        assert_eq!(lin_cli_modern.name, "zee-v0.1.18-linux-x64.zip");
+        let win_gui_modern = find_matching_asset_for_platform(&modern_assets, AppType::Gui, "windows", "x86_64").unwrap();
+        assert_eq!(win_gui_modern.name, "zee-GUI-v0.1.18-windows-x64.zip");
     }
 
     #[test]

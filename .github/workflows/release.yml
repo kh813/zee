@@ -57,7 +57,7 @@ jobs:
         run: |
           TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
           VERSION="${TAG_NAME#v}"
-          GUI_ARCHIVE_NAME="zee-GUI-${TAG_NAME}-${{ matrix.platform }}"
+          GUI_ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
           cargo build --release -p zee-gui --target ${{ matrix.target }}
           mkdir -p dist/Zee.app/Contents/MacOS
           mkdir -p dist/Zee.app/Contents/Resources
@@ -119,7 +119,7 @@ jobs:
         if: matrix.is_linux
         run: |
           TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
-          ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
+          ARCHIVE_NAME="zee-cli-${TAG_NAME}-${{ matrix.platform }}"
           cargo build --release -p zee-tui --target ${{ matrix.target }}
           
           mkdir -p "dist/${ARCHIVE_NAME}"
@@ -135,7 +135,7 @@ jobs:
         shell: bash
         run: |
           TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
-          GUI_ARCHIVE_NAME="zee-GUI-${TAG_NAME}-${{ matrix.platform }}"
+          GUI_ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
           cargo build --release -p zee-gui --target ${{ matrix.target }}
 
           mkdir -p "dist/${GUI_ARCHIVE_NAME}"

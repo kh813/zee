@@ -104,12 +104,24 @@ pub fn find_matching_asset_for_platform<'a>(
     os: &str,
     arch: &str,
 ) -> Option<&'a ReleaseAsset> {
+    let has_cli_prefix = assets
+        .iter()
+        .any(|a| a.name.to_lowercase().starts_with("zee-cli-"));
+
     let matches_app_type = |name: &str| match app_type {
-        AppType::Gui => name.starts_with("zee-gui-") || name.starts_with("zeeg-"),
+        AppType::Gui => {
+            name.starts_with("zee-gui-")
+                || name.starts_with("zeeg-")
+                || (name.starts_with("zee-") && !name.starts_with("zee-cli-"))
+        }
         AppType::Cli => {
-            (name.starts_with("zee-cli-") || name.starts_with("zee-"))
-                && !name.starts_with("zee-gui-")
-                && !name.starts_with("zeeg-")
+            if has_cli_prefix {
+                name.starts_with("zee-cli-")
+            } else {
+                name.starts_with("zee-")
+                    && !name.starts_with("zee-gui-")
+                    && !name.starts_with("zeeg-")
+            }
         }
     };
 
@@ -701,18 +713,29 @@ mod tests {
         let win_cli_arm64 = find_matching_asset_for_platform(&release_assets, AppType::Cli, "windows", "aarch64").unwrap();
         assert_eq!(win_cli_arm64.name, "zee-windows-arm64.zip");
 
-        // Verify new zee-GUI- naming format
-        let modern_assets = vec![
-            ReleaseAsset { name: "zee-GUI-v0.1.18-macos-arm64.zip".to_string(), browser_download_url: "https://example.com/mac".to_string(), size: 1000 },
-            ReleaseAsset { name: "zee-v0.1.18-linux-x64.zip".to_string(), browser_download_url: "https://example.com/lin".to_string(), size: 2000 },
-            ReleaseAsset { name: "zee-GUI-v0.1.18-windows-x64.zip".to_string(), browser_download_url: "https://example.com/win".to_string(), size: 3000 },
+        // Verify zee- as standard GUI and zee-cli- as CLI
+        let standard_gui_assets = vec![
+            ReleaseAsset { name: "zee-v0.1.18-macos-arm64.zip".to_string(), browser_download_url: "https://example.com/mac-gui".to_string(), size: 1000 },
+            ReleaseAsset { name: "zee-cli-v0.1.18-macos-arm64.zip".to_string(), browser_download_url: "https://example.com/mac-cli".to_string(), size: 500 },
+            ReleaseAsset { name: "zee-v0.1.18-windows-x64.zip".to_string(), browser_download_url: "https://example.com/win-gui".to_string(), size: 2000 },
+            ReleaseAsset { name: "zee-cli-v0.1.18-windows-x64.zip".to_string(), browser_download_url: "https://example.com/win-cli".to_string(), size: 800 },
+            ReleaseAsset { name: "zee-v0.1.18-linux-x64.zip".to_string(), browser_download_url: "https://example.com/lin-gui".to_string(), size: 3000 },
+            ReleaseAsset { name: "zee-cli-v0.1.18-linux-x64.zip".to_string(), browser_download_url: "https://example.com/lin-cli".to_string(), size: 900 },
         ];
-        let mac_gui_modern = find_matching_asset_for_platform(&modern_assets, AppType::Gui, "macos", "aarch64").unwrap();
-        assert_eq!(mac_gui_modern.name, "zee-GUI-v0.1.18-macos-arm64.zip");
-        let lin_cli_modern = find_matching_asset_for_platform(&modern_assets, AppType::Cli, "linux", "x86_64").unwrap();
-        assert_eq!(lin_cli_modern.name, "zee-v0.1.18-linux-x64.zip");
-        let win_gui_modern = find_matching_asset_for_platform(&modern_assets, AppType::Gui, "windows", "x86_64").unwrap();
-        assert_eq!(win_gui_modern.name, "zee-GUI-v0.1.18-windows-x64.zip");
+        let mac_gui_std = find_matching_asset_for_platform(&standard_gui_assets, AppType::Gui, "macos", "aarch64").unwrap();
+        assert_eq!(mac_gui_std.name, "zee-v0.1.18-macos-arm64.zip");
+        let mac_cli_std = find_matching_asset_for_platform(&standard_gui_assets, AppType::Cli, "macos", "aarch64").unwrap();
+        assert_eq!(mac_cli_std.name, "zee-cli-v0.1.18-macos-arm64.zip");
+
+        let win_gui_std = find_matching_asset_for_platform(&standard_gui_assets, AppType::Gui, "windows", "x86_64").unwrap();
+        assert_eq!(win_gui_std.name, "zee-v0.1.18-windows-x64.zip");
+        let win_cli_std = find_matching_asset_for_platform(&standard_gui_assets, AppType::Cli, "windows", "x86_64").unwrap();
+        assert_eq!(win_cli_std.name, "zee-cli-v0.1.18-windows-x64.zip");
+
+        let lin_gui_std = find_matching_asset_for_platform(&standard_gui_assets, AppType::Gui, "linux", "x86_64").unwrap();
+        assert_eq!(lin_gui_std.name, "zee-v0.1.18-linux-x64.zip");
+        let lin_cli_std = find_matching_asset_for_platform(&standard_gui_assets, AppType::Cli, "linux", "x86_64").unwrap();
+        assert_eq!(lin_cli_std.name, "zee-cli-v0.1.18-linux-x64.zip");
     }
 
     #[test]

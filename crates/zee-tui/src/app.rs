@@ -4572,7 +4572,7 @@ impl App {
         let display_w = if needs_scroll { w.saturating_sub(4) } else { w };
         let offset_x = if needs_scroll { 2 } else { 0 };
 
-        let tab_y = if h >= 3 { y + 1 } else { y };
+        let tab_y = y;
 
         if needs_scroll {
             // Render arrows

@@ -16,12 +16,11 @@ pub struct Layout {
 
 impl Layout {
     pub fn new(width: u16, height: u16) -> Self {
-        let tab_height = if height >= 12 { 3 } else { 1 };
         Self {
             width,
             height,
             menu_height: 1,
-            tab_height,
+            tab_height: 1,
             panel_height: 0,
             status_height: 1,
             cmdline_height: 0,
@@ -43,7 +42,7 @@ impl Layout {
         vi_mode: bool,
     ) {
         self.cmdline_height = if vi_mode { 1 } else { 0 };
-        self.tab_height = if self.height >= 12 { 3 } else { 1 };
+        self.tab_height = 1;
 
         // Recompute menu items
         self.menu_bar_items.clear();

@@ -338,7 +338,13 @@ impl I18n {
         m.insert("dialog.backup.error_title".to_string(), "Backup Operation Failed".to_string());
 
         m.insert("dialog.plugin.title".to_string(), "Plugin Manager".to_string());
+        m.insert("dialog.plugin.tab_installed".to_string(), "Installed".to_string());
+        m.insert("dialog.plugin.tab_registry".to_string(), "Online Registry".to_string());
         m.insert("dialog.plugin.install".to_string(), "Install Plugin…".to_string());
+        m.insert("dialog.plugin.install_local".to_string(), "Install from File…".to_string());
+        m.insert("dialog.plugin.install_online".to_string(), "Install".to_string());
+        m.insert("dialog.plugin.loading".to_string(), "Loading plugins from registry…".to_string());
+        m.insert("dialog.plugin.registry_empty".to_string(), "No plugins available in registry.".to_string());
         m.insert("dialog.plugin.open_dir".to_string(), "Open Plugins Folder".to_string());
         m.insert("dialog.plugin.uninstall".to_string(), "Uninstall".to_string());
         m.insert("dialog.plugin.installed".to_string(), "Installed Plugins".to_string());
@@ -522,7 +528,13 @@ impl I18n {
         m.insert("dialog.backup.error_title".to_string(), "バックアップ処理失敗".to_string());
 
         m.insert("dialog.plugin.title".to_string(), "プラグイン管理".to_string());
+        m.insert("dialog.plugin.tab_installed".to_string(), "インストール済み".to_string());
+        m.insert("dialog.plugin.tab_registry".to_string(), "オンライン (カタログ)".to_string());
         m.insert("dialog.plugin.install".to_string(), "プラグインをインストール…".to_string());
+        m.insert("dialog.plugin.install_local".to_string(), "ファイルからインストール…".to_string());
+        m.insert("dialog.plugin.install_online".to_string(), "インストール".to_string());
+        m.insert("dialog.plugin.loading".to_string(), "zee-plugins からカタログを取得中…".to_string());
+        m.insert("dialog.plugin.registry_empty".to_string(), "カタログにプラグインが見つかりません。".to_string());
         m.insert("dialog.plugin.open_dir".to_string(), "プラグインフォルダを開く".to_string());
         m.insert("dialog.plugin.uninstall".to_string(), "削除".to_string());
         m.insert("dialog.plugin.installed".to_string(), "インストール済みプラグイン".to_string());

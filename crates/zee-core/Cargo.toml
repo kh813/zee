@@ -23,6 +23,7 @@ ureq          = { version = "2.10", features = ["json"] }
 flate2        = "1.0"
 tar           = "0.4"
 zip           = { version = "2.2", default-features = false, features = ["deflate"] }
+mlua          = { version = "0.9", features = ["lua54", "vendored"] }
 
 [target.'cfg(unix)'.dependencies]
 libc          = "0.2"

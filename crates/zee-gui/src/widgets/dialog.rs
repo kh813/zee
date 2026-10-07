@@ -60,6 +60,11 @@ pub struct Dialog {
     update_status: Option<UpdateStatus>,
     // Settings dropdown state
     settings_dropdown: Option<SettingsDropdown>,
+    // Plugin Manager state
+    plugin_tab: usize,
+    registry_plugins: Option<Vec<zee_core::plugin::RegistryPlugin>>,
+    registry_loading: bool,
+    registry_error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -108,6 +113,10 @@ impl Dialog {
             button_idx: 0,
             update_status: if is_update { Some(UpdateStatus::Checking) } else { None },
             settings_dropdown: None,
+            plugin_tab: 0,
+            registry_plugins: None,
+            registry_loading: false,
+            registry_error: None,
         };
         this.refresh_files();
         if is_update {
@@ -230,6 +239,67 @@ impl Dialog {
     }
 
 
+
+    fn fetch_online_plugins(&mut self, cx: &mut Context<Self>) {
+        if self.registry_loading {
+            return;
+        }
+        self.registry_loading = true;
+        self.registry_error = None;
+        cx.notify();
+
+        cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let res = std::thread::spawn(|| {
+                    zee_core::plugin::PluginManager::fetch_registry(None)
+                }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Registry fetch thread panicked")));
+
+                let _ = this.update(&mut cx.clone(), |this, cx| {
+                    this.registry_loading = false;
+                    match res {
+                        Ok(index) => {
+                            this.registry_plugins = Some(index.plugins);
+                        }
+                        Err(e) => {
+                            this.registry_error = Some(e.to_string());
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        }).detach();
+    }
+
+    fn start_install_from_registry(&mut self, plugin_id: String, cx: &mut Context<Self>) {
+        self.registry_loading = true;
+        self.registry_error = None;
+        cx.notify();
+
+        let workspace = self.workspace.clone();
+        cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                let id_clone = plugin_id.clone();
+                let res = std::thread::spawn(move || {
+                    zee_core::plugin::PluginManager::install_from_registry(&id_clone, None)
+                }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Plugin install thread panicked")));
+
+                let _ = this.update(&mut cx.clone(), |this, cx| {
+                    this.registry_loading = false;
+                    if let Ok(()) = res {
+                        workspace.update(cx, |w, cx| {
+                            w.reload_plugins();
+                            cx.notify();
+                        });
+                    } else if let Err(e) = res {
+                        this.registry_error = Some(e.to_string());
+                    }
+                    cx.notify();
+                });
+            }
+        }).detach();
+    }
 
     fn refresh_files(&mut self) {
         self.files.clear();
@@ -2212,209 +2282,488 @@ impl Dialog {
                             )
                     )
                     .child(
-                        // Action buttons bar
+                        // Tabs row (Installed vs Online Registry)
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
+                            .gap_4()
+                            .border_b_1()
+                            .border_color(chip_border)
+                            .pb_1()
                             .child(
                                 div()
-                                    .h(px(28.0))
-                                    .px_3()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded_md()
-                                    .bg(accent)
-                                    .text_color(gpui::rgb(0xffffff))
-                                    .text_size(px(12.0))
-                                    .font_weight(FontWeight::MEDIUM)
+                                    .pb_1()
+                                    .text_size(px(13.0))
+                                    .font_weight(if self.plugin_tab == 0 { FontWeight::BOLD } else { FontWeight::NORMAL })
+                                    .text_color(if self.plugin_tab == 0 { accent } else { with_alpha(fg, 0.6) })
+                                    .border_b_2()
+                                    .border_color(if self.plugin_tab == 0 { accent } else { gpui::rgba(0x00000000) })
                                     .cursor_pointer()
-                                    .hover(|s| s.opacity(0.9))
+                                    .hover(|s| s.opacity(0.8))
                                     .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                        let workspace = this.workspace.clone();
-                                        cx.spawn(|_, cx: &mut AsyncApp| {
-                                            let cx = cx.clone();
-                                            async move {
-                                                let file = rfd::AsyncFileDialog::new()
-                                                    .add_filter("WASM Plugin", &["wasm"])
-                                                    .pick_file()
-                                                    .await;
-
-                                                if let Some(file) = file {
-                                                    let path = file.path().to_path_buf();
-                                                    let _ = zee_core::plugin::PluginManager::install_plugin_from_path(&path);
-                                                    cx.update(|cx| {
-                                                        workspace.update(cx, |w, cx| {
-                                                            w.reload_plugins();
-                                                            cx.notify();
-                                                        });
-                                                    });
-                                                }
-                                            }
-                                        }).detach();
+                                        this.plugin_tab = 0;
+                                        cx.notify();
                                     }))
-                                    .child(self.i18n.get("dialog.plugin.install").to_string())
+                                    .child(self.i18n.get("dialog.plugin.tab_installed").to_string())
                             )
                             .child(
                                 div()
-                                    .h(px(28.0))
-                                    .px_3()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded_md()
-                                    .bg(button_bg)
-                                    .text_size(px(12.0))
+                                    .pb_1()
+                                    .text_size(px(13.0))
+                                    .font_weight(if self.plugin_tab == 1 { FontWeight::BOLD } else { FontWeight::NORMAL })
+                                    .text_color(if self.plugin_tab == 1 { accent } else { with_alpha(fg, 0.6) })
+                                    .border_b_2()
+                                    .border_color(if self.plugin_tab == 1 { accent } else { gpui::rgba(0x00000000) })
                                     .cursor_pointer()
-                                    .hover(move |s| s.bg(button_hover))
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {
-                                        if let Some(dir) = zee_core::plugin::PluginManager::plugins_dir() {
-                                            let _ = std::fs::create_dir_all(&dir);
-                                            let _ = zee_core::selfupdate::open_url(&dir.to_string_lossy());
+                                    .hover(|s| s.opacity(0.8))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                        this.plugin_tab = 1;
+                                        if this.registry_plugins.is_none() {
+                                            this.fetch_online_plugins(cx);
                                         }
+                                        cx.notify();
                                     }))
-                                    .child(self.i18n.get("dialog.plugin.open_dir").to_string())
+                                    .child(self.i18n.get("dialog.plugin.tab_registry").to_string())
                             )
                     )
-                    // Plugins list
-                    .child(
+                    .child(if self.plugin_tab == 0 {
+                        // TAB 0: Installed Plugins
                         div()
-                            .flex_grow()
-                            .min_h(px(220.0))
-                            .max_h(px(340.0))
-                            .overflow_hidden()
-                            .p_2()
-                            .bg(input_bg)
-                            .border_1()
-                            .border_color(chip_border)
-                            .rounded_md()
-                            .child(if plugins.is_empty() {
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(
+                                // Action buttons bar
                                 div()
-                                    .h_full()
-                                    .w_full()
                                     .flex()
                                     .items_center()
-                                    .justify_center()
-                                    .text_size(px(12.5))
-                                    .text_color(with_alpha(fg, 0.5))
-                                    .child(self.i18n.get("dialog.plugin.empty").to_string())
-                                    .into_any_element()
-                            } else {
-                                div()
-                                    .flex()
-                                    .flex_col()
                                     .gap_2()
-                                    .w_full()
-                                    .children(plugins.into_iter().map(|manifest| {
-                                        let plugin_id = manifest.id.clone();
-                                        let has_commands = !manifest.capabilities.commands.is_empty();
-                                        let has_outline = manifest.capabilities.outline_provider;
-                                        
+                                    .child(
                                         div()
-                                            .p_2p5()
+                                            .h(px(28.0))
+                                            .px_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
                                             .rounded_md()
-                                            .border_1()
-                                            .border_color(chip_border)
-                                            .bg(chip_bg)
+                                            .bg(accent)
+                                            .text_color(gpui::rgb(0xffffff))
+                                            .text_size(px(12.0))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                let workspace = this.workspace.clone();
+                                                cx.spawn(|_, cx: &mut AsyncApp| {
+                                                    let cx = cx.clone();
+                                                    async move {
+                                                        let file = rfd::AsyncFileDialog::new()
+                                                            .add_filter("Plugins (*.wasm, *.lua, *.zip)", &["wasm", "lua", "zip"])
+                                                            .pick_file()
+                                                            .await;
+
+                                                        if let Some(file) = file {
+                                                            let path = file.path().to_path_buf();
+                                                            let _ = zee_core::plugin::PluginManager::install_plugin_from_path(&path);
+                                                            cx.update(|cx| {
+                                                                workspace.update(cx, |w, cx| {
+                                                                    w.reload_plugins();
+                                                                    cx.notify();
+                                                                });
+                                                            });
+                                                        }
+                                                    }
+                                                }).detach();
+                                            }))
+                                            .child(self.i18n.get("dialog.plugin.install_local").to_string())
+                                    )
+                                    .child(
+                                        div()
+                                            .h(px(28.0))
+                                            .px_3()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_md()
+                                            .bg(button_bg)
+                                            .text_size(px(12.0))
+                                            .cursor_pointer()
+                                            .hover(move |s| s.bg(button_hover))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {
+                                                if let Some(dir) = zee_core::plugin::PluginManager::plugins_dir() {
+                                                    let _ = std::fs::create_dir_all(&dir);
+                                                    let _ = zee_core::selfupdate::open_url(&dir.to_string_lossy());
+                                                }
+                                            }))
+                                            .child(self.i18n.get("dialog.plugin.open_dir").to_string())
+                                    )
+                            )
+                            // Plugins list
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .min_h(px(220.0))
+                                    .max_h(px(340.0))
+                                    .overflow_hidden()
+                                    .p_2()
+                                    .bg(input_bg)
+                                    .border_1()
+                                    .border_color(chip_border)
+                                    .rounded_md()
+                                    .child(if plugins.is_empty() {
+                                        div()
+                                            .h_full()
+                                            .w_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_size(px(12.5))
+                                            .text_color(with_alpha(fg, 0.5))
+                                            .child(self.i18n.get("dialog.plugin.empty").to_string())
+                                            .into_any_element()
+                                    } else {
+                                        let uninstall_label = self.i18n.get("dialog.plugin.uninstall").to_string();
+                                        div()
                                             .flex()
                                             .flex_col()
-                                            .gap_1()
-                                            .child(
+                                            .gap_2()
+                                            .w_full()
+                                            .children(plugins.into_iter().map(|manifest| {
+                                                let plugin_id = manifest.id.clone();
+                                                let has_commands = !manifest.capabilities.commands.is_empty();
+                                                let has_outline = manifest.capabilities.outline_provider;
+                                                let type_label = match manifest.plugin_type {
+                                                    zee_core::plugin::PluginType::Lua => "Lua",
+                                                    zee_core::plugin::PluginType::Wasm => "WASM",
+                                                };
+                                                let u_label = uninstall_label.clone();
+                                                
                                                 div()
+                                                    .p_2p5()
+                                                    .rounded_md()
+                                                    .border_1()
+                                                    .border_color(chip_border)
+                                                    .bg(chip_bg)
                                                     .flex()
-                                                    .items_center()
-                                                    .justify_between()
+                                                    .flex_col()
+                                                    .gap_1()
                                                     .child(
                                                         div()
                                                             .flex()
                                                             .items_center()
-                                                            .gap_2()
+                                                            .justify_between()
                                                             .child(
                                                                 div()
-                                                                    .text_size(px(13.0))
-                                                                    .font_weight(FontWeight::BOLD)
-                                                                    .child(manifest.name)
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(px(13.0))
+                                                                            .font_weight(FontWeight::BOLD)
+                                                                            .child(manifest.name)
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .px_1p5()
+                                                                            .py_0p5()
+                                                                            .rounded_xs()
+                                                                            .bg(with_alpha(accent, 0.15))
+                                                                            .text_color(accent)
+                                                                            .text_size(px(10.0))
+                                                                            .font_weight(FontWeight::BOLD)
+                                                                            .child(type_label)
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .text_size(px(11.0))
+                                                                            .text_color(with_alpha(fg, 0.55))
+                                                                            .child(format!("v{}", manifest.version))
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .px_1p5()
+                                                                            .py_0p5()
+                                                                            .rounded_sm()
+                                                                            .bg(with_alpha(gpui::rgb(0x4caf50), 0.2))
+                                                                            .text_color(gpui::rgb(0x4caf50))
+                                                                            .text_size(px(10.0))
+                                                                            .font_weight(FontWeight::MEDIUM)
+                                                                            .child("✓ Active")
+                                                                    )
                                                             )
                                                             .child(
                                                                 div()
-                                                                    .text_size(px(11.0))
-                                                                    .text_color(with_alpha(fg, 0.55))
-                                                                    .child(format!("v{}", manifest.version))
-                                                            )
-                                                            .child(
-                                                                div()
-                                                                    .px_1p5()
+                                                                    .px_2()
                                                                     .py_0p5()
                                                                     .rounded_sm()
-                                                                    .bg(with_alpha(gpui::rgb(0x4caf50), 0.2))
-                                                                    .text_color(gpui::rgb(0x4caf50))
-                                                                    .text_size(px(10.0))
-                                                                    .font_weight(FontWeight::MEDIUM)
-                                                                    .child("✓ Active")
+                                                                    .bg(with_alpha(gpui::rgb(0xe53935), 0.15))
+                                                                    .text_color(gpui::rgb(0xe53935))
+                                                                    .text_size(px(11.0))
+                                                                    .cursor_pointer()
+                                                                    .hover(|s| s.opacity(0.8))
+                                                                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                                        let id = plugin_id.clone();
+                                                                        let _ = zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id);
+                                                                        this.workspace.update(cx, |w, cx| {
+                                                                            w.reload_plugins();
+                                                                            cx.notify();
+                                                                        });
+                                                                        cx.notify();
+                                                                    }))
+                                                                    .child(u_label)
                                                             )
                                                     )
+                                                    .children(manifest.description.map(|desc| {
+                                                        div()
+                                                            .text_size(px(11.5))
+                                                            .text_color(with_alpha(fg, 0.75))
+                                                            .child(desc)
+                                                    }))
                                                     .child(
                                                         div()
-                                                            .px_2()
-                                                            .py_0p5()
-                                                            .rounded_sm()
-                                                            .bg(with_alpha(gpui::rgb(0xe53935), 0.15))
-                                                            .text_color(gpui::rgb(0xe53935))
-                                                            .text_size(px(11.0))
-                                                            .cursor_pointer()
-                                                            .hover(|s| s.opacity(0.8))
-                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                                                let id = plugin_id.clone();
-                                                                let _ = zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id);
-                                                                this.workspace.update(cx, |w, cx| {
-                                                                    w.reload_plugins();
-                                                                    cx.notify();
-                                                                });
-                                                                cx.notify();
-                                                            }))
-                                                            .child("Uninstall")
+                                                            .flex()
+                                                            .items_center()
+                                                            .gap_1p5()
+                                                            .pt_0p5()
+                                                            .children(if has_outline {
+                                                                Some(div()
+                                                                    .px_1p5()
+                                                                    .rounded_sm()
+                                                                    .bg(with_alpha(accent, 0.15))
+                                                                    .text_color(accent)
+                                                                    .text_size(px(10.5))
+                                                                    .child("Outline Provider"))
+                                                            } else {
+                                                                None
+                                                            })
+                                                            .children(if has_commands {
+                                                                Some(div()
+                                                                    .px_1p5()
+                                                                    .rounded_sm()
+                                                                    .bg(with_alpha(fg, 0.12))
+                                                                    .text_color(with_alpha(fg, 0.8))
+                                                                    .text_size(px(10.5))
+                                                                    .child(format!("Commands: {}", manifest.capabilities.commands.join(", "))))
+                                                            } else {
+                                                                None
+                                                            })
                                                     )
-                                            )
-                                            .children(manifest.description.map(|desc| {
-                                                div()
-                                                    .text_size(px(11.5))
-                                                    .text_color(with_alpha(fg, 0.75))
-                                                    .child(desc)
                                             }))
+                                            .into_any_element()
+                                    })
+                            )
+                            .into_any_element()
+                    } else {
+                        // TAB 1: Online Registry (from zee-plugins)
+                        let registry_plugins = self.registry_plugins.clone();
+                        let is_loading = self.registry_loading;
+                        let reg_error = self.registry_error.clone();
+
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .text_color(with_alpha(fg, 0.6))
+                                            .child(if is_loading {
+                                                self.i18n.get("dialog.plugin.loading").to_string()
+                                            } else {
+                                                "https://github.com/kh813/zee-plugins".to_string()
+                                            })
+                                    )
+                                    .child(
+                                        div()
+                                            .h(px(26.0))
+                                            .px_2p5()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_md()
+                                            .bg(button_bg)
+                                            .text_size(px(11.5))
+                                            .cursor_pointer()
+                                            .hover(move |s| s.bg(button_hover))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.fetch_online_plugins(cx);
+                                            }))
+                                            .child("↻ Refresh")
+                                    )
+                            )
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .min_h(px(220.0))
+                                    .max_h(px(340.0))
+                                    .overflow_hidden()
+                                    .p_2()
+                                    .bg(input_bg)
+                                    .border_1()
+                                    .border_color(chip_border)
+                                    .rounded_md()
+                                    .child(if is_loading && registry_plugins.is_none() {
+                                        div()
+                                            .h_full()
+                                            .w_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .text_size(px(12.5))
+                                            .text_color(with_alpha(fg, 0.6))
+                                            .child(self.i18n.get("dialog.plugin.loading").to_string())
+                                            .into_any_element()
+                                    } else if let Some(ref err) = reg_error {
+                                        div()
+                                            .h_full()
+                                            .w_full()
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .justify_center()
+                                            .gap_2()
                                             .child(
                                                 div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap_1p5()
-                                                    .pt_0p5()
-                                                    .children(if has_outline {
-                                                        Some(div()
-                                                            .px_1p5()
-                                                            .rounded_sm()
-                                                            .bg(with_alpha(accent, 0.15))
-                                                            .text_color(accent)
-                                                            .text_size(px(10.5))
-                                                            .child("Outline Provider"))
-                                                    } else {
-                                                        None
-                                                    })
-                                                    .children(if has_commands {
-                                                        Some(div()
-                                                            .px_1p5()
-                                                            .rounded_sm()
-                                                            .bg(with_alpha(fg, 0.12))
-                                                            .text_color(with_alpha(fg, 0.8))
-                                                            .text_size(px(10.5))
-                                                            .child(format!("Commands: {}", manifest.capabilities.commands.join(", "))))
-                                                    } else {
-                                                        None
-                                                    })
+                                                    .text_size(px(12.0))
+                                                    .text_color(gpui::rgb(0xe53935))
+                                                    .child(format!("Error: {}", err))
                                             )
-                                    }))
-                                    .into_any_element()
-                            })
-                    )
+                                            .into_any_element()
+                                    } else if let Some(ref reg_list) = registry_plugins {
+                                        if reg_list.is_empty() {
+                                            div()
+                                                .h_full()
+                                                .w_full()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .text_size(px(12.5))
+                                                .text_color(with_alpha(fg, 0.5))
+                                                .child(self.i18n.get("dialog.plugin.registry_empty").to_string())
+                                                .into_any_element()
+                                        } else {
+                                            let installed_ids: std::collections::HashSet<String> = plugins.iter().map(|p| p.id.clone()).collect();
+                                            let install_online_label = self.i18n.get("dialog.plugin.install_online").to_string();
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_2()
+                                                .w_full()
+                                                .children(reg_list.iter().map(|reg_p| {
+                                                    let p_id = reg_p.id.clone();
+                                                    let is_installed = installed_ids.contains(&p_id);
+                                                    let type_label = match reg_p.plugin_type {
+                                                        zee_core::plugin::PluginType::Lua => "Lua",
+                                                        zee_core::plugin::PluginType::Wasm => "WASM",
+                                                    };
+                                                    let inst_label = install_online_label.clone();
+                                                    
+                                                    div()
+                                                        .p_2p5()
+                                                        .rounded_md()
+                                                        .border_1()
+                                                        .border_color(chip_border)
+                                                        .bg(chip_bg)
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .flex()
+                                                                .items_center()
+                                                                .justify_between()
+                                                                .child(
+                                                                    div()
+                                                                        .flex()
+                                                                        .items_center()
+                                                                        .gap_2()
+                                                                        .child(
+                                                                            div()
+                                                                                .text_size(px(13.0))
+                                                                                .font_weight(FontWeight::BOLD)
+                                                                                .child(reg_p.name.clone())
+                                                                        )
+                                                                        .child(
+                                                                            div()
+                                                                                .px_1p5()
+                                                                                .py_0p5()
+                                                                                .rounded_xs()
+                                                                                .bg(with_alpha(accent, 0.15))
+                                                                                .text_color(accent)
+                                                                                .text_size(px(10.0))
+                                                                                .font_weight(FontWeight::BOLD)
+                                                                                .child(type_label)
+                                                                        )
+                                                                        .child(
+                                                                            div()
+                                                                                .text_size(px(11.0))
+                                                                                .text_color(with_alpha(fg, 0.55))
+                                                                                .child(format!("v{}", reg_p.version))
+                                                                        )
+                                                                        .children(reg_p.author.as_ref().map(|a| {
+                                                                            div()
+                                                                                .text_size(px(11.0))
+                                                                                .text_color(with_alpha(fg, 0.5))
+                                                                                .child(format!("by {}", a))
+                                                                        }))
+                                                                )
+                                                                .child(if is_installed {
+                                                                    div()
+                                                                        .px_2()
+                                                                        .py_0p5()
+                                                                        .rounded_sm()
+                                                                        .bg(with_alpha(gpui::rgb(0x4caf50), 0.2))
+                                                                        .text_color(gpui::rgb(0x4caf50))
+                                                                        .text_size(px(11.0))
+                                                                        .font_weight(FontWeight::MEDIUM)
+                                                                        .child("✓ Installed")
+                                                                        .into_any_element()
+                                                                } else {
+                                                                    div()
+                                                                        .px_2p5()
+                                                                        .py_0p5()
+                                                                        .rounded_sm()
+                                                                        .bg(accent)
+                                                                        .text_color(gpui::rgb(0xffffff))
+                                                                        .text_size(px(11.0))
+                                                                        .font_weight(FontWeight::MEDIUM)
+                                                                        .cursor_pointer()
+                                                                        .hover(|s| s.opacity(0.85))
+                                                                        .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                                            this.start_install_from_registry(p_id.clone(), cx);
+                                                                        }))
+                                                                        .child(inst_label)
+                                                                        .into_any_element()
+                                                                })
+                                                        )
+                                                        .children(reg_p.description.as_ref().map(|desc| {
+                                                            div()
+                                                                .text_size(px(11.5))
+                                                                .text_color(with_alpha(fg, 0.75))
+                                                                .child(desc.clone())
+                                                        }))
+                                                }))
+                                                .into_any_element()
+                                        }
+                                    } else {
+                                        div()
+                                            .h_full()
+                                            .w_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(self.i18n.get("dialog.plugin.loading").to_string())
+                                            .into_any_element()
+                                    })
+                            )
+                            .into_any_element()
+                    })
                     // Footer
                     .child(
                         div()

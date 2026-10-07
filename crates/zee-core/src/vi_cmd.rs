@@ -46,6 +46,8 @@ pub enum ExCommand {
         global: bool,
         ignore_case: bool,
     },
+    /// `:plugin [subcmd] [arg]` - Plugin management (e.g., `:plugin install <id>`, `:plugin list`).
+    Plugin { subcmd: String, arg: Option<String> },
     /// Empty command (e.g. `:` alone).
     Empty,
     /// Unknown or unsupported command string.
@@ -247,6 +249,16 @@ pub fn parse_ex_command(input: &str) -> ExCommand {
             }
         }
 
+        // --- Plugins (:plugin install <id>, :plugin list) ---
+        "plugin" => {
+            let subcmd = arg.unwrap_or_else(|| "list".to_string());
+            let plugin_target = parts.next().map(|s| s.to_string());
+            ExCommand::Plugin {
+                subcmd,
+                arg: plugin_target,
+            }
+        }
+
         // Unknown command
         _ => ExCommand::Unknown(body.to_string()),
     }
@@ -415,6 +427,38 @@ mod tests {
                 replacement: "/usr/local/bin".into(),
                 global: true,
                 ignore_case: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_plugin() {
+        assert_eq!(
+            parse_ex_command(":plugin"),
+            ExCommand::Plugin {
+                subcmd: "list".into(),
+                arg: None,
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":plugin list"),
+            ExCommand::Plugin {
+                subcmd: "list".into(),
+                arg: None,
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":plugin install case-converter"),
+            ExCommand::Plugin {
+                subcmd: "install".into(),
+                arg: Some("case-converter".into()),
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":plugin uninstall case-converter"),
+            ExCommand::Plugin {
+                subcmd: "uninstall".into(),
+                arg: Some("case-converter".into()),
             }
         );
     }

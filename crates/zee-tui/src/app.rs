@@ -2618,6 +2618,60 @@ impl App {
                             }
                         }
                     }
+                    zee_core::ExCommand::Plugin { subcmd, arg } => {
+                        match subcmd.as_str() {
+                            "list" => {
+                                let mut names = Vec::new();
+                                for p in &self.sidebar.plugin_manager.plugins {
+                                    names.push(format!("{} (wasm)", p.manifest.name));
+                                }
+                                for p in &self.sidebar.plugin_manager.lua_plugins {
+                                    names.push(format!("{} (lua)", p.manifest.name));
+                                }
+                                if names.is_empty() {
+                                    self.vi_message = Some(("No plugins installed".to_string(), false));
+                                } else {
+                                    self.vi_message = Some((format!("Installed plugins: {}", names.join(", ")), false));
+                                }
+                            }
+                            "install" => {
+                                if let Some(id) = arg {
+                                    match zee_core::plugin::PluginManager::install_from_registry(&id, None) {
+                                        Ok(_) => {
+                                            self.sidebar.plugin_manager.load_installed_plugins();
+                                            self.vi_message = Some((format!("Plugin '{}' installed successfully", id), false));
+                                        }
+                                        Err(e) => {
+                                            self.vi_message = Some((format!("Failed to install '{}': {}", id, e), true));
+                                        }
+                                    }
+                                } else {
+                                    self.vi_message = Some(("Usage: :plugin install <id>".to_string(), true));
+                                }
+                            }
+                            "uninstall" => {
+                                if let Some(id) = arg {
+                                    match zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id) {
+                                        Ok(true) => {
+                                            self.sidebar.plugin_manager.load_installed_plugins();
+                                            self.vi_message = Some((format!("Plugin '{}' uninstalled successfully", id), false));
+                                        }
+                                        Ok(false) => {
+                                            self.vi_message = Some((format!("Plugin '{}' not found", id), true));
+                                        }
+                                        Err(e) => {
+                                            self.vi_message = Some((format!("Failed to uninstall '{}': {}", id, e), true));
+                                        }
+                                    }
+                                } else {
+                                    self.vi_message = Some(("Usage: :plugin uninstall <id>".to_string(), true));
+                                }
+                            }
+                            _ => {
+                                self.vi_message = Some((format!("Unknown plugin command: {}. Available: list, install <id>, uninstall <id>", subcmd), true));
+                            }
+                        }
+                    }
                     zee_core::ExCommand::Empty => {
                         self.vi_message = None;
                     }

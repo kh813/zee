@@ -357,6 +357,63 @@ impl EditorView {
                     cx.notify();
                 });
             }
+            zee_core::ExCommand::Plugin { subcmd, arg } => {
+                workspace.update(cx, |w, cx| {
+                    match subcmd.as_str() {
+                        "list" => {
+                            let mut names = Vec::new();
+                            for p in &w.plugin_manager.plugins {
+                                names.push(format!("{} (wasm)", p.manifest.name));
+                            }
+                            for p in &w.plugin_manager.lua_plugins {
+                                names.push(format!("{} (lua)", p.manifest.name));
+                            }
+                            if names.is_empty() {
+                                w.vi_message = Some(("No plugins installed".to_string(), false));
+                            } else {
+                                w.vi_message = Some((format!("Installed plugins: {}", names.join(", ")), false));
+                            }
+                        }
+                        "install" => {
+                            if let Some(id) = arg {
+                                match zee_core::plugin::PluginManager::install_from_registry(&id, None) {
+                                    Ok(_) => {
+                                        w.plugin_manager.load_installed_plugins();
+                                        w.vi_message = Some((format!("Plugin '{}' installed successfully", id), false));
+                                    }
+                                    Err(e) => {
+                                        w.vi_message = Some((format!("Failed to install '{}': {}", id, e), true));
+                                    }
+                                }
+                            } else {
+                                w.vi_message = Some(("Usage: :plugin install <id>".to_string(), true));
+                            }
+                        }
+                        "uninstall" => {
+                            if let Some(id) = arg {
+                                match zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id) {
+                                    Ok(true) => {
+                                        w.plugin_manager.load_installed_plugins();
+                                        w.vi_message = Some((format!("Plugin '{}' uninstalled successfully", id), false));
+                                    }
+                                    Ok(false) => {
+                                        w.vi_message = Some((format!("Plugin '{}' not found", id), true));
+                                    }
+                                    Err(e) => {
+                                        w.vi_message = Some((format!("Failed to uninstall '{}': {}", id, e), true));
+                                    }
+                                }
+                            } else {
+                                w.vi_message = Some(("Usage: :plugin uninstall <id>".to_string(), true));
+                            }
+                        }
+                        _ => {
+                            w.vi_message = Some((format!("Unknown plugin command: {}. Available: list, install <id>, uninstall <id>", subcmd), true));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
             zee_core::ExCommand::Empty => {
                 workspace.update(cx, |w, cx| {
                     w.vi_message = None;

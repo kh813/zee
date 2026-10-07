@@ -5,12 +5,33 @@ use serde::{Deserialize, Serialize};
 use wasmi::{Caller, Engine, Func, Linker, Memory, Module, Store, TypedFunc};
 use crate::outline::OutlineNode;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PluginType {
+    Wasm,
+    Lua,
+}
+
+impl Default for PluginType {
+    fn default() -> Self {
+        PluginType::Wasm
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub id: String,
     pub name: String,
     pub version: String,
     pub description: Option<String>,
+    #[serde(rename = "type", default)]
+    pub plugin_type: PluginType,
+    #[serde(default)]
+    pub entry: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
     #[serde(default)]
     pub languages: Vec<String>,
     #[serde(default)]
@@ -207,9 +228,165 @@ impl WasmPlugin {
     }
 }
 
+pub struct LuaPlugin {
+    pub manifest: PluginManifest,
+    lua: mlua::Lua,
+}
+
+impl LuaPlugin {
+    pub fn load_from_str(manifest: PluginManifest, script: &str) -> Result<Self> {
+        let lua = mlua::Lua::new();
+
+        // Host environment exposed to Lua
+        let zee_table = lua.create_table()?;
+        zee_table.set("version", env!("CARGO_PKG_VERSION"))?;
+        let log_fn = lua.create_function(|_, msg: String| {
+            eprintln!("[Lua Plugin Log]: {}", msg);
+            Ok(())
+        })?;
+        zee_table.set("log", log_fn)?;
+        lua.globals().set("zee", zee_table)?;
+
+        // Execute plugin script
+        {
+            let val: mlua::Value = lua.load(script).eval().context("Failed to evaluate Lua plugin script")?;
+            if let mlua::Value::Table(tbl) = val {
+                lua.globals().set("__plugin_table", tbl)?;
+            }
+        }
+
+        Ok(Self { manifest, lua })
+    }
+
+    pub fn execute_command(&mut self, command: &str, args: &str) -> Result<String> {
+        let globals = self.lua.globals();
+
+        if let Ok(tbl) = globals.get::<_, mlua::Table>("__plugin_table") {
+            if let Ok(func) = tbl.get::<_, mlua::Function>("execute_command") {
+                let res: mlua::Value = func.call((command, args))?;
+                return Self::value_to_string(res);
+            }
+            if let Ok(func) = tbl.get::<_, mlua::Function>(command) {
+                let res: mlua::Value = func.call(args)?;
+                return Self::value_to_string(res);
+            }
+        }
+
+        if let Ok(func) = globals.get::<_, mlua::Function>("execute_command") {
+            let res: mlua::Value = func.call((command, args))?;
+            return Self::value_to_string(res);
+        }
+
+        if let Ok(func) = globals.get::<_, mlua::Function>(command) {
+            let res: mlua::Value = func.call(args)?;
+            return Self::value_to_string(res);
+        }
+
+        anyhow::bail!("Command '{}' not defined in Lua plugin '{}'", command, self.manifest.id)
+    }
+
+    pub fn transform_text(&mut self, command: &str, text: &str) -> Result<String> {
+        let custom_res = {
+            let globals = self.lua.globals();
+
+            let mut out = None;
+            if let Ok(tbl) = globals.get::<_, mlua::Table>("__plugin_table") {
+                if let Ok(func) = tbl.get::<_, mlua::Function>("transform_text") {
+                    if let Ok(res) = func.call::<_, mlua::Value>((command, text)) {
+                        out = Some(Self::value_to_string(res));
+                    }
+                }
+            }
+
+            if out.is_none() {
+                if let Ok(func) = globals.get::<_, mlua::Function>("transform_text") {
+                    if let Ok(res) = func.call::<_, mlua::Value>((command, text)) {
+                        out = Some(Self::value_to_string(res));
+                    }
+                }
+            }
+            out
+        };
+
+        if let Some(res) = custom_res {
+            return res;
+        }
+
+        self.execute_command(command, text)
+    }
+
+    pub fn parse_outline(&mut self, content: &str) -> Result<Vec<OutlineNode>> {
+        let globals = self.lua.globals();
+        let func = if let Ok(tbl) = globals.get::<_, mlua::Table>("__plugin_table") {
+            tbl.get::<_, mlua::Function>("parse_outline")
+                .or_else(|_| globals.get::<_, mlua::Function>("parse_outline"))
+        } else {
+            globals.get::<_, mlua::Function>("parse_outline")
+        };
+
+        if let Ok(func) = func {
+            let val: mlua::Value = func.call(content)?;
+            match val {
+                mlua::Value::String(s) => {
+                    let json_str = s.to_str()?;
+                    let nodes: Vec<OutlineNode> = serde_json::from_str(json_str)?;
+                    Ok(nodes)
+                }
+                _ => Ok(Vec::new()),
+            }
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    fn value_to_string(val: mlua::Value) -> Result<String> {
+        match val {
+            mlua::Value::String(s) => Ok(s.to_str()?.to_string()),
+            mlua::Value::Nil => Ok(String::new()),
+            mlua::Value::Integer(i) => Ok(i.to_string()),
+            mlua::Value::Number(n) => Ok(n.to_string()),
+            mlua::Value::Boolean(b) => Ok(b.to_string()),
+            _ => Ok(String::new()),
+        }
+    }
+}
+
+pub const DEFAULT_REGISTRY_URL: &str = "https://raw.githubusercontent.com/kh813/zee-plugins/main/index.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistryPlugin {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    #[serde(rename = "type", default)]
+    pub plugin_type: PluginType,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub download_url: Option<String>,
+    #[serde(default)]
+    pub languages: Vec<String>,
+    #[serde(default)]
+    pub capabilities: PluginCapabilities,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginRegistryIndex {
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+    pub plugins: Vec<RegistryPlugin>,
+}
+
 pub struct PluginManager {
     pub plugins: Vec<WasmPlugin>,
     pub component_plugins: Vec<(PluginManifest, crate::component_plugin::ComponentPluginInstance)>,
+    pub lua_plugins: Vec<LuaPlugin>,
     component_engine: Option<crate::component_plugin::ComponentEngine>,
 }
 
@@ -224,6 +401,7 @@ impl PluginManager {
         let mut manager = Self {
             plugins: Vec::new(),
             component_plugins: Vec::new(),
+            lua_plugins: Vec::new(),
             component_engine: None,
         };
         manager.load_installed_plugins();
@@ -249,11 +427,14 @@ impl PluginManager {
         for (m, _) in &self.component_plugins {
             list.push(m.clone());
         }
+        for p in &self.lua_plugins {
+            list.push(p.manifest.clone());
+        }
         list
     }
 
     pub fn is_empty(&self) -> bool {
-        self.plugins.is_empty() && self.component_plugins.is_empty()
+        self.plugins.is_empty() && self.component_plugins.is_empty() && self.lua_plugins.is_empty()
     }
 
     pub fn load_installed_plugins(&mut self) {
@@ -266,6 +447,8 @@ impl PluginManager {
                             let _ = self.load_plugin_dir(&path);
                         } else if path.extension().and_then(|e| e.to_str()) == Some("wasm") {
                             let _ = self.load_standalone_wasm(&path);
+                        } else if path.extension().and_then(|e| e.to_str()) == Some("lua") {
+                            let _ = self.load_standalone_lua(&path);
                         }
                     }
                 }
@@ -276,8 +459,9 @@ impl PluginManager {
     pub fn load_plugin_dir(&mut self, dir: &Path) -> Result<()> {
         let manifest_path = dir.join("plugin.toml");
         let wasm_path = dir.join("plugin.wasm");
+        let lua_path = dir.join("init.lua");
 
-        if !wasm_path.exists() {
+        if !wasm_path.exists() && !lua_path.exists() {
             return Ok(());
         }
 
@@ -289,11 +473,16 @@ impl PluginManager {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "unnamed_plugin".to_string());
+            let ptype = if lua_path.exists() { PluginType::Lua } else { PluginType::Wasm };
             PluginManifest {
                 id: id.clone(),
                 name: id,
                 version: "0.1.0".to_string(),
                 description: None,
+                plugin_type: ptype,
+                entry: None,
+                author: None,
+                homepage: None,
                 languages: Vec::new(),
                 capabilities: PluginCapabilities {
                     outline_provider: true,
@@ -302,16 +491,31 @@ impl PluginManager {
             }
         };
 
-        let wasm_bytes = fs::read(&wasm_path)?;
-        if let Ok(engine) = self.get_or_init_engine() {
-            if let Ok(comp) = crate::component_plugin::ComponentPluginInstance::from_bytes(engine, &wasm_bytes, None) {
-                self.component_plugins.push((manifest, comp));
+        if manifest.plugin_type == PluginType::Lua || lua_path.exists() {
+            let entry_file = manifest.entry.as_deref().unwrap_or("init.lua");
+            let target_lua = dir.join(entry_file);
+            if target_lua.exists() {
+                let script = fs::read_to_string(&target_lua)?;
+                let plugin = LuaPlugin::load_from_str(manifest, &script)?;
+                self.lua_plugins.push(plugin);
                 return Ok(());
             }
         }
 
-        let plugin = WasmPlugin::load_from_bytes(manifest, &wasm_bytes)?;
-        self.plugins.push(plugin);
+        if wasm_path.exists() {
+            let wasm_bytes = fs::read(&wasm_path)?;
+            if let Ok(engine) = self.get_or_init_engine() {
+                if let Ok(comp) = crate::component_plugin::ComponentPluginInstance::from_bytes(engine, &wasm_bytes, None) {
+                    self.component_plugins.push((manifest, comp));
+                    return Ok(());
+                }
+            }
+
+            let plugin = WasmPlugin::load_from_bytes(manifest, &wasm_bytes)?;
+            self.plugins.push(plugin);
+            return Ok(());
+        }
+
         Ok(())
     }
 
@@ -326,6 +530,10 @@ impl PluginManager {
             name: id,
             version: "0.1.0".to_string(),
             description: None,
+            plugin_type: PluginType::Wasm,
+            entry: None,
+            author: None,
+            homepage: None,
             languages: Vec::new(),
             capabilities: PluginCapabilities {
                 outline_provider: true,
@@ -343,6 +551,34 @@ impl PluginManager {
 
         let plugin = WasmPlugin::load_from_bytes(manifest, &wasm_bytes)?;
         self.plugins.push(plugin);
+        Ok(())
+    }
+
+    pub fn load_standalone_lua(&mut self, path: &Path) -> Result<()> {
+        let id = path
+            .file_stem()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unnamed".to_string());
+
+        let script = fs::read_to_string(path)?;
+        let manifest = PluginManifest {
+            id: id.clone(),
+            name: id,
+            version: "0.1.0".to_string(),
+            description: None,
+            plugin_type: PluginType::Lua,
+            entry: None,
+            author: None,
+            homepage: None,
+            languages: Vec::new(),
+            capabilities: PluginCapabilities {
+                outline_provider: false,
+                commands: Vec::new(),
+            },
+        };
+
+        let plugin = LuaPlugin::load_from_str(manifest, &script)?;
+        self.lua_plugins.push(plugin);
         Ok(())
     }
 
@@ -380,10 +616,38 @@ impl PluginManager {
                 }
             }
         }
+
+        for plugin in &mut self.lua_plugins {
+            if plugin.manifest.capabilities.outline_provider
+                && (plugin.manifest.languages.is_empty()
+                    || plugin
+                        .manifest
+                        .languages
+                        .iter()
+                        .any(|l| l.to_lowercase() == lang))
+            {
+                if let Ok(nodes) = plugin.parse_outline(content) {
+                    if !nodes.is_empty() {
+                        return Some(nodes);
+                    }
+                }
+            }
+        }
+
         None
     }
 
     pub fn execute_command(&mut self, command: &str, args: &str) -> Option<String> {
+        for plugin in &mut self.lua_plugins {
+            if plugin.manifest.capabilities.commands.is_empty()
+                || plugin.manifest.capabilities.commands.iter().any(|c| c == command)
+            {
+                if let Ok(res) = plugin.execute_command(command, args) {
+                    return Some(res);
+                }
+            }
+        }
+
         for (manifest, comp) in &self.component_plugins {
             if manifest.capabilities.commands.iter().any(|c| c == command) {
                 if let Ok((res, _edits)) = comp.execute_command(command, args.to_string(), None) {
@@ -403,6 +667,16 @@ impl PluginManager {
     }
 
     pub fn transform_text(&mut self, command: &str, text: &str) -> Option<String> {
+        for plugin in &mut self.lua_plugins {
+            if plugin.manifest.capabilities.commands.is_empty()
+                || plugin.manifest.capabilities.commands.iter().any(|c| c == command)
+            {
+                if let Ok(res) = plugin.transform_text(command, text) {
+                    return Some(res);
+                }
+            }
+        }
+
         for (manifest, comp) in &self.component_plugins {
             if manifest.capabilities.commands.iter().any(|c| c == command) {
                 if let Ok((res, _edits)) = comp.execute_command(command, text.to_string(), None) {
@@ -450,6 +724,70 @@ impl PluginManager {
         }
     }
 
+    /// Fetch the plugin catalog from zee-plugins repository
+    pub fn fetch_registry(registry_url: Option<&str>) -> Result<PluginRegistryIndex> {
+        let url = registry_url.unwrap_or(DEFAULT_REGISTRY_URL);
+        let resp = ureq::get(url)
+            .set("User-Agent", "zee-editor")
+            .timeout(std::time::Duration::from_secs(10))
+            .call()
+            .context("Failed to fetch plugin registry")?;
+
+        let index: PluginRegistryIndex = resp.into_json()
+            .context("Failed to parse registry index JSON")?;
+        Ok(index)
+    }
+
+    /// Install a plugin by ID from the online registry
+    pub fn install_from_registry(plugin_id: &str, registry_url: Option<&str>) -> Result<()> {
+        let registry = Self::fetch_registry(registry_url)?;
+        let plugin = registry.plugins.into_iter().find(|p| p.id == plugin_id)
+            .ok_or_else(|| anyhow::anyhow!("Plugin '{}' not found in registry", plugin_id))?;
+
+        let plugins_dir = Self::plugins_dir().context("Could not determine plugins directory")?;
+        let target_dir = plugins_dir.join(&plugin.id);
+        fs::create_dir_all(&target_dir)?;
+
+        let base_download_url = plugin.download_url
+            .unwrap_or_else(|| format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/plugins/{}", plugin.id));
+
+        // 1. Download plugin.toml
+        let toml_url = format!("{}/plugin.toml", base_download_url.trim_end_matches('/'));
+        if let Ok(resp) = ureq::get(&toml_url).set("User-Agent", "zee-editor").timeout(std::time::Duration::from_secs(10)).call() {
+            let mut reader = resp.into_reader();
+            let mut file = fs::File::create(target_dir.join("plugin.toml"))?;
+            std::io::copy(&mut reader, &mut file)?;
+        }
+
+        // 2. Download entry file based on type
+        match plugin.plugin_type {
+            PluginType::Lua => {
+                let lua_url = format!("{}/init.lua", base_download_url.trim_end_matches('/'));
+                let resp = ureq::get(&lua_url)
+                    .set("User-Agent", "zee-editor")
+                    .timeout(std::time::Duration::from_secs(10))
+                    .call()
+                    .context("Failed to download init.lua")?;
+                let mut reader = resp.into_reader();
+                let mut file = fs::File::create(target_dir.join("init.lua"))?;
+                std::io::copy(&mut reader, &mut file)?;
+            }
+            PluginType::Wasm => {
+                let wasm_url = format!("{}/plugin.wasm", base_download_url.trim_end_matches('/'));
+                let resp = ureq::get(&wasm_url)
+                    .set("User-Agent", "zee-editor")
+                    .timeout(std::time::Duration::from_secs(15))
+                    .call()
+                    .context("Failed to download plugin.wasm")?;
+                let mut reader = resp.into_reader();
+                let mut file = fs::File::create(target_dir.join("plugin.wasm"))?;
+                std::io::copy(&mut reader, &mut file)?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn uninstall_plugin_by_id(id: &str) -> Result<bool> {
         let plugins_dir = Self::plugins_dir().context("Could not determine plugins directory")?;
         if !plugins_dir.exists() {
@@ -460,6 +798,12 @@ impl PluginManager {
         let wasm_file = plugins_dir.join(format!("{}.wasm", id));
         if wasm_file.exists() {
             fs::remove_file(&wasm_file)?;
+            removed = true;
+        }
+
+        let lua_file = plugins_dir.join(format!("{}.lua", id));
+        if lua_file.exists() {
+            fs::remove_file(&lua_file)?;
             removed = true;
         }
 
@@ -565,6 +909,115 @@ commands = ["outline.refresh"]
 
         let snake = manager.transform_text("to_snake_case", "HelloWorldText").unwrap();
         assert_eq!(snake, "hello_world_text");
+    }
+
+    #[test]
+    fn test_load_and_run_lua_plugin() {
+        let manifest = PluginManifest {
+            id: "test-lua".to_string(),
+            name: "Test Lua Plugin".to_string(),
+            version: "0.1.0".to_string(),
+            description: Some("Lua test plugin".to_string()),
+            plugin_type: PluginType::Lua,
+            entry: Some("init.lua".to_string()),
+            author: Some("kh813".to_string()),
+            homepage: None,
+            languages: vec!["*".to_string()],
+            capabilities: PluginCapabilities {
+                outline_provider: false,
+                commands: vec!["custom_reverse".to_string(), "custom_shout".to_string()],
+            },
+        };
+
+        let lua_script = r#"
+            local M = {}
+            function M.execute_command(cmd, text)
+                if cmd == "custom_reverse" then
+                    return string.reverse(text)
+                elseif cmd == "custom_shout" then
+                    return string.upper(text) .. "!!!"
+                end
+                return text
+            end
+            return M
+        "#;
+
+        let mut plugin = LuaPlugin::load_from_str(manifest, lua_script).unwrap();
+        let res1 = plugin.execute_command("custom_reverse", "hello world").unwrap();
+        assert_eq!(res1, "dlrow olleh");
+
+        let res2 = plugin.transform_text("custom_shout", "zee editor").unwrap();
+        assert_eq!(res2, "ZEE EDITOR!!!");
+    }
+
+    #[test]
+    fn test_lua_plugin_directory_workflow() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_lua_dir_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let toml_content = r#"
+id = "sample-lorem"
+name = "Sample Lorem"
+version = "0.1.0"
+type = "lua"
+entry = "init.lua"
+
+[capabilities]
+commands = ["lorem"]
+"#;
+        fs::write(temp_dir.join("plugin.toml"), toml_content).unwrap();
+
+        let lua_content = r#"
+            local M = {}
+            function M.execute_command(cmd, text)
+                if cmd == "lorem" then
+                    return "Lorem ipsum dolor sit amet."
+                end
+                return text
+            end
+            return M
+        "#;
+        fs::write(temp_dir.join("init.lua"), lua_content).unwrap();
+
+        let mut manager = PluginManager::default();
+        manager.load_plugin_dir(&temp_dir).unwrap();
+        assert_eq!(manager.lua_plugins.len(), 1);
+        assert_eq!(manager.all_manifests().len(), 1);
+
+        let res = manager.execute_command("lorem", "").unwrap();
+        assert_eq!(res, "Lorem ipsum dolor sit amet.");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_registry_index_deserialization() {
+        let index_json = r#"{
+            "version": 1,
+            "plugins": [
+                {
+                    "id": "case-converter",
+                    "name": "Case Converter",
+                    "version": "0.1.0",
+                    "type": "lua",
+                    "author": "kh813",
+                    "description": "Convert words and text selections.",
+                    "languages": ["*"],
+                    "capabilities": {
+                        "outline_provider": false,
+                        "commands": ["to_camel_case", "to_snake_case"]
+                    }
+                }
+            ]
+        }"#;
+
+        let index: PluginRegistryIndex = serde_json::from_str(index_json).unwrap();
+        assert_eq!(index.plugins.len(), 1);
+        let p = &index.plugins[0];
+        assert_eq!(p.id, "case-converter");
+        assert_eq!(p.plugin_type, PluginType::Lua);
+        assert_eq!(p.capabilities.commands.len(), 2);
     }
 }
 

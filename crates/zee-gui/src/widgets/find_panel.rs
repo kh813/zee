@@ -25,6 +25,9 @@ pub struct FindPanel {
 impl EventEmitter<FindPanelEvent> for FindPanel {}
 
 impl FindPanel {
+    pub fn is_visible(&self) -> bool {
+        self.is_visible
+    }
     pub fn new(workspace: Entity<Workspace>, cx: &mut Context<Self>) -> Self {
         Self {
             workspace,

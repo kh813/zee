@@ -54,7 +54,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-h", About {}, None),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-i", ToggleViMode {}, None),
+        KeyBinding::new("cmd-e", ToggleViMode {}, None),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-a", SelectAll {}, None),
         #[cfg(target_os = "macos")]
@@ -124,7 +124,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-h", About {}, None),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-i", ToggleViMode {}, None),
+        KeyBinding::new("ctrl-e", ToggleViMode {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-a", SelectAll {}, None),
         #[cfg(not(target_os = "macos"))]
@@ -1014,7 +1014,7 @@ actions!(zee, [
     SetEncodingShiftJis, SetEncodingEucJp, SetEncodingIso2022Jp, SetEncodingLatin1,
     SetLineEndingLf, SetLineEndingCrlf, SetLineEndingCr,
     // Search
-    SearchNext, SearchPrev, SearchReplace, SearchReplaceAll,
+    SearchNext, SearchPrev, SearchReplace, SearchReplaceAll, CloseFind,
     ToggleMatchCase, ToggleWholeWord, ToggleRegex,
     // Other
     NoOp

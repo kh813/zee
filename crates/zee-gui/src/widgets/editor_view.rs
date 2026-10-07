@@ -833,7 +833,7 @@ impl EditorView {
                 "right" => editor.move_cursor_right(shift),
                 "home" => editor.move_cursor_home(shift),
                 "end" => editor.move_cursor_end(shift),
-                "pageup" => {
+                "pageup" | "page_up" | "page-up" => {
                     for _ in 0..20 {
                         if word_wrap {
                             editor.move_cursor_vup_px(max_w, ascii_w, cjk_w, tab_size, shift);
@@ -842,7 +842,7 @@ impl EditorView {
                         }
                     }
                 }
-                "pagedown" => {
+                "pagedown" | "page_down" | "page-down" => {
                     for _ in 0..20 {
                         if word_wrap {
                             editor.move_cursor_vdown_px(max_w, ascii_w, cjk_w, tab_size, shift);
@@ -888,11 +888,21 @@ impl EditorView {
                     }
                     editor.insert(editor.cursor, "\n");
                 }
+                "escape" => {
+                    editor.selection = None;
+                    editor.selection_anchor = None;
+                }
                 _ => {}
             }
             editor.ensure_cursor_visible(30, 80, word_wrap);
             cx.notify();
         });
+
+        if key == "escape" {
+            self.preedit_text = None;
+            self.preedit_range = None;
+            cx.dispatch_action(&crate::app::CloseFind {});
+        }
     }
 
     fn handle_vi_normal_key(&mut self, key: &str, shift: bool, cx: &mut Context<Self>) {
@@ -2130,6 +2140,13 @@ impl EditorView {
                 });
             }
             "escape" => {
+                let had_pending = self.pending_d || self.pending_y || self.pending_c || self.pending_g
+                    || self.pending_r || self.pending_f || self.pending_capital_f || self.pending_t
+                    || self.pending_capital_t || self.pending_indent || self.pending_unindent
+                    || self.pending_m || self.pending_single_quote || self.pending_backtick
+                    || self.count > 0 || self.pending_op_count > 0;
+                let had_selection = self.workspace.read(cx).active_editor().map_or(false, |e| e.selection.is_some());
+
                 self.count = 0;
                 self.pending_op_count = 0;
                 self.workspace.update(cx, |w, cx| {
@@ -2156,6 +2173,10 @@ impl EditorView {
                 self.pending_m = false;
                 self.pending_single_quote = false;
                 self.pending_backtick = false;
+
+                if !had_pending && !had_selection {
+                    cx.dispatch_action(&crate::app::CloseFind {});
+                }
             }
             "enter" => {
                 self.preedit_text = None;
@@ -2208,7 +2229,7 @@ impl EditorView {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
                 }
             }
-            "up" | "down" | "left" | "right" | "home" | "end" | "pageup" | "pagedown" => {
+            "up" | "down" | "left" | "right" | "home" | "end" | "pageup" | "page_up" | "page-up" | "pagedown" | "page_down" | "page-down" => {
                 let max_w = self.last_wrap_width_px;
                 let ascii_w = self.ascii_width_px;
                 let cjk_w = self.cjk_width_px;
@@ -2235,7 +2256,7 @@ impl EditorView {
                             "right" => editor.move_cursor_right(shift),
                             "home" => editor.move_cursor_home(shift),
                             "end" => editor.move_cursor_end(shift),
-                            "pageup" => {
+                            "pageup" | "page_up" | "page-up" => {
                                 for _ in 0..20 {
                                     if word_wrap {
                                         editor.move_cursor_vup_px(max_w, ascii_w, cjk_w, tab_size, shift);
@@ -2244,7 +2265,7 @@ impl EditorView {
                                     }
                                 }
                             }
-                            "pagedown" => {
+                            "pagedown" | "page_down" | "page-down" => {
                                 for _ in 0..20 {
                                     if word_wrap {
                                         editor.move_cursor_vdown_px(max_w, ascii_w, cjk_w, tab_size, shift);
@@ -2821,6 +2842,60 @@ impl EditorView {
                 self.ignore_next_text_input = true;
                 self.workspace.update(cx, |w, cx| {
                     w.vi_cmd = Some(":".into());
+                    cx.notify();
+                });
+            }
+            "home" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_cursor_home(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "end" => {
+                self.workspace.update(cx, |w, cx| {
+                    if let Some(editor) = w.active_editor_mut() {
+                        editor.move_cursor_end(true);
+                    }
+                    cx.notify();
+                });
+            }
+            "pageup" | "page_up" | "page-up" => {
+                let max_w = self.last_wrap_width_px;
+                let ascii_w = self.ascii_width_px;
+                let cjk_w = self.cjk_width_px;
+                self.workspace.update(cx, |w, cx| {
+                    let word_wrap = w.config.word_wrap;
+                    let tab_size = w.config.tab_size;
+                    if let Some(editor) = w.active_editor_mut() {
+                        for _ in 0..20 {
+                            if word_wrap {
+                                editor.move_cursor_vup_px(max_w, ascii_w, cjk_w, tab_size, true);
+                            } else {
+                                editor.move_cursor_up(true);
+                            }
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            "pagedown" | "page_down" | "page-down" => {
+                let max_w = self.last_wrap_width_px;
+                let ascii_w = self.ascii_width_px;
+                let cjk_w = self.cjk_width_px;
+                self.workspace.update(cx, |w, cx| {
+                    let word_wrap = w.config.word_wrap;
+                    let tab_size = w.config.tab_size;
+                    if let Some(editor) = w.active_editor_mut() {
+                        for _ in 0..20 {
+                            if word_wrap {
+                                editor.move_cursor_vdown_px(max_w, ascii_w, cjk_w, tab_size, true);
+                            } else {
+                                editor.move_cursor_down(true);
+                            }
+                        }
+                    }
                     cx.notify();
                 });
             }
@@ -4094,7 +4169,7 @@ impl EditorView {
                 use unicode_width::UnicodeWidthChar;
                 let cursor_w = match char_at_cursor {
                     Some(c) if c.width() == Some(2) => self.cjk_width_px,
-                    _ => self.ascii_width_px,
+                    _ => self.ascii_width_px.max(8.0),
                 };
                 let ime_cursor_color = gpui::rgb(0xffa726); // Vibrant amber/orange
                 let underscore_height = px(3.0);

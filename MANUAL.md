@@ -248,7 +248,7 @@ In the desktop GUI, hold the `Alt` key (Option on macOS) while dragging the mous
 | Action | Shortcut |
 | :--- | :--- |
 | Help / About | `Ctrl+H` (`⌘H` on macOS) |
-| Toggle Vi Mode | `Ctrl+I` (`⌘I` on macOS) |
+| Toggle Vi Mode | `Ctrl+E` (`⌘E` on macOS) / `F4` |
 | Preferences / Settings | `Ctrl+,` (`⌘,` on macOS) |
 | Zoom In | `Ctrl+=` / `Ctrl++` (`⌘=` on macOS) |
 | Zoom Out | `Ctrl+-` (`⌘-` on macOS) |
@@ -268,7 +268,7 @@ In the desktop GUI, hold the `Alt` key (Option on macOS) while dragging the mous
 
 ### Vi / Vim Mode Commands (Normal, Visual, Visual Line & Visual Block Modes)
 
-Toggle Vi Mode with `Ctrl+I` (`⌘I` on macOS) or via `View > [x] Vi Mode`. When active, a Vim-standard 2-row bottom bar appears across both GUI and TUI: the upper row displays status indicators, while the bottom row serves as a dedicated command line (`:`) and message feedback area.
+Toggle Vi Mode with `Ctrl+E` (`⌘E` on macOS) / `F4` or via `View > [x] Vi Mode`. When active, a Vim-standard 2-row bottom bar appears across both GUI and TUI: the upper row displays status indicators, while the bottom row serves as a dedicated command line (`:`) and message feedback area.
 
 > **POSIX Compliance Roadmap & Pending Features**: For detailed implementation status and the roadmap towards full POSIX.1-2017 `vi`/`ex` compatibility, see [`docs/POSIX_VI_COMPLIANCE.md`](docs/POSIX_VI_COMPLIANCE.md).
 > - **Currently Implemented**: Standard motions (`h/j/k/l`, `w/b/e`, `W/B/E`, `0/^/$`, `+/-`, `G/gg`, `H/M/L`, `( / )`, `{ / }`, `%`), counts (`[count]`), inline search (`f/F/t/T/,/;`), marks (`m`, `'`, `` ` ``), operators & delete (`d`, `c`, `y`, `p`, `P`), substitution (`:[range]s/pat/repl/[flags]`), and Ex file/window management.

@@ -479,7 +479,7 @@ impl App {
                 MenuItem::Separator,
                 MenuItem::Toggle { label: i18n.get("menu.view.line_numbers").to_string(), action: Action::ToggleLineNumbers, checked: config.line_numbers, is_radio: false },
                 MenuItem::Toggle { label: i18n.get("menu.view.word_wrap").to_string(), action: Action::ToggleWordWrap, checked: config.word_wrap, is_radio: false },
-                MenuItem::Toggle { label: i18n.get("menu.view.vi_mode").to_string(), action: Action::ToggleViMode, checked: config.vi_mode, is_radio: false },
+                MenuItem::Toggle { label: format!("{} (Ctrl+E)", i18n.get("menu.view.vi_mode")), action: Action::ToggleViMode, checked: config.vi_mode, is_radio: false },
                 MenuItem::Separator,
                 MenuItem::Submenu { label: i18n.get("menu.view.encoding").to_string(), menu: Menu::new(i18n.get("menu.view.encoding"), vec![
                     MenuItem::Submenu { label: i18n.get("menu.view.reopen_with_encoding").to_string(), menu: Menu::new(i18n.get("menu.view.reopen_with_encoding"), reopen_items)},
@@ -802,6 +802,12 @@ impl App {
             return;
         }
 
+        // F4 toggles Vi mode globally
+        if key.code == KeyCode::F(4) {
+            self.perform_action(Action::ToggleViMode);
+            return;
+        }
+
         // Global shortcuts (Ctrl+...) only if not in a dialog
         if self.focus != Focus::Dialog && key.modifiers == KeyModifiers::CONTROL {
             match key.code {
@@ -821,7 +827,7 @@ impl App {
                 KeyCode::Char('r') => { self.perform_action(Action::Replace); return; }
                 KeyCode::Char('b') => { self.perform_action(Action::ToggleSidebar); return; }
                 KeyCode::Char('h') => { self.perform_action(Action::About); return; }
-                KeyCode::Char('i') => { self.perform_action(Action::ToggleViMode); return; }
+                KeyCode::Char('e') => { self.perform_action(Action::ToggleViMode); return; }
                 KeyCode::Char(',') => { self.perform_action(Action::OpenSettings); return; }
                 KeyCode::Tab | KeyCode::PageDown | KeyCode::Char(']') => {
                     self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
@@ -920,6 +926,10 @@ impl App {
                     }
                     self.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Outline;
                     self.focus = Focus::Sidebar;
+                    return;
+                }
+                KeyCode::Char('i') | KeyCode::Char('I') => {
+                    self.perform_action(Action::ToggleViMode);
                     return;
                 }
                 _ => {}
@@ -2062,6 +2072,12 @@ impl App {
                 }
             }
             KeyCode::Esc => {
+                let had_pending = self.pending_d || self.pending_y || self.pending_c || self.pending_g
+                    || self.pending_r || self.pending_f || self.pending_capital_f || self.pending_t
+                    || self.pending_capital_t || self.pending_m || self.pending_single_quote
+                    || self.pending_backtick || self.count > 0 || self.pending_op_count > 0;
+                let had_selection = self.buffers.get(self.active_buffer).map_or(false, |b| b.selection.is_some());
+
                 self.count = 0;
                 self.pending_op_count = 0;
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -2080,6 +2096,14 @@ impl App {
                 self.pending_m = false;
                 self.pending_single_quote = false;
                 self.pending_backtick = false;
+
+                if !had_pending && !had_selection && self.layout.panel_height > 0 {
+                    self.layout.panel_height = 0;
+                    self.recompute_layout();
+                    if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        buffer.search_status = None;
+                    }
+                }
             }
             KeyCode::Enter => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -2426,7 +2450,9 @@ impl App {
                 match code {
                     KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down |
                     KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
-                        self.handle_editor_key(key);
+                        let mut v_key = key;
+                        v_key.modifiers.insert(KeyModifiers::SHIFT);
+                        self.handle_editor_key(v_key);
                     }
                     _ => {}
                 }
@@ -2783,65 +2809,117 @@ impl App {
 
 
     fn handle_editor_key(&mut self, key: KeyEvent) {
-        let buffer = if let Some(b) = self.buffers.get_mut(self.active_buffer) {
-            b
-        } else {
-            return;
-        };
-
         let extend_selection = key.modifiers.contains(KeyModifiers::SHIFT);
 
         match key.code {
-            KeyCode::Left => buffer.move_cursor_left(extend_selection),
-            KeyCode::Right => buffer.move_cursor_right(extend_selection),
+            KeyCode::Esc => {
+                if self.layout.panel_height > 0 {
+                    self.layout.panel_height = 0;
+                    self.recompute_layout();
+                    if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        buffer.search_status = None;
+                    }
+                } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.selection = None;
+                    buffer.selection_anchor = None;
+                }
+            }
+            KeyCode::Left => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_cursor_left(extend_selection);
+                }
+            }
+            KeyCode::Right => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_cursor_right(extend_selection);
+                }
+            }
             KeyCode::Up => {
                 if self.config.word_wrap {
                     self.move_cursor_vup(extend_selection);
-                } else {
+                } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     buffer.move_cursor_up(extend_selection);
                 }
             }
             KeyCode::Down => {
                 if self.config.word_wrap {
                     self.move_cursor_vdown(extend_selection);
-                } else {
+                } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     buffer.move_cursor_down(extend_selection);
                 }
             }
-            KeyCode::Home => buffer.move_cursor_home(extend_selection),
-            KeyCode::End => buffer.move_cursor_end(extend_selection),
+            KeyCode::Home => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_cursor_home(extend_selection);
+                }
+            }
+            KeyCode::End => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.move_cursor_end(extend_selection);
+                }
+            }
+            KeyCode::PageUp => {
+                for _ in 0..20 {
+                    if self.config.word_wrap {
+                        self.move_cursor_vup(extend_selection);
+                    } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        buffer.move_cursor_up(extend_selection);
+                    }
+                }
+            }
+            KeyCode::PageDown => {
+                for _ in 0..20 {
+                    if self.config.word_wrap {
+                        self.move_cursor_vdown(extend_selection);
+                    } else if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        buffer.move_cursor_down(extend_selection);
+                    }
+                }
+            }
             KeyCode::Char(c)
                 if (key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT) => {
-                    if let Some(selection) = buffer.selection.take() {
-                        buffer.delete(selection);
+                    if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        if let Some(selection) = buffer.selection.take() {
+                            buffer.delete(selection);
+                        }
+                        buffer.insert(buffer.cursor, &c.to_string());
                     }
-                    buffer.insert(buffer.cursor, &c.to_string());
                 }
             KeyCode::Backspace => {
-                if let Some(selection) = buffer.selection.take() {
-                    buffer.delete(selection);
-                } else if buffer.cursor > 0 {
-                    buffer.delete((buffer.cursor - 1)..buffer.cursor);
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(selection) = buffer.selection.take() {
+                        buffer.delete(selection);
+                    } else if buffer.cursor > 0 {
+                        buffer.delete((buffer.cursor - 1)..buffer.cursor);
+                    }
                 }
             }
             KeyCode::Delete => {
-                if let Some(selection) = buffer.selection.take() {
-                    buffer.delete(selection);
-                } else if buffer.cursor < buffer.rope.len_chars() {
-                    buffer.delete(buffer.cursor..(buffer.cursor + 1));
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(selection) = buffer.selection.take() {
+                        buffer.delete(selection);
+                    } else if buffer.cursor < buffer.rope.len_chars() {
+                        buffer.delete(buffer.cursor..(buffer.cursor + 1));
+                    }
                 }
             }
             KeyCode::Enter => {
-                if let Some(selection) = buffer.selection.take() {
-                    buffer.delete(selection);
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(selection) = buffer.selection.take() {
+                        buffer.delete(selection);
+                    }
+                    buffer.insert(buffer.cursor, "\n");
                 }
-                buffer.insert(buffer.cursor, "\n");
             }
             KeyCode::Tab => {
-                if let Some(selection) = buffer.selection.take() {
-                    buffer.delete(selection);
+                let tab_size = self.config.tab_size.max(1);
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(selection) = buffer.selection.take() {
+                        buffer.delete(selection);
+                    }
+                    let indent = " ".repeat(tab_size);
+                    buffer.insert(buffer.cursor, &indent);
                 }
-                buffer.insert(buffer.cursor, "    ");
             }
             _ => {}
         }
@@ -4068,6 +4146,16 @@ impl App {
                 self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
             }
             Action::ToggleViMode => {
+                if self.layout.panel_height > 0 {
+                    self.layout.panel_height = 0;
+                    if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                        buffer.search_status = None;
+                    }
+                    if self.focus == Focus::Panel {
+                        self.focus = Focus::Editor;
+                    }
+                }
+
                 self.config.vi_mode = !self.config.vi_mode;
                 self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
                 
@@ -5958,6 +6046,41 @@ mod tests {
     }
 
     #[test]
+    fn test_find_panel_auto_closes_on_vi_mode_toggle() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        assert!(!app.config.vi_mode);
+
+        // Open Find panel with Ctrl+F
+        app.handle_key(make_ctrl_key(KeyCode::Char('f')));
+        assert_eq!(app.focus, Focus::Panel);
+        assert!(app.layout.panel_height > 0);
+
+        // Toggle Vi mode ON with Ctrl+E -> search panel automatically closes!
+        app.handle_key(make_ctrl_key(KeyCode::Char('e')));
+        assert!(app.config.vi_mode);
+        assert_eq!(app.layout.panel_height, 0);
+        assert_eq!(app.focus, Focus::Editor);
+
+        // Toggle Vi mode back to standard mode with Ctrl+E
+        app.handle_key(make_ctrl_key(KeyCode::Char('e')));
+        assert!(!app.config.vi_mode);
+        assert_eq!(app.layout.panel_height, 0);
+        assert_eq!(app.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn test_find_panel_esc_closes_from_editor_focus() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.handle_key(make_ctrl_key(KeyCode::Char('f')));
+        assert!(app.layout.panel_height > 0);
+
+        // Switch focus to Editor (simulating clicking editor)
+        app.focus = Focus::Editor;
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.layout.panel_height, 0);
+    }
+
+    #[test]
     fn test_menu_submenu_navigation() {
         let mut app = App::new(vec![]).expect("Failed to init App");
 
@@ -6299,19 +6422,16 @@ mod tests {
         let (line_l, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
         assert_eq!(line_l, 10 + (eh as usize).saturating_sub(1));
 
-        // Ctrl-E scrolls down 1 line
-        let old_scroll = app.buffers[0].scroll_row;
-        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL));
-        assert_eq!(app.buffers[0].scroll_row, old_scroll + 1);
-
         // Ctrl-Y scrolls up 1 line
+        let old_scroll = app.buffers[0].scroll_row;
         app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
-        assert_eq!(app.buffers[0].scroll_row, old_scroll);
+        assert_eq!(app.buffers[0].scroll_row, old_scroll.saturating_sub(1));
     }
 
     #[test]
     fn test_standard_editor_typing_and_navigation() {
         let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.tab_size = 4;
         assert!(!app.config.vi_mode);
         assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert);
 
@@ -6355,6 +6475,28 @@ mod tests {
         // Tab key inserts 4 spaces
         app.handle_key(make_key(KeyCode::Tab));
         assert_eq!(app.buffers[0].rope.to_string(), "Hello\norld    ");
+
+        // Add 30 lines to test PageUp and PageDown
+        for i in 0..30 {
+            let line = format!("\nLine {}", i);
+            let len = app.buffers[0].rope.len_chars();
+            app.buffers[0].insert(len, &line);
+        }
+        let last_line = app.buffers[0].line_count() - 1;
+        let last_col = app.buffers[0].get_line_max_col(last_line);
+        app.buffers[0].cursor = app.buffers[0].line_col_to_char(last_line, last_col);
+        let (cur_line_before, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(cur_line_before, 31);
+
+        // PageUp moves up 20 lines
+        app.handle_key(make_key(KeyCode::PageUp));
+        let (cur_line_up, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(cur_line_up, 11);
+
+        // PageDown moves down 20 lines
+        app.handle_key(make_key(KeyCode::PageDown));
+        let (cur_line_down, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(cur_line_down, 31);
     }
 
     #[test]
@@ -6841,6 +6983,120 @@ mod tests {
 
         assert_eq!(app.config.show_hidden, !initial_hidden);
         assert_eq!(app.sidebar.file_tree.show_hidden, !initial_hidden);
+    }
+
+    #[test]
+    fn test_tui_tab_key_inserts_spaces_matching_tab_size() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.focus = Focus::Editor;
+        app.config.tab_size = 2;
+
+        // Press Tab in standard editor
+        app.handle_key(make_key(KeyCode::Tab));
+        let buffer = app.buffers.get(app.active_buffer).unwrap();
+        assert_eq!(buffer.rope.to_string(), "  ");
+
+        // Change tab_size to 4 and press Tab again
+        app.config.tab_size = 4;
+        app.handle_key(make_key(KeyCode::Tab));
+        let buffer = app.buffers.get(app.active_buffer).unwrap();
+        assert_eq!(buffer.rope.to_string(), "      ");
+    }
+
+    #[test]
+    fn test_tui_ctrl_e_toggles_vi_mode() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.focus = Focus::Editor;
+        assert!(!app.config.vi_mode);
+        assert_eq!(app.buffers[app.active_buffer].vi_mode, zee_core::ViMode::Insert);
+
+        // Press Ctrl+E to turn Vi mode ON
+        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert!(app.config.vi_mode);
+        assert_eq!(app.buffers[app.active_buffer].vi_mode, zee_core::ViMode::Normal);
+
+        // Press Ctrl+E again to turn Vi mode OFF
+        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert!(!app.config.vi_mode);
+        assert_eq!(app.buffers[app.active_buffer].vi_mode, zee_core::ViMode::Insert);
+
+        // Also test F4 toggle
+        app.handle_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE));
+        assert!(app.config.vi_mode);
+        assert_eq!(app.buffers[app.active_buffer].vi_mode, zee_core::ViMode::Normal);
+
+        app.handle_key(KeyEvent::new(KeyCode::F(4), KeyModifiers::NONE));
+        assert!(!app.config.vi_mode);
+        assert_eq!(app.buffers[app.active_buffer].vi_mode, zee_core::ViMode::Insert);
+    }
+
+    #[test]
+    fn test_tui_page_up_down_home_end_navigation() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.focus = Focus::Editor;
+
+        // Populate multi-line content
+        for i in 0..50 {
+            let line = format!("Line {:02} test content\n", i);
+            let len = app.buffers[0].rope.len_chars();
+            app.buffers[0].insert(len, &line);
+        }
+
+        // 1. Standard mode: Home and End
+        app.buffers[0].cursor = 5; // Middle of Line 0
+        app.handle_key(make_key(KeyCode::Home));
+        assert_eq!(app.buffers[0].cursor, 0);
+
+        app.handle_key(make_key(KeyCode::End));
+        let (_, col_end) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(col_end, 20); // Length of "Line 00 test content"
+
+        // Standard mode: PageDown and PageUp
+        app.handle_key(make_key(KeyCode::PageDown));
+        let (line_pd, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_pd, 20);
+
+        app.handle_key(make_key(KeyCode::PageUp));
+        let (line_pu, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_pu, 0);
+
+        // 2. Vi Normal Mode: Home, End, PageDown, PageUp
+        app.perform_action(Action::ToggleViMode);
+        assert!(app.config.vi_mode);
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Normal);
+
+        app.buffers[0].cursor = 8;
+        app.handle_key(make_key(KeyCode::Home));
+        assert_eq!(app.buffers[0].cursor, 0);
+
+        app.handle_key(make_key(KeyCode::End));
+        let (_, col_vi_end) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(col_vi_end, 20);
+
+        app.handle_key(make_key(KeyCode::PageDown));
+        let (line_vi_pd, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_vi_pd, 20);
+
+        app.handle_key(make_key(KeyCode::PageUp));
+        let (line_vi_pu, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_vi_pu, 0);
+
+        // 3. Vi Visual Mode: Home, End, PageDown, PageUp with selection expansion
+        app.handle_key(make_key(KeyCode::Char('v')));
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Visual);
+
+        app.handle_key(make_key(KeyCode::End));
+        assert!(app.buffers[0].selection.is_some());
+
+        app.handle_key(make_key(KeyCode::PageDown));
+        let (line_v_pd, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_v_pd, 20);
+        assert!(app.buffers[0].selection.is_some());
+
+        app.handle_key(make_key(KeyCode::PageUp));
+        let (line_v_pu, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
+        assert_eq!(line_v_pu, 0);
+        assert!(app.buffers[0].selection.is_some());
     }
 }
 

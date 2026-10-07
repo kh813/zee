@@ -964,5 +964,125 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[test]
+    fn test_workspace_toggle_vi_mode_preserves_cursor_position() {
+        let mut workspace = Workspace::new(Config::default());
+        let editor = workspace.active_editor_mut().unwrap();
+        editor.insert(0, "Hello, Vi Mode World!\nSecond Line Test");
+        // Place cursor at col 7 ("Vi Mode World!")
+        editor.cursor = 7;
+        let (line_before, col_before) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_before, 0);
+        assert_eq!(col_before, 7);
+
+        // 1. Toggle Vi mode ON (Insert -> Normal)
+        workspace.config.vi_mode = true;
+        let vi_mode = workspace.config.vi_mode;
+        for e in workspace.editors.iter_mut() {
+            e.vi_mode = if vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+            e.selection = None;
+            e.selection_anchor = None;
+            e.ensure_cursor_visible(30, 80, workspace.config.word_wrap);
+        }
+
+        let editor = workspace.active_editor().unwrap();
+        assert_eq!(editor.vi_mode, zee_core::ViMode::Normal);
+        assert_eq!(editor.cursor, 7);
+        let (line_vi, col_vi) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_vi, 0);
+        assert_eq!(col_vi, 7);
+
+        // 2. Toggle Vi mode OFF (Normal -> Insert)
+        workspace.config.vi_mode = false;
+        let vi_mode = workspace.config.vi_mode;
+        for e in workspace.editors.iter_mut() {
+            e.vi_mode = if vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
+            e.selection = None;
+            e.selection_anchor = None;
+            e.ensure_cursor_visible(30, 80, workspace.config.word_wrap);
+        }
+
+        let editor = workspace.active_editor().unwrap();
+        assert_eq!(editor.vi_mode, zee_core::ViMode::Insert);
+        assert_eq!(editor.cursor, 7);
+        let (line_after, col_after) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_after, 0);
+        assert_eq!(col_after, 7);
+    }
+
+    #[test]
+    fn test_workspace_page_up_down_home_end_motions() {
+        let mut workspace = Workspace::new(Config::default());
+        let editor = workspace.active_editor_mut().unwrap();
+
+        // Create 50 lines
+        let mut content = String::new();
+        for i in 0..50 {
+            content.push_str(&format!("Line {:02} hello world\n", i));
+        }
+        editor.insert(0, &content);
+        assert_eq!(editor.line_count(), 51);
+
+        // 1. Home and End in standard mode
+        editor.cursor = 10;
+        editor.move_cursor_home(false);
+        assert_eq!(editor.cursor, 0);
+
+        editor.move_cursor_end(false);
+        let (line_0, col_end) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_0, 0);
+        assert_eq!(col_end, 19); // Length of "Line 00 hello world"
+
+        // 2. PageDown and PageUp in standard mode
+        for _ in 0..20 {
+            editor.move_cursor_down(false);
+        }
+        let (line_down, _) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_down, 20);
+
+        for _ in 0..20 {
+            editor.move_cursor_up(false);
+        }
+        let (line_up, _) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_up, 0);
+
+        // 3. Selection with Shift / Visual mode
+        editor.cursor = 0;
+        editor.selection_anchor = Some(0);
+        editor.move_cursor_end(true);
+        assert!(editor.selection.is_some());
+        assert_eq!(editor.cursor, 19);
+
+        for _ in 0..20 {
+            editor.move_cursor_down(true);
+        }
+        let (line_v_down, _) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_v_down, 20);
+        assert!(editor.selection.is_some());
+
+        for _ in 0..20 {
+            editor.move_cursor_up(true);
+        }
+        let (line_v_up, _) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_v_up, 0);
+
+        // Moving back to home (offset 0) matches anchor 0, so selection becomes empty
+        editor.move_cursor_home(true);
+        assert_eq!(editor.cursor, 0);
+
+        // 4. Vi mode toggle and preserve navigation
+        workspace.config.vi_mode = true;
+        let editor = workspace.active_editor_mut().unwrap();
+        editor.vi_mode = zee_core::ViMode::Normal;
+        editor.selection = None;
+        editor.cursor = 15;
+
+        editor.move_cursor_home(false);
+        assert_eq!(editor.cursor, 0);
+
+        editor.move_cursor_end(false);
+        assert_eq!(editor.cursor, 19);
+    }
 }
 

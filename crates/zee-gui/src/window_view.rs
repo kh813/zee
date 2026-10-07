@@ -738,6 +738,12 @@ impl WindowView {
         self.find_panel.update(cx, |p, cx| p.show(true, window, cx));
     }
 
+    fn handle_close_find(&mut self, _: &CloseFind, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.find_panel.read(cx).is_visible() {
+            self.find_panel.update(cx, |p, cx| p.hide(cx));
+        }
+    }
+
     fn handle_toggle_sidebar(&mut self, _: &ToggleSidebar, _window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.update(cx, |w, cx| {
             w.toggle_sidebar();
@@ -800,17 +806,26 @@ impl WindowView {
         cx.notify();
     }
 
-    fn handle_toggle_vi_mode(&mut self, _: &ToggleViMode, _window: &mut Window, cx: &mut Context<Self>) {
+    fn handle_toggle_vi_mode(&mut self, _: &ToggleViMode, window: &mut Window, cx: &mut Context<Self>) {
+        if self.find_panel.read(cx).is_visible() {
+            self.find_panel.update(cx, |p, cx| p.hide(cx));
+        }
+
         self.config.vi_mode = !self.config.vi_mode;
         let vi_mode = self.config.vi_mode;
         self.workspace.update(cx, |w, cx| {
             w.config.vi_mode = vi_mode;
+            let word_wrap = w.config.word_wrap;
             for editor in w.editors.iter_mut() {
                 editor.vi_mode = if vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
                 editor.selection = None;
                 editor.selection_anchor = None;
+                editor.ensure_cursor_visible(30, 80, word_wrap);
             }
             cx.notify();
+        });
+        self.editor.update(cx, |editor, cx| {
+            editor.focus_handle.focus(window, cx);
         });
         #[cfg(target_os = "macos")]
         cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
@@ -1367,6 +1382,7 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_to_camel_case))
             .on_action(cx.listener(Self::handle_find))
             .on_action(cx.listener(Self::handle_replace))
+            .on_action(cx.listener(Self::handle_close_find))
             .on_action(cx.listener(Self::handle_toggle_sidebar))
             .on_action(cx.listener(Self::handle_toggle_outline))
             .on_action(cx.listener(Self::handle_toggle_files))

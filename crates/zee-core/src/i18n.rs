@@ -383,6 +383,18 @@ impl I18n {
         m.insert("gdrive.open".to_string(), "Open".to_string());
         m.insert("gdrive.cancel".to_string(), "Cancel".to_string());
         m.insert("gdrive.search_placeholder".to_string(), "Search Google Drive...".to_string());
+        m.insert("gdrive.setup_title".to_string(), "Google Drive API Setup (Required)".to_string());
+        m.insert("gdrive.setup_desc".to_string(), "To connect Zee to your Google Drive directly, please provide an OAuth 2.0 Client ID from Google Cloud Console:".to_string());
+        m.insert("gdrive.step1".to_string(), "1. Open Google Cloud Console and create or select a project.".to_string());
+        m.insert("gdrive.step2".to_string(), "2. Enable 'Google Drive API' in Enabled APIs & Services.".to_string());
+        m.insert("gdrive.step3".to_string(), "3. Go to Credentials -> Create Credentials -> OAuth client ID -> Desktop App.".to_string());
+        m.insert("gdrive.open_gcp_btn".to_string(), "Open Google Cloud Console ↗".to_string());
+        m.insert("gdrive.client_id_label".to_string(), "OAuth Client ID:".to_string());
+        m.insert("gdrive.client_secret_label".to_string(), "OAuth Client Secret:".to_string());
+        m.insert("gdrive.save_and_connect".to_string(), "Save & Connect".to_string());
+        m.insert("gdrive.configure_api".to_string(), "Configure API Keys…".to_string());
+        m.insert("gdrive.credentials_missing".to_string(), "Client ID is required to start authentication.".to_string());
+        m.insert("gdrive.cancel_wait".to_string(), "Cancel Authentication".to_string());
         m
     }
 
@@ -603,6 +615,18 @@ impl I18n {
         m.insert("gdrive.open".to_string(), "開く".to_string());
         m.insert("gdrive.cancel".to_string(), "キャンセル".to_string());
         m.insert("gdrive.search_placeholder".to_string(), "Google ドライブ内を検索...".to_string());
+        m.insert("gdrive.setup_title".to_string(), "Google Drive API 設定 (初回のみ)".to_string());
+        m.insert("gdrive.setup_desc".to_string(), "zeeからGoogleドライブへ安全に直接アクセスするために、Google Cloud Consoleで作成したOAuth 2.0 クライアント ID を入力してください:".to_string());
+        m.insert("gdrive.step1".to_string(), "1. Google Cloud Consoleを開き、プロジェクトを作成または選択します。".to_string());
+        m.insert("gdrive.step2".to_string(), "2. 「APIとサービス」→「Google Drive API」を有効化します。".to_string());
+        m.insert("gdrive.step3".to_string(), "3. 「認証情報」→「認証情報を作成」→「OAuth クライアント ID」で種類を「デスクトップ アプリ」にして作成します。".to_string());
+        m.insert("gdrive.open_gcp_btn".to_string(), "Google Cloud Console を開く ↗".to_string());
+        m.insert("gdrive.client_id_label".to_string(), "OAuth クライアント ID:".to_string());
+        m.insert("gdrive.client_secret_label".to_string(), "クライアント シークレット:".to_string());
+        m.insert("gdrive.save_and_connect".to_string(), "保存して接続する".to_string());
+        m.insert("gdrive.configure_api".to_string(), "API設定・キー変更…".to_string());
+        m.insert("gdrive.credentials_missing".to_string(), "認証を開始するにはクライアント ID を入力してください。".to_string());
+        m.insert("gdrive.cancel_wait".to_string(), "認証を中止".to_string());
         m
     }
 

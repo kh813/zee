@@ -80,6 +80,10 @@ pub struct Dialog {
     gdrive_current_folder_id: Option<String>,
     gdrive_folder_stack: Vec<(Option<String>, String)>, // (id, display_name)
     gdrive_search_query: String,
+    gdrive_show_setup: bool,
+    gdrive_client_id_input: String,
+    gdrive_client_secret_input: String,
+    gdrive_setup_active_input: usize, // 0 for client_id, 1 for client_secret
 }
 
 #[derive(Clone)]
@@ -145,6 +149,10 @@ impl Dialog {
             gdrive_current_folder_id: None,
             gdrive_folder_stack: vec![(None, "My Drive".to_string())],
             gdrive_search_query: String::new(),
+            gdrive_show_setup: false,
+            gdrive_client_id_input: zee_core::gdrive::GDriveManager::get_client_id().unwrap_or_default(),
+            gdrive_client_secret_input: zee_core::gdrive::GDriveManager::get_client_secret().unwrap_or_default(),
+            gdrive_setup_active_input: 0,
         };
         this.refresh_files();
         if is_update {
@@ -153,6 +161,8 @@ impl Dialog {
         if matches!(this.dialog_type, DialogType::GoogleDrive) {
             if zee_core::gdrive::GDriveManager::is_authenticated() {
                 this.load_gdrive_files(cx);
+            } else if !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+                this.gdrive_show_setup = true;
             }
         }
         this
@@ -377,7 +387,32 @@ impl Dialog {
         }).detach();
     }
 
+    fn save_gdrive_setup_and_connect(&mut self, cx: &mut Context<Self>) {
+        let client_id = self.gdrive_client_id_input.trim();
+        let client_secret = self.gdrive_client_secret_input.trim();
+        if client_id.is_empty() {
+            self.gdrive_error = Some(self.i18n.get("gdrive.credentials_missing").to_string());
+            cx.notify();
+            return;
+        }
+
+        let _ = zee_core::config::Config::save_gdrive_credentials(client_id, client_secret);
+        self.workspace.update(cx, |w, _| {
+            w.config.gdrive_client_id = Some(client_id.to_string());
+            w.config.gdrive_client_secret = if client_secret.is_empty() { None } else { Some(client_secret.to_string()) };
+        });
+
+        self.gdrive_show_setup = false;
+        self.start_gdrive_auth(cx);
+    }
+
     fn start_gdrive_auth(&mut self, cx: &mut Context<Self>) {
+        if !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+            self.gdrive_show_setup = true;
+            cx.notify();
+            return;
+        }
+
         if self.gdrive_loading {
             return;
         }
@@ -517,6 +552,8 @@ impl Dialog {
                     } else {
                         self.button_idx = (self.button_idx + 1) % 3;
                     }
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive) && self.gdrive_show_setup {
+                    self.gdrive_setup_active_input = (self.gdrive_setup_active_input + 1) % 2;
                 }
             }
             "left" => {
@@ -536,7 +573,11 @@ impl Dialog {
                         self.input_text = self.files[self.selected_idx].name.clone();
                     }
                 } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
-                    self.gdrive_selected_idx = self.gdrive_selected_idx.saturating_sub(1);
+                    if self.gdrive_show_setup {
+                        self.gdrive_setup_active_input = 0;
+                    } else {
+                        self.gdrive_selected_idx = self.gdrive_selected_idx.saturating_sub(1);
+                    }
                 }
             }
             "down" => {
@@ -544,9 +585,12 @@ impl Dialog {
                     && !self.files.is_empty() {
                         self.selected_idx = (self.selected_idx + 1).min(self.files.len() - 1);
                         self.input_text = self.files[self.selected_idx].name.clone();
-                } else if matches!(self.dialog_type, DialogType::GoogleDrive)
-                    && !self.gdrive_items.is_empty() {
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
+                    if self.gdrive_show_setup {
+                        self.gdrive_setup_active_input = 1;
+                    } else if !self.gdrive_items.is_empty() {
                         self.gdrive_selected_idx = (self.gdrive_selected_idx + 1).min(self.gdrive_items.len() - 1);
+                    }
                 }
             }
             "v" if event.keystroke.modifiers.platform || event.keystroke.modifiers.control => {
@@ -554,8 +598,16 @@ impl Dialog {
                     if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
                         self.plugin_new_repo_url.push_str(text.trim());
                     } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
-                        self.gdrive_search_query.push_str(text.trim());
-                        self.load_gdrive_files(cx);
+                        if self.gdrive_show_setup {
+                            if self.gdrive_setup_active_input == 0 {
+                                self.gdrive_client_id_input.push_str(text.trim());
+                            } else {
+                                self.gdrive_client_secret_input.push_str(text.trim());
+                            }
+                        } else {
+                            self.gdrive_search_query.push_str(text.trim());
+                            self.load_gdrive_files(cx);
+                        }
                     } else {
                         self.input_text.push_str(text.trim());
                     }
@@ -570,7 +622,13 @@ impl Dialog {
                         self.refresh_files();
                     }
                 } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
-                    if !self.gdrive_search_query.is_empty() {
+                    if self.gdrive_show_setup {
+                        if self.gdrive_setup_active_input == 0 {
+                            self.gdrive_client_id_input.pop();
+                        } else {
+                            self.gdrive_client_secret_input.pop();
+                        }
+                    } else if !self.gdrive_search_query.is_empty() {
                         self.gdrive_search_query.pop();
                         self.load_gdrive_files(cx);
                     } else if self.gdrive_folder_stack.len() > 1 {
@@ -593,7 +651,11 @@ impl Dialog {
                         self.fetch_online_plugins(cx);
                     }
                 } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
-                    self.open_selected_gdrive_item(cx);
+                    if self.gdrive_show_setup {
+                        self.save_gdrive_setup_and_connect(cx);
+                    } else {
+                        self.open_selected_gdrive_item(cx);
+                    }
                 } else if let DialogType::UnsavedChanges { intent, .. } = &self.dialog_type {
                     match self.button_idx {
                         0 => {
@@ -614,6 +676,8 @@ impl Dialog {
                 if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
                     self.plugin_show_add_repo = false;
                     self.plugin_new_repo_url.clear();
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive) && self.gdrive_show_setup {
+                    self.gdrive_show_setup = false;
                 } else if self.settings_dropdown.is_some() {
                     self.settings_dropdown = None;
                 } else {
@@ -624,8 +688,16 @@ impl Dialog {
                 if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
                     self.plugin_new_repo_url.push_str(k);
                 } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
-                    self.gdrive_search_query.push_str(k);
-                    self.load_gdrive_files(cx);
+                    if self.gdrive_show_setup {
+                        if self.gdrive_setup_active_input == 0 {
+                            self.gdrive_client_id_input.push_str(k);
+                        } else {
+                            self.gdrive_client_secret_input.push_str(k);
+                        }
+                    } else {
+                        self.gdrive_search_query.push_str(k);
+                        self.load_gdrive_files(cx);
+                    }
                 } else {
                     self.input_text.push_str(k);
                 }
@@ -3614,8 +3686,188 @@ impl Dialog {
                             )
                     );
 
-                if !is_auth {
-                    // Not authenticated view
+                if self.gdrive_show_setup || !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+                    // API Configuration & Step-by-Step Guide View
+                    let step_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
+                    let input_border_0 = if self.gdrive_setup_active_input == 0 { accent } else { border_color };
+                    let input_border_1 = if self.gdrive_setup_active_input == 1 { accent } else { border_color };
+
+                    content = content.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .py_1()
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(self.i18n.get("gdrive.setup_title").to_string())
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(with_alpha(fg, 0.8))
+                                    .child(self.i18n.get("gdrive.setup_desc").to_string())
+                            )
+                            // Guide Box
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1p5()
+                                    .p_3()
+                                    .rounded_md()
+                                    .bg(step_bg)
+                                    .border_1()
+                                    .border_color(border_color)
+                                    .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.9)).child(self.i18n.get("gdrive.step1").to_string()))
+                                    .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.9)).child(self.i18n.get("gdrive.step2").to_string()))
+                                    .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.9)).child(self.i18n.get("gdrive.step3").to_string()))
+                                    .child(
+                                        div()
+                                            .pt_1()
+                                            .child(
+                                                div()
+                                                    .text_size(px(11.5))
+                                                    .text_color(accent)
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.opacity(0.8))
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, _| {
+                                                        let _ = zee_core::selfupdate::open_url("https://console.cloud.google.com/apis/credentials");
+                                                    }))
+                                                    .child(self.i18n.get("gdrive.open_gcp_btn").to_string())
+                                            )
+                                    )
+                            )
+                            // Form inputs
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.7)).child(self.i18n.get("gdrive.client_id_label").to_string()))
+                                            .child(
+                                                div()
+                                                    .h(px(28.0))
+                                                    .bg(input_bg)
+                                                    .border_1()
+                                                    .border_color(input_border_0)
+                                                    .rounded_md()
+                                                    .px_2()
+                                                    .flex()
+                                                    .items_center()
+                                                    .cursor_pointer()
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                        this.gdrive_setup_active_input = 0;
+                                                        cx.notify();
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.5))
+                                                            .child(if self.gdrive_client_id_input.is_empty() {
+                                                                div().text_color(with_alpha(fg, 0.4)).child("123456789-...apps.googleusercontent.com")
+                                                            } else {
+                                                                div().child(self.gdrive_client_id_input.clone())
+                                                            })
+                                                    )
+                                            )
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.7)).child(self.i18n.get("gdrive.client_secret_label").to_string()))
+                                            .child(
+                                                div()
+                                                    .h(px(28.0))
+                                                    .bg(input_bg)
+                                                    .border_1()
+                                                    .border_color(input_border_1)
+                                                    .rounded_md()
+                                                    .px_2()
+                                                    .flex()
+                                                    .items_center()
+                                                    .cursor_pointer()
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                        this.gdrive_setup_active_input = 1;
+                                                        cx.notify();
+                                                    }))
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.5))
+                                                            .child(if self.gdrive_client_secret_input.is_empty() {
+                                                                div().text_color(with_alpha(fg, 0.4)).child("GOCSPX-...")
+                                                            } else {
+                                                                div().child("•".repeat(self.gdrive_client_secret_input.len().min(30)))
+                                                            })
+                                                    )
+                                            )
+                                    )
+                            )
+                            .children(self.gdrive_error.as_ref().map(|err| {
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(gpui::rgb(0xff5555))
+                                    .child(err.clone())
+                            }))
+                            // Action buttons
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_end()
+                                    .gap_2()
+                                    .pt_2()
+                                    .children(if zee_core::gdrive::GDriveManager::has_configured_credentials() {
+                                        Some(
+                                            div()
+                                                .h(px(28.0))
+                                                .px_3()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded_md()
+                                                .bg(with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.12))
+                                                .text_size(px(12.0))
+                                                .cursor_pointer()
+                                                .hover(|s| s.opacity(0.8))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                    this.gdrive_show_setup = false;
+                                                    cx.notify();
+                                                }))
+                                                .child(self.i18n.get("dialog.cancel").to_string())
+                                        )
+                                    } else {
+                                        None
+                                    })
+                                    .child(
+                                        div()
+                                            .h(px(28.0))
+                                            .px_4()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_md()
+                                            .bg(accent)
+                                            .text_color(gpui::rgb(0xffffff))
+                                            .text_size(px(12.5))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.save_gdrive_setup_and_connect(cx)))
+                                            .child(self.i18n.get("gdrive.save_and_connect").to_string())
+                                    )
+                            )
+                    );
+                } else if !is_auth {
+                    // Not authenticated view (Credentials are configured, ready to connect)
                     content = content.child(
                         div()
                             .flex()
@@ -3632,24 +3884,30 @@ impl Dialog {
                             )
                             .child(
                                 div()
-                                    .h(px(34.0))
-                                    .px_5()
                                     .flex()
                                     .items_center()
-                                    .justify_center()
-                                    .rounded_md()
-                                    .bg(accent)
-                                    .text_color(gpui::rgb(0xffffff))
-                                    .text_size(px(13.0))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .cursor_pointer()
-                                    .hover(|s| s.opacity(0.9))
-                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.start_gdrive_auth(cx)))
-                                    .child(if self.gdrive_loading {
-                                        self.i18n.get("gdrive.connecting").to_string()
-                                    } else {
-                                        self.i18n.get("gdrive.connect").to_string()
-                                    })
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .h(px(34.0))
+                                            .px_5()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .rounded_md()
+                                            .bg(accent)
+                                            .text_color(gpui::rgb(0xffffff))
+                                            .text_size(px(13.0))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.9))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.start_gdrive_auth(cx)))
+                                            .child(if self.gdrive_loading {
+                                                self.i18n.get("gdrive.connecting").to_string()
+                                            } else {
+                                                self.i18n.get("gdrive.connect").to_string()
+                                            })
+                                    )
                             )
                             .children(self.gdrive_error.as_ref().map(|err| {
                                 div()
@@ -3657,6 +3915,18 @@ impl Dialog {
                                     .text_color(gpui::rgb(0xff5555))
                                     .child(err.clone())
                             }))
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .text_color(with_alpha(fg, 0.6))
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.8))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                        this.gdrive_show_setup = true;
+                                        cx.notify();
+                                    }))
+                                    .child(self.i18n.get("gdrive.configure_api").to_string())
+                            )
                     );
                 } else {
                     // Authenticated file browser view

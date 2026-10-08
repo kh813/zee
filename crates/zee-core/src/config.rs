@@ -26,6 +26,9 @@ pub struct Config {
     pub ui_font_size: f32,
     #[serde(default = "default_plugin_registries")]
     pub plugin_registries: Vec<String>,
+    // Google Drive integration
+    pub gdrive_client_id: Option<String>,
+    pub gdrive_client_secret: Option<String>,
 }
 
 pub fn default_plugin_registries() -> Vec<String> {
@@ -53,6 +56,8 @@ impl Default for Config {
             ui_font_family: None,
             ui_font_size: 12.5,
             plugin_registries: default_plugin_registries(),
+            gdrive_client_id: None,
+            gdrive_client_secret: None,
         }
     }
 }
@@ -133,6 +138,18 @@ impl Config {
                             if !list.is_empty() {
                                 config.plugin_registries = list;
                             }
+                        }
+                    }
+                    "gdrive_client_id" => {
+                        if let Some(s) = v.as_str() {
+                            let s_trim = s.trim();
+                            config.gdrive_client_id = if s_trim.is_empty() { None } else { Some(s_trim.to_string()) };
+                        }
+                    }
+                    "gdrive_client_secret" => {
+                        if let Some(s) = v.as_str() {
+                            let s_trim = s.trim();
+                            config.gdrive_client_secret = if s_trim.is_empty() { None } else { Some(s_trim.to_string()) };
                         }
                     }
                     _ => {}
@@ -218,6 +235,12 @@ impl Config {
 
     pub fn save_show_hidden(show_hidden: bool) -> Result<()> {
         Self::write_key("show_hidden", &show_hidden.to_string())
+    }
+
+    pub fn save_gdrive_credentials(client_id: &str, client_secret: &str) -> Result<()> {
+        Self::write_key("gdrive_client_id", &format!("\"{}\"", client_id.trim()))?;
+        Self::write_key("gdrive_client_secret", &format!("\"{}\"", client_secret.trim()))?;
+        Ok(())
     }
 
     pub fn add_plugin_registry(&mut self, url: &str) -> Result<()> {

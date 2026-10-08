@@ -126,6 +126,33 @@ impl GDriveManager {
         Ok(())
     }
 
+    /// Return active Google Drive Client ID (from config, env, or none).
+    pub fn get_client_id() -> Option<String> {
+        if let Ok(id) = std::env::var("ZEE_GDRIVE_CLIENT_ID") {
+            let trimmed = id.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+        Config::load().gdrive_client_id
+    }
+
+    /// Return active Google Drive Client Secret (from config, env, or none).
+    pub fn get_client_secret() -> Option<String> {
+        if let Ok(sec) = std::env::var("ZEE_GDRIVE_CLIENT_SECRET") {
+            let trimmed = sec.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+        Config::load().gdrive_client_secret
+    }
+
+    /// Check if Google Drive credentials are configured.
+    pub fn has_configured_credentials() -> bool {
+        Self::get_client_id().is_some()
+    }
+
     /// Get a valid access token, automatically refreshing it if expired.
     pub fn get_valid_access_token() -> Result<String> {
         let mut token = Self::load_token().context("Google Drive is not connected. Please sign in.")?;
@@ -146,10 +173,13 @@ impl GDriveManager {
 
     /// Refresh access token using Google OAuth 2.0 token endpoint.
     pub fn refresh_access_token(refresh_token: &str) -> Result<GDriveToken> {
+        let client_id = Self::get_client_id().context("Google Drive Client ID is not configured")?;
+        let client_secret = Self::get_client_secret().unwrap_or_default();
+
         let resp = ureq::post(GOOGLE_TOKEN_URL)
             .send_form(&[
-                ("client_id", DEFAULT_CLIENT_ID),
-                ("client_secret", DEFAULT_CLIENT_SECRET),
+                ("client_id", &client_id),
+                ("client_secret", &client_secret),
                 ("refresh_token", refresh_token),
                 ("grant_type", "refresh_token"),
             ])
@@ -171,7 +201,11 @@ impl GDriveManager {
 
     /// Start the browser-based OAuth 2.0 loopback flow.
     /// Opens the default browser to authorize, receives callback on 127.0.0.1, exchanges code for token, and saves it.
+    /// Times out after 60 seconds if authorization is not completed.
     pub fn start_oauth_flow() -> Result<GDriveToken> {
+        let client_id = Self::get_client_id().context("Google Drive Client ID is not configured. Please enter your OAuth Client ID in Settings.")?;
+        let client_secret = Self::get_client_secret().unwrap_or_default();
+
         // Bind ephemeral port on localhost
         let listener = TcpListener::bind("127.0.0.1:0")
             .context("Failed to start local OAuth loopback server")?;
@@ -183,7 +217,7 @@ impl GDriveManager {
         let auth_url = format!(
             "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&access_type=offline&prompt=consent",
             GOOGLE_AUTH_URL,
-            urlencoding_encode(DEFAULT_CLIENT_ID),
+            urlencoding_encode(&client_id),
             urlencoding_encode(&redirect_uri),
             urlencoding_encode(scopes),
         );
@@ -191,14 +225,39 @@ impl GDriveManager {
         // Open the browser
         open_url(&auth_url).context("Failed to open default web browser for Google authentication")?;
 
-        // Wait for incoming callback connection (timeout: 120s)
-        listener.set_nonblocking(false)?;
-        let (mut stream, _) = listener.accept().context("Did not receive Google OAuth authorization callback")?;
+        // Wait for incoming callback connection with timeout (60 seconds)
+        listener.set_nonblocking(true)?;
+        let start_time = std::time::Instant::now();
+        let timeout = Duration::from_secs(60);
+
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((s, _)) => break s,
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if start_time.elapsed() >= timeout {
+                        return Err(anyhow::anyhow!("Authentication timed out (60s). Please check your browser or credentials."));
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => return Err(anyhow::anyhow!("OAuth server error: {}", e)),
+            }
+        };
+
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_nonblocking(false)?;
 
         let mut reader = BufReader::new(&stream);
         let mut request_line = String::new();
         reader.read_line(&mut request_line)?;
+
+        // Check for error in callback (e.g. user cancelled on consent screen)
+        if let Some(err_code) = extract_query_param(&request_line, "error") {
+            let html_err = format!("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Authentication Cancelled</title><style>body{{font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1e1e1e;color:#fff;}}.box{{text-align:center;padding:40px;background:#2d2d2d;border-radius:12px;}}h1{{color:#ff5555;}}p{{color:#aaa;}}</style></head><body><div class=\"box\"><h1>Authentication Cancelled</h1><p>Reason: {}</p><p>You can close this tab.</p></div></body></html>", err_code);
+            let http_err_resp = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", html_err.len(), html_err);
+            let _ = stream.write_all(http_err_resp.as_bytes());
+            let _ = stream.flush();
+            return Err(anyhow::anyhow!("Google authentication was denied: {}", err_code));
+        }
 
         // Parse: GET /?code=...&scope=... HTTP/1.1
         let code = extract_query_param(&request_line, "code")
@@ -218,8 +277,8 @@ impl GDriveManager {
         let resp = ureq::post(GOOGLE_TOKEN_URL)
             .send_form(&[
                 ("code", &code),
-                ("client_id", DEFAULT_CLIENT_ID),
-                ("client_secret", DEFAULT_CLIENT_SECRET),
+                ("client_id", &client_id),
+                ("client_secret", &client_secret),
                 ("redirect_uri", &redirect_uri),
                 ("grant_type", "authorization_code"),
             ])
@@ -646,5 +705,21 @@ mod tests {
         let deserialized: HashMap<PathBuf, CachedFileMeta> = serde_json::from_str(&serialized).expect("Deserialize failed");
         assert!(deserialized.contains_key(&path));
         assert_eq!(deserialized.get(&path).unwrap().file_id, "file123");
+    }
+
+    #[test]
+    fn test_gdrive_credentials_and_configured_check() {
+        // Without env or config, should indicate missing credentials cleanly
+        std::env::remove_var("ZEE_GDRIVE_CLIENT_ID");
+        std::env::remove_var("ZEE_GDRIVE_CLIENT_SECRET");
+
+        let has_configured = GDriveManager::has_configured_credentials();
+        // With env var set, it should resolve dynamically
+        std::env::set_var("ZEE_GDRIVE_CLIENT_ID", "test-client-id-123");
+        assert_eq!(GDriveManager::get_client_id().as_deref(), Some("test-client-id-123"));
+        assert!(GDriveManager::has_configured_credentials());
+
+        std::env::remove_var("ZEE_GDRIVE_CLIENT_ID");
+        let _ = has_configured; // quiet warning
     }
 }

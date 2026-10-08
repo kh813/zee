@@ -2641,6 +2641,12 @@ pub struct GoogleDriveDialog {
     pub rx: std::sync::mpsc::Receiver<GDriveMsg>,
     pub tx: std::sync::mpsc::Sender<GDriveMsg>,
 
+    // Setup state
+    pub show_setup: bool,
+    pub client_id_input: String,
+    pub client_secret_input: String,
+    pub setup_active_field: usize, // 0 for client_id, 1 for client_secret
+
     // i18n
     pub i18n_title: String,
     pub i18n_connect: String,
@@ -2665,6 +2671,10 @@ impl GoogleDriveDialog {
             selected_btn: 0,
             rx,
             tx,
+            show_setup: !zee_core::gdrive::GDriveManager::has_configured_credentials(),
+            client_id_input: zee_core::gdrive::GDriveManager::get_client_id().unwrap_or_default(),
+            client_secret_input: zee_core::gdrive::GDriveManager::get_client_secret().unwrap_or_default(),
+            setup_active_field: 0,
             i18n_title: i18n.get("gdrive.title").to_string(),
             i18n_connect: i18n.get("gdrive.connect").to_string(),
             i18n_connecting: i18n.get("gdrive.connecting").to_string(),
@@ -2810,6 +2820,79 @@ impl Dialog for GoogleDriveDialog {
 
         let is_auth = zee_core::gdrive::GDriveManager::is_authenticated();
 
+        if self.show_setup || !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+            // Setup & Step-by-Step Guide View in TUI
+            let title = "Google Drive API Setup (Required)";
+            let tx = x + (w.saturating_sub(title.len() as u16)) / 2;
+            for (i, c) in title.chars().enumerate() {
+                renderer.set_cell(tx + i as u16, y + 2, Cell { ch: c, bg: dialog_bg, fg: active_fg, ..Default::default() });
+            }
+
+            let s1 = "1. Enable 'Google Drive API' in Google Cloud Console";
+            let s2 = "2. Create Credentials -> OAuth client ID -> Desktop App";
+            let s3 = "3. Enter Client ID and Secret below (Tab to switch fields)";
+            for (i, c) in s1.chars().enumerate() {
+                renderer.set_cell(x + 3 + i as u16, y + 4, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme), ..Default::default() });
+            }
+            for (i, c) in s2.chars().enumerate() {
+                renderer.set_cell(x + 3 + i as u16, y + 5, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme), ..Default::default() });
+            }
+            for (i, c) in s3.chars().enumerate() {
+                renderer.set_cell(x + 3 + i as u16, y + 6, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme), ..Default::default() });
+            }
+
+            // Client ID Field
+            let id_lbl = "Client ID: ";
+            for (i, c) in id_lbl.chars().enumerate() {
+                renderer.set_cell(x + 3 + i as u16, y + 8, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, ..Default::default() });
+            }
+            let id_box_x = x + 3 + id_lbl.len() as u16;
+            let id_box_w = (w.saturating_sub(id_lbl.len() as u16 + 6)).max(10);
+            let id_bg = if self.setup_active_field == 0 { to_ct_color(theme.editor.selection, theme) } else { to_ct_color(theme.ui.panel_bg, theme) };
+            for dx in 0..id_box_w {
+                renderer.set_cell(id_box_x + dx, y + 8, Cell { ch: ' ', bg: id_bg, ..Default::default() });
+            }
+            let display_id = if self.client_id_input.is_empty() { "(paste client id here)" } else { &self.client_id_input };
+            for (i, c) in display_id.chars().take(id_box_w as usize).enumerate() {
+                renderer.set_cell(id_box_x + i as u16, y + 8, Cell { ch: c, bg: id_bg, fg: dialog_fg, ..Default::default() });
+            }
+
+            // Client Secret Field
+            let sec_lbl = "Client Secret: ";
+            for (i, c) in sec_lbl.chars().enumerate() {
+                renderer.set_cell(x + 3 + i as u16, y + 10, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, ..Default::default() });
+            }
+            let sec_box_x = x + 3 + sec_lbl.len() as u16;
+            let sec_box_w = (w.saturating_sub(sec_lbl.len() as u16 + 6)).max(10);
+            let sec_bg = if self.setup_active_field == 1 { to_ct_color(theme.editor.selection, theme) } else { to_ct_color(theme.ui.panel_bg, theme) };
+            for dx in 0..sec_box_w {
+                renderer.set_cell(sec_box_x + dx, y + 10, Cell { ch: ' ', bg: sec_bg, ..Default::default() });
+            }
+            let masked_sec = "•".repeat(self.client_secret_input.len().min(sec_box_w as usize));
+            let display_sec = if self.client_secret_input.is_empty() { "(paste client secret here)" } else { &masked_sec };
+            for (i, c) in display_sec.chars().take(sec_box_w as usize).enumerate() {
+                renderer.set_cell(sec_box_x + i as u16, y + 10, Cell { ch: c, bg: sec_bg, fg: dialog_fg, ..Default::default() });
+            }
+
+            // Save and Connect button
+            let btn_str = "[ Save & Connect (Enter) ]";
+            let bx = x + (w.saturating_sub(btn_str.len() as u16)) / 2;
+            let by = y + 13;
+            for (i, c) in btn_str.chars().enumerate() {
+                renderer.set_cell(bx + i as u16, by, Cell { ch: c, bg: active_bg, fg: active_fg, ..Default::default() });
+            }
+
+            if let Some(ref err) = self.error_message {
+                let err_text = format!("Error: {}", err);
+                let ex = x + 3;
+                let ey = y + 16;
+                for (i, c) in err_text.chars().take((w - 6) as usize).enumerate() {
+                    renderer.set_cell(ex + i as u16, ey, Cell { ch: c, bg: dialog_bg, fg: Color::Red, ..Default::default() });
+                }
+            }
+            return;
+        }
+
         if !is_auth {
             // Not connected view
             let msg = "Connect Google Drive to edit cloud files";
@@ -2830,10 +2913,17 @@ impl Dialog for GoogleDriveDialog {
                 renderer.set_cell(bx + i as u16, by, Cell { ch: c, bg: btn_bg, fg: btn_fg, ..Default::default() });
             }
 
+            let cfg_str = "[ Configure API Keys (c) ]";
+            let cx_pos = x + (w.saturating_sub(cfg_str.len() as u16)) / 2;
+            let cy_pos = y + 13;
+            for (i, c) in cfg_str.chars().enumerate() {
+                renderer.set_cell(cx_pos + i as u16, cy_pos, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme), ..Default::default() });
+            }
+
             if let Some(ref err) = self.error_message {
                 let err_text = format!("Error: {}", err);
                 let ex = x + 3;
-                let ey = y + 14;
+                let ey = y + 15;
                 for (i, c) in err_text.chars().take((w - 6) as usize).enumerate() {
                     renderer.set_cell(ex + i as u16, ey, Cell { ch: c, bg: dialog_bg, fg: Color::Red, ..Default::default() });
                 }
@@ -2987,12 +3077,59 @@ impl Dialog for GoogleDriveDialog {
             return DialogResult::Ok(Action::ConfirmPath(path));
         }
 
-        let is_auth = zee_core::gdrive::GDriveManager::is_authenticated();
-        if !is_auth {
+        if self.show_setup || !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+            match key.code {
+                KeyCode::Esc => {
+                    if zee_core::gdrive::GDriveManager::has_configured_credentials() {
+                        self.show_setup = false;
+                        DialogResult::Pending
+                    } else {
+                        DialogResult::Cancel
+                    }
+                }
+                KeyCode::Tab | KeyCode::Down | KeyCode::Up => {
+                    self.setup_active_field = (self.setup_active_field + 1) % 2;
+                    DialogResult::Pending
+                }
+                KeyCode::Backspace => {
+                    if self.setup_active_field == 0 {
+                        self.client_id_input.pop();
+                    } else {
+                        self.client_secret_input.pop();
+                    }
+                    DialogResult::Pending
+                }
+                KeyCode::Enter => {
+                    let id = self.client_id_input.trim();
+                    let sec = self.client_secret_input.trim();
+                    if id.is_empty() {
+                        self.error_message = Some("Client ID is required".to_string());
+                    } else {
+                        let _ = zee_core::config::Config::save_gdrive_credentials(id, sec);
+                        self.show_setup = false;
+                        self.start_auth();
+                    }
+                    DialogResult::Pending
+                }
+                KeyCode::Char(c) if key.modifiers.is_empty() => {
+                    if self.setup_active_field == 0 {
+                        self.client_id_input.push(c);
+                    } else {
+                        self.client_secret_input.push(c);
+                    }
+                    DialogResult::Pending
+                }
+                _ => DialogResult::Pending,
+            }
+        } else if !zee_core::gdrive::GDriveManager::is_authenticated() {
             match key.code {
                 KeyCode::Esc => DialogResult::Cancel,
                 KeyCode::Enter => {
                     self.start_auth();
+                    DialogResult::Pending
+                }
+                KeyCode::Char('c') | KeyCode::Char('C') => {
+                    self.show_setup = true;
                     DialogResult::Pending
                 }
                 _ => DialogResult::Pending,

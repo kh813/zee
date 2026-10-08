@@ -44,6 +44,10 @@ struct GithubReleaseResponse {
     tag_name: String,
     html_url: String,
     #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
     body: Option<String>,
     #[serde(default)]
     assets: Vec<ReleaseAsset>,
@@ -58,37 +62,69 @@ pub struct ReleaseInfo {
     pub asset_url: Option<String>,
     pub asset_size: Option<u64>,
     pub body: Option<String>,
+    pub is_prerelease: bool,
 }
 
-/// Query GitHub Releases for the latest published release.
+/// Query GitHub Releases for the latest published release (defaults to stable only).
 pub fn check_latest(app_type: AppType) -> Result<ReleaseInfo> {
-    let api_url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
-    
-    let resp = ureq::get(&api_url)
-        .set("User-Agent", &format!("zee-updater/{}", CURRENT_VERSION))
-        .set("Accept", "application/vnd.github+json")
-        .timeout(std::time::Duration::from_secs(10))
-        .call()
-        .context("Failed to connect to GitHub Releases API")?;
+    check_latest_with_options(app_type, false)
+}
 
-    if resp.status() != 200 {
-        return Err(anyhow!("GitHub API returned HTTP status {}", resp.status()));
-    }
+/// Query GitHub Releases for the latest published release, optionally including pre-releases.
+pub fn check_latest_with_options(app_type: AppType, include_prerelease: bool) -> Result<ReleaseInfo> {
+    let user_agent = format!("zee-updater/{}", CURRENT_VERSION);
 
-    let payload: GithubReleaseResponse = resp.into_json()
-        .context("Failed to parse GitHub release JSON")?;
+    let release = if include_prerelease {
+        // Query release list to find the newest release (including prereleases)
+        let list_url = format!("https://api.github.com/repos/{}/releases?per_page=10", GITHUB_REPO);
+        let resp = ureq::get(&list_url)
+            .set("User-Agent", &user_agent)
+            .set("Accept", "application/vnd.github+json")
+            .timeout(std::time::Duration::from_secs(10))
+            .call()
+            .context("Failed to connect to GitHub Releases API")?;
 
-    let version = payload.tag_name.trim_start_matches('v').to_string();
-    let matching_asset = find_matching_asset(&payload.assets, app_type);
+        if resp.status() != 200 {
+            return Err(anyhow!("GitHub API returned HTTP status {}", resp.status()));
+        }
+
+        let releases: Vec<GithubReleaseResponse> = resp.into_json()
+            .context("Failed to parse GitHub releases list JSON")?;
+
+        // Filter out drafts and find first/newest valid release
+        releases.into_iter()
+            .find(|r| !r.draft)
+            .ok_or_else(|| anyhow!("No releases found"))?
+    } else {
+        // Default: Stable release only via /releases/latest
+        let api_url = format!("https://api.github.com/repos/{}/releases/latest", GITHUB_REPO);
+        let resp = ureq::get(&api_url)
+            .set("User-Agent", &user_agent)
+            .set("Accept", "application/vnd.github+json")
+            .timeout(std::time::Duration::from_secs(10))
+            .call()
+            .context("Failed to connect to GitHub Releases API")?;
+
+        if resp.status() != 200 {
+            return Err(anyhow!("GitHub API returned HTTP status {}", resp.status()));
+        }
+
+        resp.into_json()
+            .context("Failed to parse GitHub release JSON")?
+    };
+
+    let version = release.tag_name.trim_start_matches('v').to_string();
+    let matching_asset = find_matching_asset(&release.assets, app_type);
 
     Ok(ReleaseInfo {
-        tag_name: payload.tag_name,
+        tag_name: release.tag_name,
         version,
-        html_url: payload.html_url,
+        html_url: release.html_url,
         asset_name: matching_asset.map(|a| a.name.clone()),
         asset_url: matching_asset.map(|a| a.browser_download_url.clone()),
         asset_size: matching_asset.map(|a| a.size),
-        body: payload.body,
+        body: release.body,
+        is_prerelease: release.prerelease,
     })
 }
 
@@ -153,12 +189,16 @@ pub fn find_matching_asset_for_platform<'a>(
     None
 }
 
-/// Compare two semantic version strings (e.g. "0.1.0" and "0.1.1").
+/// Compare two semantic version strings (e.g. "0.1.0" vs "0.1.1", or "0.2.1" vs "0.2.2-test").
+/// Follows SemVer precedence rules:
+/// - "0.2.1" < "0.2.2-test" (higher major.minor.patch is newer)
+/// - "0.2.2-test" < "0.2.2" (normal release is newer than pre-release with same base)
+/// - "0.2.2-test.1" < "0.2.2-test.2" (prerelease ordering)
 pub fn is_newer(current: &str, latest: &str) -> bool {
-    let c_parts = parse_version_numbers(current);
-    let l_parts = parse_version_numbers(latest);
+    let (c_nums, c_pre) = parse_semver(current);
+    let (l_nums, l_pre) = parse_semver(latest);
 
-    match (c_parts, l_parts) {
+    match (c_nums, l_nums) {
         (Some(c), Some(l)) => {
             let max_len = c.len().max(l.len());
             for i in 0..max_len {
@@ -168,16 +208,53 @@ pub fn is_newer(current: &str, latest: &str) -> bool {
                     return lv > cv;
                 }
             }
-            false
+
+            // Numeric core versions are identical.
+            // Under SemVer 2.0:
+            // 1. A normal release has higher precedence than a pre-release version:
+            //    e.g. 0.2.2 > 0.2.2-test
+            // 2. If both are pre-releases, compare their pre-release identifiers.
+            match (c_pre, l_pre) {
+                (None, Some(_)) => false, // current is normal (0.2.2), latest is pre-release (0.2.2-test) -> latest is NOT newer
+                (Some(_), None) => true,  // current is pre-release (0.2.2-test), latest is normal (0.2.2) -> latest IS newer
+                (Some(cp), Some(lp)) => compare_prerelease(&cp, &lp) == std::cmp::Ordering::Less,
+                (None, None) => false,
+            }
         }
         _ => latest != current && !latest.is_empty(),
     }
 }
 
-fn parse_version_numbers(v: &str) -> Option<Vec<u64>> {
+fn parse_semver(v: &str) -> (Option<Vec<u64>>, Option<String>) {
     let cleaned = v.trim().trim_start_matches('v');
-    let parts: Result<Vec<u64>, _> = cleaned.split('.').map(|s| s.parse::<u64>()).collect();
-    parts.ok()
+    let mut parts = cleaned.splitn(2, '-');
+    let num_part = parts.next().unwrap_or("");
+    let pre_part = parts.next().map(|s| s.to_string());
+
+    let nums: Result<Vec<u64>, _> = num_part.split('.').map(|s| s.parse::<u64>()).collect();
+    (nums.ok(), pre_part)
+}
+
+fn compare_prerelease(a: &str, b: &str) -> std::cmp::Ordering {
+    // Compare dot-separated identifiers according to SemVer
+    let a_parts: Vec<&str> = a.split('.').collect();
+    let b_parts: Vec<&str> = b.split('.').collect();
+    let min_len = a_parts.len().min(b_parts.len());
+
+    for i in 0..min_len {
+        let ap = a_parts[i];
+        let bp = b_parts[i];
+        let cmp = match (ap.parse::<u64>(), bp.parse::<u64>()) {
+            (Ok(an), Ok(bn)) => an.cmp(&bn),
+            (Ok(_), Err(_)) => std::cmp::Ordering::Less,
+            (Err(_), Ok(_)) => std::cmp::Ordering::Greater,
+            (Err(_), Err(_)) => ap.cmp(bp),
+        };
+        if cmp != std::cmp::Ordering::Equal {
+            return cmp;
+        }
+    }
+    a_parts.len().cmp(&b_parts.len())
 }
 
 /// Download a file from URL to memory.
@@ -666,6 +743,19 @@ mod tests {
         assert!(!is_newer("0.1.1", "0.1.0"));
         assert!(!is_newer("1.0.0", "0.9.9"));
         assert!(is_newer("v0.1.0", "v0.1.1"));
+
+        // Pre-release comparison tests
+        // 1. Current is 0.2.1, new test release is 0.2.2-test -> should be newer
+        assert!(is_newer("0.2.1", "0.2.2-test"));
+        assert!(is_newer("0.2.1", "0.2.2-beta.1"));
+        // 2. Current is 0.2.2-test, official 0.2.2 is published -> official 0.2.2 is newer
+        assert!(is_newer("0.2.2-test", "0.2.2"));
+        assert!(is_newer("0.2.2-beta.1", "0.2.2"));
+        // 3. Current is official 0.2.2, a 0.2.2-test is not newer than official 0.2.2
+        assert!(!is_newer("0.2.2", "0.2.2-test"));
+        // 4. Sequential test versions: test.1 < test.2
+        assert!(is_newer("0.2.2-test.1", "0.2.2-test.2"));
+        assert!(!is_newer("0.2.2-test.2", "0.2.2-test.1"));
     }
 
     #[test]

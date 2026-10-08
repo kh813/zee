@@ -29,6 +29,9 @@ pub struct Config {
     // Google Drive integration
     pub gdrive_client_id: Option<String>,
     pub gdrive_client_secret: Option<String>,
+    // Update channel
+    #[serde(default)]
+    pub include_prerelease: bool,
 }
 
 pub fn default_plugin_registries() -> Vec<String> {
@@ -58,6 +61,7 @@ impl Default for Config {
             plugin_registries: default_plugin_registries(),
             gdrive_client_id: None,
             gdrive_client_secret: None,
+            include_prerelease: false,
         }
     }
 }
@@ -150,6 +154,11 @@ impl Config {
                         if let Some(s) = v.as_str() {
                             let s_trim = s.trim();
                             config.gdrive_client_secret = if s_trim.is_empty() { None } else { Some(s_trim.to_string()) };
+                        }
+                    }
+                    "include_prerelease" => {
+                        if let Some(b) = v.as_bool() {
+                            config.include_prerelease = b;
                         }
                     }
                     _ => {}

@@ -170,11 +170,12 @@ impl Dialog {
 
     fn start_update_check(&mut self, cx: &mut Context<Self>) {
         self.update_status = Some(UpdateStatus::Checking);
-        cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
+        let include_prerelease = self.workspace.read(cx).config.include_prerelease;
+        cx.spawn(move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
-                let res = std::thread::spawn(|| {
-                    zee_core::selfupdate::check_latest(zee_core::selfupdate::AppType::Gui)
+                let res = std::thread::spawn(move || {
+                    zee_core::selfupdate::check_latest_with_options(zee_core::selfupdate::AppType::Gui, include_prerelease)
                 }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Update check thread panicked")));
 
                 let _ = this.update(&mut cx.clone(), |this, cx| {
@@ -1560,6 +1561,7 @@ impl Dialog {
                 let line_numbers = workspace.config.line_numbers;
                 let word_wrap = workspace.config.word_wrap;
                 let sidebar_position = workspace.config.sidebar_position.clone();
+                let include_prerelease = workspace.config.include_prerelease;
 
                 let chip_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
                 let chip_active_bg = with_alpha(accent, 0.25);
@@ -2430,6 +2432,46 @@ impl Dialog {
                                      })
                              )
                      )
+                    // Update Channel / Pre-release Toggle Row
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .pt_0p5()
+                            .child(
+                                div()
+                                    .text_size(px(11.5))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(with_alpha(fg, 0.75))
+                                    .child(self.i18n.get("dialog.settings.include_prerelease").to_string())
+                            )
+                            .child(
+                                div()
+                                    .h(px(24.0))
+                                    .px_3()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(if include_prerelease { accent } else { chip_border })
+                                    .bg(if include_prerelease { chip_active_bg } else { chip_bg })
+                                    .text_size(px(11.5))
+                                    .font_weight(if include_prerelease { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.85))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                        this.workspace.update(cx, |w, cx| {
+                                            w.config.include_prerelease = !w.config.include_prerelease;
+                                            let _ = zee_core::config::Config::write_key("include_prerelease", if w.config.include_prerelease { "true" } else { "false" });
+                                            cx.notify();
+                                        });
+                                        cx.notify();
+                                    }))
+                                    .child(if include_prerelease { "✓ ON" } else { "OFF" })
+                            )
+                    )
                     // Backup & Restore Section
                     .child(
                         div()

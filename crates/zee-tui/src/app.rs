@@ -4206,7 +4206,7 @@ impl App {
             }
             Action::CheckForUpdates => {
                 self.focus = Focus::Dialog;
-                self.current_dialog = Some(Box::new(dialog::UpdateDialog::new(&self.i18n)));
+                self.current_dialog = Some(Box::new(dialog::UpdateDialog::new(&self.i18n, self.config.include_prerelease)));
             }
             Action::ReopenWithEncoding(enc) => {
                 if let Some(buffer) = self.buffers.get(self.active_buffer) {
@@ -6674,10 +6674,10 @@ mod tests {
         };
         app.handle_mouse(mouse_down);
 
-        // Simulate click on Save & Apply button (row 9: dy + 2 + 9 = dy + 11)
+        // Simulate click on Save & Apply button (row 10: dy + 2 + 10 = dy + 12)
         // Click left half of buttons row (Save button is on left half)
         let save_click_x = dx + 10;
-        let save_click_y = dy + 11;
+        let save_click_y = dy + 12;
         let mouse_save = MouseEvent {
             kind: MouseEventKind::Down(crossterm::event::MouseButton::Left),
             column: save_click_x,

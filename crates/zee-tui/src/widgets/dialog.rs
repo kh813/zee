@@ -1196,12 +1196,12 @@ pub struct UpdateDialog {
 }
 
 impl UpdateDialog {
-    pub fn new(i18n: &zee_core::I18n) -> Self {
+    pub fn new(i18n: &zee_core::I18n, include_prerelease: bool) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
         let tx_check = tx.clone();
         
         std::thread::spawn(move || {
-            let res = zee_core::selfupdate::check_latest(zee_core::selfupdate::AppType::Cli)
+            let res = zee_core::selfupdate::check_latest_with_options(zee_core::selfupdate::AppType::Cli, include_prerelease)
                 .map_err(|e| e.to_string());
             let _ = tx_check.send(UpdateMsg::CheckDone(res));
         });
@@ -1955,6 +1955,7 @@ pub struct SettingsDialog {
     pub i18n_word_wrap: String,
     pub i18n_vi_mode: String,
     pub i18n_show_hidden: String,
+    pub i18n_include_prerelease: String,
     pub i18n_save: String,
     pub i18n_cancel: String,
 }
@@ -1994,6 +1995,7 @@ impl SettingsDialog {
             i18n_word_wrap: i18n.get("menu.view.word_wrap").to_string(),
             i18n_vi_mode: i18n.get("menu.view.vi_mode").to_string(),
             i18n_show_hidden: i18n.get("sidebar.show_hidden").to_string(),
+            i18n_include_prerelease: i18n.get("dialog.settings.include_prerelease").to_string(),
             i18n_save: i18n.get("dialog.save").to_string(),
             i18n_cancel: i18n.get("dialog.cancel").to_string(),
         }
@@ -2138,6 +2140,7 @@ impl SettingsDialog {
             6 => self.config.word_wrap = !self.config.word_wrap,
             7 => self.config.vi_mode = !self.config.vi_mode,
             8 => self.config.show_hidden = !self.config.show_hidden,
+            9 => self.config.include_prerelease = !self.config.include_prerelease,
             _ => {}
         }
     }
@@ -2149,7 +2152,7 @@ impl Dialog for SettingsDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        (56, 14)
+        (56, 15)
     }
 
     fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
@@ -2180,7 +2183,7 @@ impl Dialog for SettingsDialog {
             format!("[ {}{} ▼ ]", truncated, " ".repeat(pad))
         };
 
-        let rows: [(&str, String); 9] = [
+        let rows: [(&str, String); 10] = [
             (&self.i18n_theme, format_dropdown_box(cur_theme_name, 16)),
             (&self.i18n_lang, format_dropdown_box(cur_lang_name, 16)),
             (&self.i18n_sidebar_pos, format_dropdown_box(cur_sidebar_pos, 16)),
@@ -2190,6 +2193,7 @@ impl Dialog for SettingsDialog {
             (&self.i18n_word_wrap, if self.config.word_wrap { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
             (&self.i18n_vi_mode, if self.config.vi_mode { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
             (&self.i18n_show_hidden, if self.config.show_hidden { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
+            (&self.i18n_include_prerelease, if self.config.include_prerelease { "[ ON ]".to_string() } else { "[ OFF ]".to_string() }),
         ];
 
         for (i, (label, val)) in rows.iter().enumerate() {
@@ -2220,9 +2224,9 @@ impl Dialog for SettingsDialog {
             }
         }
 
-        // Row 9: Buttons
-        let btn_y = y + 2 + 9 as u16;
-        let is_btn_row = self.selected_row == 9;
+        // Row 10: Buttons
+        let btn_y = y + 2 + 10 as u16;
+        let is_btn_row = self.selected_row == 10;
 
         // Button 1: Save
         let save_str = format!(" [ {} ] ", self.i18n_save);
@@ -2413,12 +2417,12 @@ impl Dialog for SettingsDialog {
                 if self.selected_row > 0 {
                     self.selected_row -= 1;
                 } else {
-                    self.selected_row = 9;
+                    self.selected_row = 10;
                 }
                 DialogResult::Pending
             }
             KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
-                if self.selected_row < 9 {
+                if self.selected_row < 10 {
                     self.selected_row += 1;
                 } else {
                     self.selected_row = 0;
@@ -2426,7 +2430,7 @@ impl Dialog for SettingsDialog {
                 DialogResult::Pending
             }
             KeyCode::Tab => {
-                if self.selected_row < 9 {
+                if self.selected_row < 10 {
                     self.selected_row += 1;
                 } else {
                     self.selected_row = 0;
@@ -2437,12 +2441,12 @@ impl Dialog for SettingsDialog {
                 if self.selected_row > 0 {
                     self.selected_row -= 1;
                 } else {
-                    self.selected_row = 9;
+                    self.selected_row = 10;
                 }
                 DialogResult::Pending
             }
             KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {
-                if self.selected_row == 9 {
+                if self.selected_row == 10 {
                     self.selected_btn = 0;
                 } else {
                     self.cycle_row(self.selected_row, false);
@@ -2450,7 +2454,7 @@ impl Dialog for SettingsDialog {
                 DialogResult::Pending
             }
             KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
-                if self.selected_row == 9 {
+                if self.selected_row == 10 {
                     self.selected_btn = 1;
                 } else {
                     self.cycle_row(self.selected_row, true);
@@ -2462,7 +2466,7 @@ impl Dialog for SettingsDialog {
                     // Open pseudo pull-down menu for multi-choice settings
                     self.open_dropdown(self.selected_row);
                     DialogResult::Pending
-                } else if self.selected_row < 9 {
+                } else if self.selected_row < 10 {
                     // Toggle boolean settings
                     self.cycle_row(self.selected_row, true);
                     DialogResult::Pending
@@ -2479,7 +2483,7 @@ impl Dialog for SettingsDialog {
                 if self.selected_row < 4 {
                     self.open_dropdown(self.selected_row);
                     DialogResult::Pending
-                } else if self.selected_row < 9 {
+                } else if self.selected_row < 10 {
                     self.cycle_row(self.selected_row, true);
                     DialogResult::Pending
                 } else {
@@ -2571,7 +2575,7 @@ impl Dialog for SettingsDialog {
                 if mx >= x && mx < x + w && my >= y && my < y + h {
                     let rel_y = my.saturating_sub(y);
                     let rel_x = mx.saturating_sub(x);
-                    if (2..=10).contains(&rel_y) {
+                    if (2..=11).contains(&rel_y) {
                         let row = (rel_y - 2) as usize;
                         self.selected_row = row;
                         if row < 2 {
@@ -2588,8 +2592,8 @@ impl Dialog for SettingsDialog {
                             self.cycle_row(row, true);
                         }
                         return DialogResult::Pending;
-                    } else if rel_y == 11 {
-                        self.selected_row = 9;
+                    } else if rel_y == 12 {
+                        self.selected_row = 10;
                         let mid_x = w / 2;
                         if rel_x < mid_x {
                             self.selected_btn = 0;
@@ -2605,12 +2609,12 @@ impl Dialog for SettingsDialog {
                 if self.selected_row > 0 {
                     self.selected_row -= 1;
                 } else {
-                    self.selected_row = 9;
+                    self.selected_row = 10;
                 }
                 return DialogResult::Pending;
             }
             MouseEventKind::ScrollDown => {
-                if self.selected_row < 9 {
+                if self.selected_row < 10 {
                     self.selected_row += 1;
                 } else {
                     self.selected_row = 0;
@@ -3374,8 +3378,8 @@ mod tests {
         dialog.handle_key(make_key(KeyCode::Right));
         assert_eq!(dialog.config.tab_size, 8);
 
-        // Navigate to Buttons row (row 9)
-        dialog.selected_row = 9;
+        // Navigate to Buttons row (row 10)
+        dialog.selected_row = 10;
         dialog.selected_btn = 0; // Save & Apply
 
         match dialog.handle_key(make_key(KeyCode::Enter)) {

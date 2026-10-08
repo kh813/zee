@@ -331,6 +331,7 @@ impl I18n {
         m.insert("dialog.settings.sidebar_position".to_string(), "Sidebar Position".to_string());
         m.insert("dialog.settings.sidebar_left".to_string(), "Left".to_string());
         m.insert("dialog.settings.sidebar_right".to_string(), "Right".to_string());
+        m.insert("dialog.settings.include_prerelease".to_string(), "Receive preview (test) updates".to_string());
         m.insert("dialog.settings.reset_defaults".to_string(), "Reset Defaults".to_string());
         m.insert("dialog.settings.backup_section".to_string(), "Backup & Restore".to_string());
         m.insert("dialog.settings.export_config_only".to_string(), "Export Settings (Config Only)".to_string());
@@ -563,6 +564,7 @@ impl I18n {
         m.insert("dialog.settings.sidebar_position".to_string(), "サイドバーの位置".to_string());
         m.insert("dialog.settings.sidebar_left".to_string(), "左側".to_string());
         m.insert("dialog.settings.sidebar_right".to_string(), "右側".to_string());
+        m.insert("dialog.settings.include_prerelease".to_string(), "プレビュー版（テスト版）の更新を受け取る".to_string());
         m.insert("dialog.settings.reset_defaults".to_string(), "初期値に戻す".to_string());
         m.insert("dialog.settings.backup_section".to_string(), "バックアップと復元".to_string());
         m.insert("dialog.settings.export_config_only".to_string(), "設定のみエクスポート".to_string());

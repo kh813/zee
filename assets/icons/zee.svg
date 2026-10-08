@@ -1,116 +1,97 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-<defs>
-  <linearGradient id="lbg" x1="0%" y1="0%" x2="110%" y2="110%">
-    <stop offset="0%" stop-color="#dff0ff"/>
-    <stop offset="100%" stop-color="#b8d8f2"/>
-  </linearGradient>
-  <linearGradient id="npl" x1="0%" y1="0%" x2="4%" y2="100%">
-    <stop offset="0%" stop-color="#fffef8"/>
-    <stop offset="100%" stop-color="#f5f0e4"/>
-  </linearGradient>
-  <linearGradient id="nbind" x1="0%" y1="0%" x2="100%" y2="0%">
-    <stop offset="0%" stop-color="#d4c4a0"/>
-    <stop offset="100%" stop-color="#c0aa80"/>
-  </linearGradient>
-  <linearGradient id="penlo" x1="0%" y1="0%" x2="100%" y2="100%">
-    <stop offset="0%" stop-color="#ffd090"/>
-    <stop offset="50%" stop-color="#ffaa50"/>
-    <stop offset="100%" stop-color="#e07820"/>
-  </linearGradient>
-  <linearGradient id="pengrip" x1="0%" y1="0%" x2="100%" y2="100%">
-    <stop offset="0%" stop-color="#ffb04a"/>
-    <stop offset="100%" stop-color="#d06010"/>
-  </linearGradient>
-  <radialGradient id="tglow" cx="50%" cy="50%" r="50%">
-    <stop offset="0%"   stop-color="#ffffff"  stop-opacity="1"/>
-    <stop offset="22%"  stop-color="#fff8b0"  stop-opacity="1"/>
-    <stop offset="50%"  stop-color="#ffcc00"  stop-opacity="0.6"/>
-    <stop offset="100%" stop-color="#ff9900"  stop-opacity="0"/>
-  </radialGradient>
-  <filter id="sh" x="-5%" y="-5%" width="110%" height="110%">
-    <feDropShadow dx="7" dy="14" stdDeviation="18" flood-color="#000" flood-opacity="0.13"/>
-  </filter>
-  <filter id="penshadow" x="-10%" y="-10%" width="120%" height="120%">
-    <feDropShadow dx="4" dy="7" stdDeviation="10" flood-color="#000" flood-opacity="0.18"/>
-  </filter>
-  <clipPath id="ic"><rect x="0" y="0" width="1024" height="1024" rx="204"/></clipPath>
-</defs>
+  <defs>
+    <!-- Background: Deep dark tech obsidian -->
+    <linearGradient id="bg1b_crisp" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#181c26"/>
+      <stop offset="50%" stop-color="#10131b"/>
+      <stop offset="100%" stop-color="#080a0f"/>
+    </linearGradient>
 
-<!-- background -->
-<rect x="0" y="0" width="1024" height="1024" rx="204" fill="url(#lbg)"/>
-<ellipse cx="220" cy="200" rx="330" ry="240" fill="#ffffff" opacity="0.15" clip-path="url(#ic)"/>
+    <!-- Crisp Left Bracket: Vibrant Electric Cyan -->
+    <linearGradient id="bracketCyan" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe"/>
+      <stop offset="100%" stop-color="#00a8ff"/>
+    </linearGradient>
 
-<!-- NOTEBOOK: centered, scaled to 1024 canvas (original 280px icon → ×3.657) -->
-<g filter="url(#sh)" clip-path="url(#ic)">
-  <g transform="rotate(-5, 512, 512)">
-    <!-- back cover -->
-    <rect x="250" y="196" width="526" height="628" rx="22" fill="#ddd0b4"/>
-    <!-- spine -->
-    <rect x="250" y="196" width="66" height="628" rx="15" fill="url(#nbind)"/>
-    <!-- rings -->
-    <circle cx="283" cy="294" r="18" fill="#b8d8f2" opacity="0.75"/>
-    <circle cx="283" cy="367" r="18" fill="#b8d8f2" opacity="0.75"/>
-    <circle cx="283" cy="440" r="18" fill="#b8d8f2" opacity="0.75"/>
-    <circle cx="283" cy="513" r="18" fill="#b8d8f2" opacity="0.75"/>
-    <circle cx="283" cy="586" r="18" fill="#b8d8f2" opacity="0.75"/>
-    <circle cx="283" cy="659" r="18" fill="#b8d8f2" opacity="0.75"/>
-    <circle cx="283" cy="294" r="9"  fill="#e8f4ff" opacity="0.6"/>
-    <circle cx="283" cy="367" r="9"  fill="#e8f4ff" opacity="0.6"/>
-    <circle cx="283" cy="440" r="9"  fill="#e8f4ff" opacity="0.6"/>
-    <circle cx="283" cy="513" r="9"  fill="#e8f4ff" opacity="0.6"/>
-    <circle cx="283" cy="586" r="9"  fill="#e8f4ff" opacity="0.6"/>
-    <circle cx="283" cy="659" r="9"  fill="#e8f4ff" opacity="0.6"/>
-    <!-- page depth -->
-    <rect x="317" y="203" width="454" height="614" rx="11" fill="#e8e0cc"/>
-    <rect x="324" y="203" width="447" height="614" rx="11" fill="#f0ead8"/>
-    <!-- top page -->
-    <rect x="331" y="203" width="435" height="614" rx="11" fill="url(#npl)"/>
-    <!-- red margin -->
-    <line x1="384" y1="203" x2="384" y2="817" stroke="#e87070" stroke-width="4" opacity="0.55"/>
-    <!-- ruled lines -->
-    <line x1="331" y1="277" x2="762" y2="277" stroke="#d4c4a0" stroke-width="3.6" opacity="0.75"/>
-    <line x1="331" y1="321" x2="762" y2="321" stroke="#d4c4a0" stroke-width="3.6" opacity="0.75"/>
-    <line x1="331" y1="365" x2="762" y2="365" stroke="#d4c4a0" stroke-width="3.6" opacity="0.75"/>
-    <line x1="331" y1="409" x2="762" y2="409" stroke="#d4c4a0" stroke-width="3.6" opacity="0.75"/>
-    <line x1="331" y1="453" x2="762" y2="453" stroke="#d4c4a0" stroke-width="3.6" opacity="0.75"/>
-    <line x1="331" y1="497" x2="762" y2="497" stroke="#d4c4a0" stroke-width="3.6" opacity="0.75"/>
-    <line x1="331" y1="541" x2="762" y2="541" stroke="#d4c4a0" stroke-width="3.6" opacity="0.75"/>
-    <line x1="331" y1="585" x2="762" y2="585" stroke="#d4c4a0" stroke-width="3.6" opacity="0.75"/>
-    <!-- text squiggles -->
-    <rect x="400" y="266" width="263" height="10" rx="5" fill="#a09070" opacity="0.42"/>
-    <rect x="400" y="310" width="201" height="10" rx="5" fill="#a09070" opacity="0.36"/>
-    <rect x="400" y="354" width="293" height="10" rx="5" fill="#a09070" opacity="0.40"/>
-    <rect x="400" y="398" width="175" height="10" rx="5" fill="#a09070" opacity="0.34"/>
-    <rect x="400" y="442" width="249" height="10" rx="5" fill="#a09070" opacity="0.38"/>
-    <rect x="400" y="486" width="139" height="10" rx="5" fill="#a09070" opacity="0.32"/>
-    <!-- cursor blink -->
-    <rect x="400" y="530" width="9" height="48" rx="4.5" fill="#d04010" opacity="0.8"/>
-    <rect x="422" y="538" width="110" height="10" rx="5" fill="#a09070" opacity="0.28"/>
+    <!-- Crisp Right Bracket: Vibrant Neon Coral / Orange -->
+    <linearGradient id="bracketCoral" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ff3366"/>
+      <stop offset="100%" stop-color="#ff7b39"/>
+    </linearGradient>
+
+    <!-- Center Diagonal Slash forming Z: Pure Crisp Bright Blade -->
+    <linearGradient id="slashWhite" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="45%" stop-color="#e2ecff"/>
+      <stop offset="100%" stop-color="#70a1ff"/>
+    </linearGradient>
+
+    <!-- macOS Squircle Clip -->
+    <clipPath id="squircle">
+      <rect x="64" y="64" width="896" height="896" rx="200"/>
+    </clipPath>
+  </defs>
+
+  <!-- Outer Squircle with Solid Dimensional Edge Shadow (No blur) -->
+  <!-- Subtle bottom drop rim for macOS icon depth -->
+  <rect x="64" y="80" width="896" height="896" rx="200" fill="#030407" opacity="0.6"/>
+  <!-- Main Icon Plate -->
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg1b_crisp)"/>
+  <!-- Crisp High-Tech Bevel Border -->
+  <rect x="66" y="66" width="892" height="892" rx="198" fill="none" stroke="#283248" stroke-width="4"/>
+  <rect x="70" y="70" width="884" height="884" rx="194" fill="none" stroke="#000000" stroke-width="2" opacity="0.4"/>
+
+  <!-- Icon Graphic Contents (Crisp, High Contrast, Vector Geometric) -->
+  <g clip-path="url(#squircle)">
+    <!-- Subtle interior code grid line indicators (very crisp, low opacity) -->
+    <line x1="210" y1="200" x2="210" y2="824" stroke="#ffffff" stroke-width="2" opacity="0.05"/>
+    <line x1="814" y1="200" x2="814" y2="824" stroke="#ffffff" stroke-width="2" opacity="0.05"/>
+
+    <!-- LEFT BRACKET '{' : Solid, bold (stroke-width 56) with crisp rounded ends -->
+    <path d="M 430 250 
+             L 330 250 
+             A 64 64 0 0 0 266 314 
+             L 266 452 
+             A 54 54 0 0 1 212 506 
+             A 54 54 0 0 1 266 560 
+             L 266 698 
+             A 64 64 0 0 0 330 762 
+             L 430 762"
+          fill="none" 
+          stroke="url(#bracketCyan)" 
+          stroke-width="56" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+
+    <!-- RIGHT BRACKET '}' : Solid, bold (stroke-width 56) with crisp rounded ends -->
+    <path d="M 594 250 
+             L 694 250 
+             A 64 64 0 0 1 758 314 
+             L 758 452 
+             A 54 54 0 0 0 812 506 
+             A 54 54 0 0 0 758 560 
+             L 758 698 
+             A 64 64 0 0 1 694 762 
+             L 594 762"
+          fill="none" 
+          stroke="url(#bracketCoral)" 
+          stroke-width="56" 
+          stroke-linecap="round" 
+          stroke-linejoin="round"/>
+
+    <!-- DIAGONAL SLASH: Crisp solid white-to-blue core connecting brackets into Z -->
+    <!-- Under-shadow line for physical depth/contrast against brackets -->
+    <path d="M 700 292 L 324 720" 
+          fill="none" 
+          stroke="#0a0c14" 
+          stroke-width="72" 
+          stroke-linecap="round"/>
+          
+    <!-- Main Blade Line -->
+    <path d="M 700 292 L 324 720" 
+          fill="none" 
+          stroke="url(#slashWhite)" 
+          stroke-width="58" 
+          stroke-linecap="round"/>
   </g>
-</g>
-
-<!-- PEN: rotate(38, 512, 512) scaled ×3.657 -->
-<g filter="url(#penshadow)" clip-path="url(#ic)">
-  <g transform="rotate(38, 512, 512)">
-    <rect x="487" y="220" width="51" height="366" rx="25" fill="url(#penlo)"/>
-    <rect x="519" y="234" width="11" height="201" rx="5.5" fill="#e07820" opacity="0.5"/>
-    <rect x="487" y="513" width="51" height="73" rx="15" fill="url(#pengrip)"/>
-    <polygon points="487,586 538,586 512.5,659" fill="#e0d8c8"/>
-    <rect x="490" y="576" width="44" height="15" rx="4" fill="#c8b898"/>
-    <rect x="494" y="209" width="37" height="26" rx="13" fill="#ffdda0"/>
-    <rect x="494" y="227" width="15" height="263" rx="7" fill="#ffffff" opacity="0.22"/>
-  </g>
-</g>
-
-<!-- LED glow at pen tip -->
-<!-- rotate(38, 512, 512) of tip apex (512, 659): dx=0,dy=147 → rx=-90.5,ry=114.3 → (421.5, 626.3) -->
-<g clip-path="url(#ic)">
-  <ellipse cx="421.5" cy="626.3" rx="73" ry="73" fill="url(#tglow)"/>
-  <circle  cx="421.5" cy="626.3" r="20"  fill="#ffffff" stroke="#e8a800" stroke-width="4.4"/>
-  <circle  cx="421.5" cy="626.3" r="11"  fill="#ffe840"/>
-  <circle  cx="415"   cy="620"   r="5"   fill="#ffffff" opacity="0.9"/>
-</g>
-
-<!-- border -->
-<rect x="0" y="0" width="1024" height="1024" rx="204" fill="none" stroke="#90c0e0" stroke-width="4" opacity="0.5"/>
 </svg>

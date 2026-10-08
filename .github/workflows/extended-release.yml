@@ -82,6 +82,8 @@ jobs:
           cp README.md MANUAL.md LICENSE* "dist/${GUI_ARCHIVE}/" 2>/dev/null || true
           cd dist
           zip -r "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
+          # Backwards-compatibility alias for v0.1.13 and earlier versions expecting zeeg-*
+          cp "${GUI_ARCHIVE}.zip" "zeeg-${TAG}-linux-x64.zip"
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
@@ -144,6 +146,8 @@ jobs:
           cp README.md MANUAL.md LICENSE* "dist/${GUI_ARCHIVE}/" 2>/dev/null || true
           cd dist
           7z a "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
+          # Backwards-compatibility alias for v0.1.13 and earlier versions expecting zeeg-*
+          cp "${GUI_ARCHIVE}.zip" "zeeg-${TAG}-windows-arm64.zip"
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
@@ -184,6 +188,8 @@ jobs:
           cd dist
           zip -r "${CLI_ARCHIVE}.zip" "${CLI_ARCHIVE}"
           zip -r "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
+          # Backwards-compatibility alias for v0.1.13 and earlier versions expecting zeeg-*
+          cp "${GUI_ARCHIVE}.zip" "zeeg-${TAG}-linux-arm64.zip"
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:

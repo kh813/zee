@@ -112,6 +112,8 @@ jobs:
           codesign --force --deep --sign - "dist/Zee.app" || true
           cd dist
           zip -r "${GUI_ARCHIVE_NAME}.zip" Zee.app
+          # Backwards-compatibility alias for v0.1.13 and earlier versions expecting zeeg-*
+          cp "${GUI_ARCHIVE_NAME}.zip" "zeeg-${TAG_NAME}-${{ matrix.platform }}.zip"
           cd ..
 
       # --- Linux: CLI only (zee) ---
@@ -144,6 +146,8 @@ jobs:
 
           cd dist
           7z a "${GUI_ARCHIVE_NAME}.zip" "${GUI_ARCHIVE_NAME}"
+          # Backwards-compatibility alias for v0.1.13 and earlier versions expecting zeeg-*
+          cp "${GUI_ARCHIVE_NAME}.zip" "zeeg-${TAG_NAME}-${{ matrix.platform }}.zip"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4

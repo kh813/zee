@@ -65,6 +65,15 @@ impl Sidebar {
         self.visible = !self.visible;
     }
 
+    pub fn reload_plugins(&mut self) {
+        let mut plugin_manager = zee_core::plugin::PluginManager::new();
+        let dev_plugin_dir = PathBuf::from("plugins/zee-plugin-text");
+        if dev_plugin_dir.exists() {
+            let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
+        }
+        self.plugin_manager = plugin_manager;
+    }
+
     #[allow(dead_code)]
     pub fn set_root(&mut self, root_path: PathBuf) {
         self.file_tree = FileTree::new(root_path, self.file_tree.show_hidden);

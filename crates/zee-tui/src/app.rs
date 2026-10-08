@@ -2751,7 +2751,7 @@ impl App {
                                 if let Some(id) = arg {
                                     match zee_core::plugin::PluginManager::install_from_registry(&id, None, Some(&self.config.plugin_registries)) {
                                         Ok(_) => {
-                                            self.sidebar.plugin_manager.load_installed_plugins();
+                                            self.sidebar.reload_plugins();
                                             self.vi_message = Some((format!("Plugin '{}' installed successfully", id), false));
                                         }
                                         Err(e) => {
@@ -2766,7 +2766,7 @@ impl App {
                                 if let Some(id) = arg {
                                     match zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id) {
                                         Ok(true) => {
-                                            self.sidebar.plugin_manager.load_installed_plugins();
+                                            self.sidebar.reload_plugins();
                                             self.vi_message = Some((format!("Plugin '{}' uninstalled successfully", id), false));
                                         }
                                         Ok(false) => {
@@ -2780,8 +2780,12 @@ impl App {
                                     self.vi_message = Some(("Usage: :plugin uninstall <id>".to_string(), true));
                                 }
                             }
+                            "reload" => {
+                                self.sidebar.reload_plugins();
+                                self.vi_message = Some(("Plugins reloaded successfully".to_string(), false));
+                            }
                             _ => {
-                                self.vi_message = Some((format!("Unknown plugin command: {}. Available: list, repo [list|add|remove], install <id>, uninstall <id>", subcmd), true));
+                                self.vi_message = Some((format!("Unknown plugin command: {}. Available: list, repo [list|add|remove], install <id>, uninstall <id>, reload", subcmd), true));
                             }
                         }
                     }

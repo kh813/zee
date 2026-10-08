@@ -30,10 +30,12 @@ pub struct WindowView {
     menu_bar: Entity<MenuBar>,
     dialog: Option<Entity<Dialog>>,
     focus_handle: FocusHandle,
+    plugins_version: usize,
 }
 
 impl WindowView {
     pub fn new(config: Config, i18n: I18n, workspace: Entity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let plugins_version = workspace.read(cx).plugins_version;
         let editor = cx.new(|cx| EditorView::new(workspace.clone(), cx));
         let sidebar = cx.new(|cx| SidebarView::new(workspace.clone(), i18n.clone(), cx));
         let tab_bar = cx.new(|cx| TabBar::new(workspace.clone(), cx));
@@ -52,9 +54,16 @@ impl WindowView {
         });
 
         cx.observe(&workspace, |this, workspace, cx| {
-            let w_config = &workspace.read(cx).config;
             #[allow(unused_mut)]
             let mut menu_changed = false;
+            let (plugins_ver, w_config) = {
+                let w = workspace.read(cx);
+                (w.plugins_version, w.config.clone())
+            };
+            if this.plugins_version != plugins_ver {
+                this.plugins_version = plugins_ver;
+                menu_changed = true;
+            }
             if this.config.word_wrap != w_config.word_wrap {
                 this.config.word_wrap = w_config.word_wrap;
                 menu_changed = true;
@@ -91,7 +100,10 @@ impl WindowView {
             }
             if menu_changed {
                 #[cfg(target_os = "macos")]
-                cx.set_menus(crate::app::build_native_menus(&this.i18n, &this.config));
+                {
+                    let pm = &workspace.read(cx).plugin_manager;
+                    cx.set_menus(crate::app::build_native_menus(&this.i18n, &this.config, Some(pm)));
+                }
             }
             cx.notify();
         }).detach();
@@ -207,6 +219,7 @@ impl WindowView {
             menu_bar,
             dialog: None,
             focus_handle,
+            plugins_version,
         }
     }
 
@@ -796,7 +809,7 @@ impl WindowView {
             cx.notify();
         });
         #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
         cx.notify();
     }
 
@@ -809,7 +822,7 @@ impl WindowView {
             cx.notify();
         });
         #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
         cx.notify();
     }
 
@@ -835,7 +848,7 @@ impl WindowView {
             editor.focus_handle.focus(window, cx);
         });
         #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
         cx.notify();
     }
 
@@ -848,7 +861,7 @@ impl WindowView {
             cx.notify();
         });
         #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
         cx.notify();
     }
 
@@ -861,7 +874,7 @@ impl WindowView {
             cx.notify();
         });
         #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
         cx.notify();
     }
 
@@ -1014,7 +1027,7 @@ impl WindowView {
         self.config.theme = theme.meta.name.clone();
         let _ = Config::write_key("theme", &theme_slug);
         #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
         cx.notify();
     }
 
@@ -1154,7 +1167,7 @@ impl WindowView {
                     cx.notify();
                 });
                 #[cfg(target_os = "macos")]
-                cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+                cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
                 cx.notify();
             }
         }
@@ -1164,7 +1177,7 @@ impl WindowView {
         let mut recent = zee_core::recent::RecentFiles::load();
         recent.clear();
         #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config));
+        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
         cx.notify();
     }
 

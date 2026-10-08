@@ -24,6 +24,7 @@ pub struct Workspace {
     pub vi_cmd: Option<String>,
     pub vi_cmd_preedit: Option<String>,
     pub vi_message: Option<(String, bool)>,
+    pub plugins_version: usize,
 }
 
 impl Workspace {
@@ -59,6 +60,7 @@ impl Workspace {
             vi_cmd: None,
             vi_cmd_preedit: None,
             vi_message: None,
+            plugins_version: 0,
         }
     }
 
@@ -84,6 +86,7 @@ impl Workspace {
             let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
         }
         self.plugin_manager = plugin_manager;
+        self.plugins_version = self.plugins_version.wrapping_add(1);
     }
 
     pub fn update_outline(&mut self) {
@@ -780,7 +783,7 @@ mod tests {
             let mut config = Config::default();
             config.language = "ja".to_string();
             let i18n_ja = I18n::load("ja");
-            let menus_ja = crate::app::build_native_menus(&i18n_ja, &config);
+            let menus_ja = crate::app::build_native_menus(&i18n_ja, &config, None);
 
             assert_eq!(menus_ja[0].name.as_ref(), "zee");
             assert_eq!(menus_ja[1].name.as_ref(), "ファイル");
@@ -791,12 +794,33 @@ mod tests {
             // English
             config.language = "en".to_string();
             let i18n_en = I18n::load("en");
-            let menus_en = crate::app::build_native_menus(&i18n_en, &config);
+            let menus_en = crate::app::build_native_menus(&i18n_en, &config, None);
             assert_eq!(menus_en[0].name.as_ref(), "zee");
             assert_eq!(menus_en[1].name.as_ref(), "File");
             assert_eq!(menus_en[2].name.as_ref(), "Edit");
             assert_eq!(menus_en[3].name.as_ref(), "View");
             assert_eq!(menus_en[4].name.as_ref(), "Tabs");
+        }
+    }
+
+    #[test]
+    fn test_plugins_reload_and_menu_updates() {
+        let mut workspace = Workspace::new(Config::default());
+        assert_eq!(workspace.plugins_version, 0);
+
+        workspace.reload_plugins();
+        assert_eq!(workspace.plugins_version, 1);
+
+        workspace.reload_plugins();
+        assert_eq!(workspace.plugins_version, 2);
+
+        #[cfg(target_os = "macos")]
+        {
+            use zee_core::i18n::I18n;
+            let i18n = I18n::load("ja");
+            let menus = crate::app::build_native_menus(&i18n, &workspace.config, Some(&workspace.plugin_manager));
+            let plugin_menu = menus.iter().find(|m| m.name.as_ref() == "プラグイン").expect("Plugin menu must exist");
+            assert!(!plugin_menu.items.is_empty());
         }
     }
 

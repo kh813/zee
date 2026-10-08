@@ -418,7 +418,7 @@ impl EditorView {
                             if let Some(id) = arg {
                                 match zee_core::plugin::PluginManager::install_from_registry(&id, None, Some(&w.config.plugin_registries)) {
                                     Ok(_) => {
-                                        w.plugin_manager.load_installed_plugins();
+                                        w.reload_plugins();
                                         w.vi_message = Some((format!("Plugin '{}' installed successfully", id), false));
                                     }
                                     Err(e) => {
@@ -433,7 +433,7 @@ impl EditorView {
                             if let Some(id) = arg {
                                 match zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id) {
                                     Ok(true) => {
-                                        w.plugin_manager.load_installed_plugins();
+                                        w.reload_plugins();
                                         w.vi_message = Some((format!("Plugin '{}' uninstalled successfully", id), false));
                                     }
                                     Ok(false) => {
@@ -447,8 +447,12 @@ impl EditorView {
                                 w.vi_message = Some(("Usage: :plugin uninstall <id>".to_string(), true));
                             }
                         }
+                        "reload" => {
+                            w.reload_plugins();
+                            w.vi_message = Some(("Plugins reloaded successfully".to_string(), false));
+                        }
                         _ => {
-                            w.vi_message = Some((format!("Unknown plugin command: {}. Available: list, repo [list|add|remove], install <id>, uninstall <id>", subcmd), true));
+                            w.vi_message = Some((format!("Unknown plugin command: {}. Available: list, repo [list|add|remove], install <id>, uninstall <id>, reload", subcmd), true));
                         }
                     }
                     cx.notify();

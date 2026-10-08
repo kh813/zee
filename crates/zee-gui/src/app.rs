@@ -587,7 +587,7 @@ pub fn restore_session_window(session: zee_core::session::UpdateSession, config:
 
 #[cfg(target_os = "macos")]
 pub fn setup_menu(app: &mut App, i18n: &I18n, config: &Config) {
-    app.set_menus(build_native_menus(i18n, config));
+    app.set_menus(build_native_menus(i18n, config, None));
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -700,7 +700,11 @@ impl Action for SetLanguage {
 }
 
 #[cfg(target_os = "macos")]
-pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec<Menu> {
+pub fn build_native_menus(
+    i18n: &I18n,
+    config: &zee_core::config::Config,
+    plugin_manager: Option<&zee_core::plugin::PluginManager>,
+) -> Vec<Menu> {
     let mut theme_items = Vec::new();
     for theme in zee_core::theme::Theme::load_all() {
         let is_current = theme.meta.name == config.theme;
@@ -752,13 +756,16 @@ pub fn build_native_menus(i18n: &I18n, config: &zee_core::config::Config) -> Vec
     };
 
     let mut plugin_menu_items = Vec::new();
-    let mut plugin_manager = zee_core::plugin::PluginManager::new();
-    let dev_plugin_dir = std::path::PathBuf::from("plugins/zee-plugin-text");
-    if dev_plugin_dir.exists() {
-        let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
-    }
-
-    let manifests = plugin_manager.all_manifests();
+    let manifests = if let Some(pm) = plugin_manager {
+        pm.all_manifests()
+    } else {
+        let mut pm = zee_core::plugin::PluginManager::new();
+        let dev_plugin_dir = std::path::PathBuf::from("plugins/zee-plugin-text");
+        if dev_plugin_dir.exists() {
+            let _ = pm.load_plugin_dir(&dev_plugin_dir);
+        }
+        pm.all_manifests()
+    };
     if manifests.is_empty() {
         plugin_menu_items.push(MenuItem::action(i18n.get("menu.plugins.no_plugins"), NoOp {}));
     } else {

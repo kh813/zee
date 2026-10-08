@@ -396,18 +396,22 @@ pub struct PluginManager {
 
 impl Default for PluginManager {
     fn default() -> Self {
-        Self::new()
+        Self::empty()
     }
 }
 
 impl PluginManager {
-    pub fn new() -> Self {
-        let mut manager = Self {
+    pub fn empty() -> Self {
+        Self {
             plugins: Vec::new(),
             component_plugins: Vec::new(),
             lua_plugins: Vec::new(),
             component_engine: None,
-        };
+        }
+    }
+
+    pub fn new() -> Self {
+        let mut manager = Self::empty();
         manager.load_installed_plugins();
         manager
     }

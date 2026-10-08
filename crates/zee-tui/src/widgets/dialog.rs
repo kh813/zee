@@ -2832,9 +2832,10 @@ impl Dialog for GoogleDriveDialog {
                 renderer.set_cell(tx + i as u16, y + 2, Cell { ch: c, bg: dialog_bg, fg: active_fg, ..Default::default() });
             }
 
-            let s1 = "1. Enable 'Google Drive API' in Google Cloud Console";
-            let s2 = "2. Create Credentials -> OAuth client ID -> Desktop App";
-            let s3 = "3. Enter Client ID and Secret below (Tab to switch fields)";
+            let s1 = "1. Create a project in Google Cloud Console (e.g. zee-GoogleDrive)";
+            let s2 = "2. Enable 'Google Drive API' in APIs & Services -> Library";
+            let s3 = "3. Create Credentials -> OAuth client ID -> Desktop App";
+            let s4 = "4. Enter Client ID and Secret below (Tab to switch fields)";
             for (i, c) in s1.chars().enumerate() {
                 renderer.set_cell(x + 3 + i as u16, y + 4, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme), ..Default::default() });
             }
@@ -2843,6 +2844,9 @@ impl Dialog for GoogleDriveDialog {
             }
             for (i, c) in s3.chars().enumerate() {
                 renderer.set_cell(x + 3 + i as u16, y + 6, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme), ..Default::default() });
+            }
+            for (i, c) in s4.chars().enumerate() {
+                renderer.set_cell(x + 3 + i as u16, y + 7, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme), ..Default::default() });
             }
 
             // Client ID Field

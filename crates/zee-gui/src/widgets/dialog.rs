@@ -3766,6 +3766,7 @@ impl Dialog {
                                     .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.9)).child(self.i18n.get("gdrive.step1").to_string()))
                                     .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.9)).child(self.i18n.get("gdrive.step2").to_string()))
                                     .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.9)).child(self.i18n.get("gdrive.step3").to_string()))
+                                    .child(div().text_size(px(11.5)).text_color(with_alpha(fg, 0.9)).child(self.i18n.get("gdrive.step4").to_string()))
                                     .child(
                                         div()
                                             .pt_1()

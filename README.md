@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/kh813/zee/actions/workflows/ci.yml/badge.svg)](https://github.com/kh813/zee/actions/workflows/ci.yml)
 [![Release](https://github.com/kh813/zee/actions/workflows/release.yml/badge.svg)](https://github.com/kh813/zee/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 **zee** is a lightweight, modern, and lightning-fast text editor built in Rust. It provides a native GPU-accelerated **GUI** desktop experience (`zeeg` / `Zee.app`) alongside a feature-packed **TUI** (Terminal User Interface, `zee`) that share the exact same shortcuts, menus, dialogs, and intuitive feel.
 
@@ -175,4 +175,6 @@ stty -ixon
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+- **Source Code**: Licensed under the [Apache License, Version 2.0](LICENSE).
+- **Logos & Brand Assets**: Copyright © 2026 kh813. All rights reserved. (Not covered by Apache 2.0 without explicit permission; derivative works and forks must replace the branding and icons).
+- **Third-Party Acknowledgements**: Built with the [GPUI](https://github.com/zed-industries/zed) framework (Apache-2.0).

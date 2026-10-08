@@ -2,6 +2,11 @@
 members = ["crates/zee-core", "crates/zee-tui", "crates/zee-gui", "plugins/zee-plugin-text"]
 resolver = "2"
 
+[workspace.package]
+license = "Apache-2.0"
+authors = ["kh813"]
+repository = "https://github.com/kh813/zee"
+
 [workspace.dependencies]
 anyhow        = { version = "1.0", features = ["backtrace"] }
 serde         = { version = "1.0", features = ["derive"] }

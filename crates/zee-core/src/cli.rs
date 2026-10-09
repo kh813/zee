@@ -22,6 +22,12 @@ pub fn parse_file_targets(args: &[String]) -> Vec<FileTarget> {
     while i < args.len() {
         let arg = &args[i];
 
+        // Skip command-line options/flags like --gui, -g, -v, --help, etc.
+        if arg.starts_with('-') && arg != "-" {
+            i += 1;
+            continue;
+        }
+
         // Format: +<line> (e.g. +42)
         if arg.starts_with('+') && arg.len() > 1 && arg[1..].chars().all(|c| c.is_ascii_digit()) {
             if let Ok(line) = arg[1..].parse::<usize>() {
@@ -128,5 +134,11 @@ mod tests {
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].path, PathBuf::from("bar.rs"));
         assert_eq!(targets[0].line, Some(200));
+
+        let args = vec!["--gui".to_string(), "main.rs:10".to_string(), "-g".to_string()];
+        let targets = parse_file_targets(&args);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].path, PathBuf::from("main.rs"));
+        assert_eq!(targets[0].line, Some(10));
     }
 }

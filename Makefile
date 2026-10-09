@@ -58,10 +58,12 @@ all: local
 tui: cli
 cli:
 	@mkdir -p $(DIST_DIR)
-	@echo "==> Building TUI (zee)..."
-	cargo build --release -p zee-tui
+	@echo "==> Building TUI / CLI (zee and zee-cli)..."
+	cargo build --release -p zee-tui --bin zee-cli
+	cargo build --release -p zee-tui --bin zee
+	@cp target/release/zee-cli $(DIST_DIR)/zee-cli
 	@cp target/release/$(ZEE_TUI_BIN) $(DIST_DIR)/$(ZEE_TUI_BIN)
-	@echo "Built $(DIST_DIR)/$(ZEE_TUI_BIN)"
+	@echo "Built $(DIST_DIR)/$(ZEE_TUI_BIN) and $(DIST_DIR)/zee-cli"
 
 gui: $(GUI_TARGET)
 
@@ -125,10 +127,12 @@ macos-gui:
 
 linux-gui:
 	@mkdir -p $(DIST_DIR)
-	@echo "==> Building Linux GUI (zeeg)..."
-	cargo build --release -p zee-gui $(CARGO_FLAGS)
+	@echo "==> Building Linux GUI (zee dual & zeeg)..."
+	cargo build --release -p zee-gui --bin zee $(CARGO_FLAGS)
+	cargo build --release -p zee-gui --bin zeeg $(CARGO_FLAGS)
+	@cp target/release/zee $(DIST_DIR)/zee
 	@cp target/release/zeeg $(DIST_DIR)/zeeg
-	@echo "Built $(DIST_DIR)/zeeg"
+	@echo "Built $(DIST_DIR)/zee (Dual GUI/CLI) and $(DIST_DIR)/zeeg (GUI only)"
 
 windows-gui:
 	@mkdir -p $(DIST_DIR)

@@ -8089,6 +8089,7 @@ dependencies = [
  "url",
  "winres",
  "zee-core",
+ "zee-tui",
 ]
 
 [[package]]

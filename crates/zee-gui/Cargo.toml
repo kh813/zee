@@ -4,12 +4,21 @@ version = "0.2.4"
 edition = "2021"
 
 
+[lib]
+name = "zee_gui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "zeeg"
 path = "src/main.rs"
 
+[[bin]]
+name = "zee"
+path = "src/bin/zee.rs"
+
 [dependencies]
 zee-core = { path = "../zee-core" }
+zee-tui  = { path = "../zee-tui" }
 gpui          = { git = "https://github.com/zed-industries/zed", rev = "6766514599c6f8ce6530ccc685db5e0d68c44f32" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "6766514599c6f8ce6530ccc685db5e0d68c44f32", features = ["font-kit"] }
 anyhow   = { workspace = true }

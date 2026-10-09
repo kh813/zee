@@ -4,9 +4,17 @@ version = "0.2.4"
 edition = "2021"
 
 
+[lib]
+name = "zee_tui"
+path = "src/lib.rs"
+
 [[bin]]
 name = "zee"
 path = "src/main.rs"
+
+[[bin]]
+name = "zee-cli"
+path = "src/bin/zee_cli.rs"
 
 [dependencies]
 zee-core  = { path = "../zee-core" }

@@ -37,6 +37,29 @@ pub struct Sidebar {
     pub outline_nodes: Vec<OutlineNode>,
     pub selected_outline_idx: usize,
     pub outline_scroll_top: usize,
+
+    // File Properties Panel State
+    pub show_properties: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActiveFileProps {
+    pub file_name: String,
+    pub size_str: String,
+    pub lines: usize,
+    pub chars: usize,
+    pub encoding: String,
+    pub line_ending: String,
+}
+
+pub fn format_file_size(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.2} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
 }
 
 impl Sidebar {
@@ -58,6 +81,7 @@ impl Sidebar {
             outline_nodes: Vec::new(),
             selected_outline_idx: 0,
             outline_scroll_top: 0,
+            show_properties: true,
         }
     }
 
@@ -249,7 +273,7 @@ impl Sidebar {
         }
     }
 
-    pub fn handle_click(&mut self, rel_x: u16, rel_y: u16, is_right: bool, bw: u16, _viewport_height: usize) -> SidebarAction {
+    pub fn handle_click(&mut self, rel_x: u16, rel_y: u16, is_right: bool, bw: u16, total_height: usize) -> SidebarAction {
         let content_x = if is_right {
             if rel_x == 0 {
                 return SidebarAction::None;
@@ -272,6 +296,25 @@ impl Sidebar {
                 self.active_tab = SidebarTab::Files;
             } else if content_x < 22 {
                 self.active_tab = SidebarTab::Outline;
+            }
+            return SidebarAction::None;
+        }
+
+        let prop_h = if total_height >= 12 && self.show_properties {
+            7
+        } else if total_height >= 5 {
+            1
+        } else {
+            0
+        };
+
+        let prop_start_y = total_height.saturating_sub(prop_h);
+        let click_y = rel_y as usize;
+
+        if prop_h > 0 && click_y >= prop_start_y && click_y < total_height {
+            if click_y == prop_start_y {
+                // Header row clicked -> toggle properties
+                self.show_properties = !self.show_properties;
             }
             return SidebarAction::None;
         }
@@ -300,10 +343,23 @@ impl Sidebar {
         SidebarAction::None
     }
 
-    pub fn item_at_click(&mut self, _rel_x: u16, rel_y: u16) -> Option<(PathBuf, bool)> {
+    pub fn item_at_click(&mut self, _rel_x: u16, rel_y: u16, total_height: usize) -> Option<(PathBuf, bool)> {
         if rel_y == 0 {
             return None;
         }
+        let prop_h = if total_height >= 12 && self.show_properties {
+            7
+        } else if total_height >= 5 {
+            1
+        } else {
+            0
+        };
+        let prop_start_y = total_height.saturating_sub(prop_h);
+        let click_y = rel_y as usize;
+        if prop_h > 0 && click_y >= prop_start_y {
+            return None;
+        }
+
         let item_idx = (rel_y.saturating_sub(1) as usize) + match self.active_tab {
             SidebarTab::Files => self.file_scroll_top,
             SidebarTab::Outline => self.outline_scroll_top,
@@ -347,6 +403,8 @@ impl Sidebar {
         theme: &Theme,
         active_buffer_path: Option<&Path>,
         is_right: bool,
+        active_props: Option<&ActiveFileProps>,
+        i18n: &zee_core::I18n,
     ) {
         let (bx, by, bw, bh) = bounds;
         if bw == 0 || bh == 0 {
@@ -455,9 +513,18 @@ impl Sidebar {
             renderer.set_cell(dot_x + 1, by, Cell { ch: '*', fg: dot_fg, bg, bold: self.file_tree.show_hidden, underline: false, width: 1 });
         }
 
-        // 3. Render content
-        let content_h = (bh as usize).saturating_sub(1);
-        let content_w = (bw as usize).saturating_sub(1); // excluding right border
+        // Calculate heights for content vs properties panel
+        let total_bh = bh as usize;
+        let prop_h = if total_bh >= 12 && self.show_properties {
+            7
+        } else if total_bh >= 5 {
+            1
+        } else {
+            0
+        };
+
+        // 3. Render content (Files or Outline)
+        let content_h = total_bh.saturating_sub(1 + prop_h);
 
         match self.active_tab {
             SidebarTab::Files => {
@@ -535,7 +602,7 @@ impl Sidebar {
             SidebarTab::Outline => {
                 let items = self.flatten_outline();
                 if items.is_empty() {
-                    let empty_msg = " (No headings)";
+                    let empty_msg = format!(" {}", i18n.get("sidebar.no_headings"));
                     let y = by + 1;
                     for (cur_x, ch) in (content_start_x..content_start_x + content_w as u16).zip(empty_msg.chars()) {
                         renderer.set_cell(
@@ -616,6 +683,151 @@ impl Sidebar {
                 }
             }
         }
+
+        // 4. Render Properties Panel (at bottom of sidebar)
+        if prop_h > 0 {
+            let prop_y_start = by + (total_bh - prop_h) as u16;
+
+            // Horizontal border & header line
+            let arrow = if self.show_properties { "▼" } else { "▶" };
+            let prop_title = i18n.get("sidebar.properties");
+            let header_str = format!(" {} {}", arrow, prop_title);
+
+            let mut cur_x = content_start_x;
+            let mut col_used = 0;
+            for ch in header_str.chars() {
+                let w = ch.width().unwrap_or(1);
+                if col_used + w > content_w {
+                    break;
+                }
+                renderer.set_cell(
+                    cur_x,
+                    prop_y_start,
+                    Cell {
+                        ch,
+                        fg: accent,
+                        bg,
+                        bold: true,
+                        underline: false,
+                        width: w as u8,
+                    },
+                );
+                cur_x += w as u16;
+                col_used += w;
+            }
+            while col_used < content_w {
+                renderer.set_cell(
+                    cur_x,
+                    prop_y_start,
+                    Cell {
+                        ch: '─',
+                        fg: border_color,
+                        bg,
+                        bold: false,
+                        underline: false,
+                        width: 1,
+                    },
+                );
+                cur_x += 1;
+                col_used += 1;
+            }
+
+            // Properties details (if expanded)
+            if self.show_properties && prop_h >= 7 {
+                let rows: Vec<(String, String)> = if let Some(p) = active_props {
+                    vec![
+                        (i18n.get("sidebar.prop_file").to_string(), p.file_name.clone()),
+                        (i18n.get("sidebar.prop_size").to_string(), p.size_str.clone()),
+                        (i18n.get("sidebar.prop_lines").to_string(), p.lines.to_string()),
+                        (i18n.get("sidebar.prop_chars").to_string(), p.chars.to_string()),
+                        (i18n.get("sidebar.prop_encoding").to_string(), p.encoding.clone()),
+                        (i18n.get("sidebar.prop_line_ending").to_string(), p.line_ending.clone()),
+                    ]
+                } else {
+                    vec![
+                        (i18n.get("sidebar.prop_file").to_string(), i18n.get("sidebar.no_file").to_string()),
+                        (i18n.get("sidebar.prop_size").to_string(), "-".to_string()),
+                        (i18n.get("sidebar.prop_lines").to_string(), "-".to_string()),
+                        (i18n.get("sidebar.prop_chars").to_string(), "-".to_string()),
+                        (i18n.get("sidebar.prop_encoding").to_string(), "-".to_string()),
+                        (i18n.get("sidebar.prop_line_ending").to_string(), "-".to_string()),
+                    ]
+                };
+
+                for (idx, (label, val)) in rows.into_iter().enumerate() {
+                    let y = prop_y_start + 1 + idx as u16;
+                    let label_str = format!("  {}: ", label);
+                    let label_len = label_str.chars().map(|c| c.width().unwrap_or(1)).sum::<usize>();
+
+                    let mut cur_x = content_start_x;
+                    let mut col_used = 0;
+
+                    // Draw label
+                    for ch in label_str.chars() {
+                        let w = ch.width().unwrap_or(1);
+                        if col_used + w > content_w {
+                            break;
+                        }
+                        renderer.set_cell(
+                            cur_x,
+                            y,
+                            Cell {
+                                ch,
+                                fg: border_color,
+                                bg,
+                                bold: false,
+                                underline: false,
+                                width: w as u8,
+                            },
+                        );
+                        cur_x += w as u16;
+                        col_used += w;
+                    }
+
+                    // Remaining width for value
+                    let val_available = content_w.saturating_sub(label_len);
+                    let mut val_col = 0;
+                    for ch in val.chars() {
+                        let w = ch.width().unwrap_or(1);
+                        if val_col + w > val_available {
+                            break;
+                        }
+                        renderer.set_cell(
+                            cur_x,
+                            y,
+                            Cell {
+                                ch,
+                                fg,
+                                bg,
+                                bold: false,
+                                underline: false,
+                                width: w as u8,
+                            },
+                        );
+                        cur_x += w as u16;
+                        val_col += w;
+                        col_used += w;
+                    }
+
+                    while col_used < content_w {
+                        renderer.set_cell(
+                            cur_x,
+                            y,
+                            Cell {
+                                ch: ' ',
+                                fg,
+                                bg,
+                                bold: false,
+                                underline: false,
+                                width: 1,
+                            },
+                        );
+                        cur_x += 1;
+                        col_used += 1;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -644,5 +856,33 @@ mod tests {
         assert!(matches!(action, SidebarAction::ToggleHidden));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_sidebar_properties_toggle() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_sb_prop_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let mut sidebar = Sidebar::new(temp_dir.clone(), true);
+
+        assert!(sidebar.show_properties);
+
+        // When total_height is 20, properties header is at y = 20 - 7 = 13
+        let action = sidebar.handle_click(2, 13, false, 26, 20);
+        assert!(matches!(action, SidebarAction::None));
+        assert!(!sidebar.show_properties);
+
+        // Now collapsed, properties header is at y = 20 - 1 = 19
+        let action = sidebar.handle_click(2, 19, false, 26, 20);
+        assert!(matches!(action, SidebarAction::None));
+        assert!(sidebar.show_properties);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_format_file_size() {
+        assert_eq!(format_file_size(500), "500 B");
+        assert_eq!(format_file_size(2048), "2.0 KB");
+        assert_eq!(format_file_size(5 * 1024 * 1024), "5.00 MB");
     }
 }

@@ -32,7 +32,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             is_linux: true
             platform: linux-x64
-          # 3. Windows: x86_64 GUI (zeeg.exe)
+          # 3. Windows: x86_64 GUI (zee.exe)
           - name: windows-x64
             os: windows-latest
             target: x86_64-pc-windows-msvc

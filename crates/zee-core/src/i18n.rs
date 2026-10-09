@@ -503,7 +503,7 @@ impl I18n {
         m.insert("status.matches".to_string(), "{total} 個中 {current} 番目の一致".to_string());
         m.insert("status.replaced_count".to_string(), "{n} 箇所を置換しました".to_string());
         m.insert("status.terminal_too_small".to_string(), "ターミナルが小さすぎます ({cols}x{rows})。サイズを大きくしてください。".to_string());
-        m.insert("status.cursor".to_string(), "{line} 行, {col} 列".to_string());
+        m.insert("status.cursor".to_string(), "Ln {line}, Col {col}".to_string());
         m.insert("status.selection".to_string(), "{n} 文字選択".to_string());
 
         m.insert("error".to_string(), "エラー".to_string());

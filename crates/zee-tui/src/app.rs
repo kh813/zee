@@ -781,7 +781,30 @@ impl App {
     fn render_sidebar(&mut self) {
         let bounds = self.layout.sidebar_bounds();
         let is_focused = self.focus == Focus::Sidebar;
-        let active_path = self.buffers.get(self.active_buffer).and_then(|b| b.path.as_deref());
+        let active_buf = self.buffers.get(self.active_buffer);
+        let active_path = active_buf.and_then(|b| b.path.as_deref());
+
+        let active_props = active_buf.map(|buf| {
+            let file_name = buf.path.as_ref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.i18n.get("status.no_name").to_string());
+
+            let bytes = buf.path.as_ref()
+                .and_then(|p| std::fs::metadata(p).ok())
+                .map(|m| m.len() as usize)
+                .unwrap_or_else(|| buf.rope.len_bytes());
+
+            crate::widgets::sidebar::ActiveFileProps {
+                file_name,
+                size_str: crate::widgets::sidebar::format_file_size(bytes),
+                lines: buf.rope.len_lines(),
+                chars: buf.rope.len_chars(),
+                encoding: buf.encoding.name().to_string(),
+                line_ending: buf.line_ending.name().to_string(),
+            }
+        });
+
         self.sidebar.render(
             &mut self.renderer,
             bounds,
@@ -789,6 +812,8 @@ impl App {
             &self.theme,
             active_path,
             self.layout.is_right_sidebar,
+            active_props.as_ref(),
+            &self.i18n,
         );
     }
 
@@ -4705,7 +4730,7 @@ impl App {
                         let rel_x = x - sx;
                         let rel_y = y - sy;
                         self.focus = Focus::Sidebar;
-                        let action = self.sidebar.handle_click(rel_x, rel_y, self.layout.is_right_sidebar, sw, sh.saturating_sub(1) as usize);
+                        let action = self.sidebar.handle_click(rel_x, rel_y, self.layout.is_right_sidebar, sw, sh as usize);
                         match action {
                             crate::widgets::sidebar::SidebarAction::OpenFile(path) => {
                                 self.open_or_switch_to_file(path);
@@ -4800,7 +4825,7 @@ impl App {
                     let rel_x = x - sx;
                     let rel_y = y - sy;
                     self.focus = Focus::Sidebar;
-                    if let Some((path, is_dir)) = self.sidebar.item_at_click(rel_x, rel_y) {
+                    if let Some((path, is_dir)) = self.sidebar.item_at_click(rel_x, rel_y, sh as usize) {
                         self.current_dialog = Some(Box::new(dialog::FileContextMenuDialog::new(
                             path,
                             is_dir,

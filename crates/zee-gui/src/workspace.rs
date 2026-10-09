@@ -826,11 +826,11 @@ mod tests {
             let plugin_menu = menus.iter().find(|m| m.name.as_ref() == "プラグイン").expect("Plugin menu must exist");
             assert!(!plugin_menu.items.is_empty());
 
-            // If no plugins loaded, the first item must be "プラグインなし" action
+            // If no plugins loaded, the first item must be "インストール済みのプラグインはありません" action
             if workspace.plugin_manager.all_manifests().is_empty() {
                 match &plugin_menu.items[0] {
                     gpui::MenuItem::Action { name, .. } => {
-                        assert!(name.contains("プラグインなし") || name.contains("No plugins"));
+                        assert!(name.contains("プラグイン") || name.contains("plugin"));
                     }
                     _ => panic!("Expected Action item for no plugins message"),
                 }

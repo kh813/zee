@@ -1581,7 +1581,7 @@ impl WindowView {
 
             if let Some((sub_id, y_offset)) = open_submenu {
                 let sub_left = left_pos + px(228.0);
-                let sub_top = px(28.0 + y_offset.saturating_sub(4.0));
+                let sub_top = px(28.0 + (y_offset - 4.0).max(0.0));
                 let sub_content = match sub_id {
                     SubmenuId::NewFromTemplate => self.render_templates_submenu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
                     SubmenuId::Language => self.render_language_submenu(fg, hover_bg, muted_fg, border, cx).into_any_element(),

@@ -3,10 +3,34 @@
 [![CI](https://github.com/kh813/zee/actions/workflows/ci.yml/badge.svg)](https://github.com/kh813/zee/actions/workflows/ci.yml)
 [![Release](https://github.com/kh813/zee/actions/workflows/release.yml/badge.svg)](https://github.com/kh813/zee/releases)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/OS-macOS%20%7C%20Windows%20%7C%20Linux-brightgreen.svg)](https://github.com/kh813/zee/releases)
 
-**zee** is a lightweight, modern, and lightning-fast text editor built in Rust. It provides a native GPU-accelerated **GUI** desktop experience (`zeeg` / `Zee.app`) alongside a feature-packed **TUI** (Terminal User Interface, `zee`) that share the exact same shortcuts, menus, dialogs, and intuitive feel.
+**zee** is a lightweight, modern, and lightning-fast text editor built in Rust.
 
-Whether launching `Zee.app` on your desktop or running `zee` over SSH in a terminal, **zee** gives you a consistent, distraction-free editing workflow.
+---
+
+### 💻 Supported Operating Systems (サポートOS)
+
+| Operating System (OS) | GUI Edition (デスクトップ版) | CLI / TUI Edition (ターミナル版) | Architectures | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **macOS** | **Zee.app** (Metal GPU-accelerated) | **zee** (Terminal CLI) | Apple Silicon (M1/M2/M3/M4) / Intel | ✅ Supported |
+| **Windows** | **zee.exe** (DirectX GPU-accelerated) | **zee.exe** (Console mode) | 64-bit (x86-64) / ARM64 | ✅ Supported |
+| **Linux** | **zeeg** (Vulkan GPU-accelerated) | **zee** (Ultra-fast CLI / TUI) | x86-64 / ARM64 (aarch64) | ✅ Supported |
+
+---
+
+### 🌐 Multi-OS & Dual GUI / CLI Architecture
+
+**zee** is engineered from the ground up as a **multi-OS text editor supporting both native GUI desktop applications and terminal CLI (TUI)**.
+
+Its core design philosophy is to provide the **exact same user experience across all platforms and environments**:
+- **GUI for macOS & Windows**: Native GPU-accelerated desktop experience (`Zee.app` on macOS, `zee.exe` on Windows).
+- **CLI / TUI for Linux & Remote Workflows**: Ultra-fast, lightweight terminal experience (`zee`) specifically optimized for Linux environments and remote SSH workflows.
+- **Unified User Experience**: Whether launching the GUI app on your Mac/Windows workstation or running the CLI over SSH on a headless Linux server, you get the **exact same menus, keyboard shortcuts, dialogs, visual themes, and intuitive editing feel**—eliminating the need to switch muscle memory between environments.
+
+> **日本語**:  
+> **zee** は、**マルチOS（macOS / Windows / Linux）**に対応し、**GUI（デスクトップアプリ）とCLI（ターミナルTUI）の双方をフルサポート**したテキストエディタです。  
+> 「WindowsやMacでのリッチなGUI版」と「主にLinux環境やSSH接続先で活躍するCLI版」の間で、ショートカットキー、メニュー構成、ダイアログ、操作感に至るまで**全く同じユーザー体験**を提供することを目指して設計されています。
 
 ---
 

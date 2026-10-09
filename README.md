@@ -12,19 +12,19 @@
 
 ## 💻 Supported Operating Systems / サポートOS
 
-| Operating System / OS | GUI Edition / デスクトップ版 | CLI & TUI Edition / ターミナル版 | Architectures / アーキテクチャ | Status / 状態 |
+| Operating System / OS | GUI Edition / デスクトップ版 | CLI Edition / ターミナル版 | Architectures / アーキテクチャ | Status / 状態 |
 | :--- | :--- | :--- | :--- | :--- |
-| **macOS** | **Zee.app** (Metal GPU) | **zee** / **zee-cli** | Apple Silicon (M1/M2/M3/M4) & Intel | ✅ Fully Supported |
-| **Windows** | **zee.exe** (DirectX GPU) | **zee.exe** (Console mode) | 64-bit (x86-64) & ARM64 | ✅ Fully Supported |
+| **macOS** | **Zee.app** (Metal GPU) | **zee** | Apple Silicon (M1/M2/M3/M4) & Intel | ✅ Fully Supported |
+| **Windows** | **zee.exe** (DirectX GPU) | — *(Self-build)* | 64-bit (x86-64) & ARM64 | ✅ Fully Supported |
 | **Linux** | **zee** (`--gui`, Vulkan GPU) | **zee** (Default) / **zee-cli** (Zero-dep) | x86-64 & ARM64 (aarch64) | ✅ Fully Supported |
 
 ---
 
 ## 🌐 Multi-OS & Dual GUI / CLI Architecture / マルチOS・GUI/CLI両対応
 
-**zee** is engineered from the ground up to deliver a unified, seamless editing experience across **macOS, Windows, and Linux**, fully supporting both native desktop GUIs and terminal CLIs (TUI).
+**zee** is engineered from the ground up to deliver a unified, seamless editing experience across **macOS, Windows, and Linux**, fully supporting both native desktop GUIs and terminal CLIs.
 
-**zee** は、**macOS / Windows / Linux** のマルチOSに対応し、**GUI（デスクトップアプリ）とCLI（ターミナルTUI）の双方をフルサポート**したテキストエディタです。
+**zee** は、**macOS / Windows / Linux** のマルチOSに対応し、**GUI（デスクトップアプリ）とCLI（ターミナル）の双方をフルサポート**したテキストエディタです。
 
 ### 🎯 Unified Experience / 一貫したユーザー体験
 Whether launching the GUI app on a Mac/Windows workstation or editing over SSH on a headless Linux server, you get the **exact same menus, keyboard shortcuts, dialogs, themes, and intuitive editing feel**—eliminating the need to switch muscle memory between environments.
@@ -33,7 +33,7 @@ Whether launching the GUI app on a Mac/Windows workstation or editing over SSH o
 
 ### 🐧 Linux: Smart Dual Binary & Zero-Dependency CLI / Linux向けデュアルバイナリ設計
 - **`zee` (Dual GUI / CLI Binary / 兼用バイナリ)**:
-  - Running `zee [file]` in a terminal launches the **Terminal CLI (TUI)** immediately.
+  - Running `zee [file]` in a terminal launches the **Terminal CLI** immediately.
   - Running `zee --gui` or `zee -g` launches the **Hardware-Accelerated GUI**.
   - Clicking the application icon from desktop app launchers (.desktop) automatically launches the **GUI**.
   - *ターミナルから通常実行するとCLI版、`zee --gui`（または `zee -g`）で実行するとGUI版が起動します。*
@@ -46,12 +46,12 @@ Whether launching the GUI app on a Mac/Windows workstation or editing over SSH o
 
 ## ✨ Highlights & Features / 主な機能と特徴
 
-- **Dual GUI & TUI Parity / GUIとCLIの完全同期**:
-  - Native hardware-accelerated desktop GUI (`Zee.app` / `zee.exe` / `zee --gui`) and terminal TUI (`zee` / `zee-cli`) share 100% feature and shortcut parity.
+- **Dual GUI & CLI Parity / GUIとCLIの完全同期**:
+  - Native hardware-accelerated desktop GUI (`Zee.app` / `zee.exe` / `zee --gui`) and terminal CLI (`zee` / `zee-cli`) share 100% feature and shortcut parity.
   - *GUI版とターミナルCLI版でショートカットや操作体系が100%一致。*
 - **Sidebar: File Tree & Outline / サイドバー（ファイルツリー & アウトライン）**:
   - Collapsible file explorer and code symbol outline navigation.
-  - Full file management: create, rename, and delete files/folders directly via context menu (or `m` key in TUI).
+  - Full file management: create, rename, and delete files/folders directly via context menu (or `m` key in CLI).
   - Dotfiles & hidden file toggle (`👁` button or `h` key).
   - Multi-language symbol outline: Markdown, Rust, Python, Go, JSON, YAML, Shell, HTML, CSS.
   - *フォルダツリーと関数/見出しのアウトライン表示。ファイルの新規作成・名前変更・削除や隠しファイル切り替えに対応。*
@@ -119,7 +119,7 @@ macOSで「開発元を確認できないため開けません」と表示され
 
 ### 2. Launching Terminal CLI / CLI（ターミナル）版の起動
 ```bash
-# Open file in terminal (TUI)
+# Open file in terminal (CLI)
 zee file.txt
 
 # Or explicitly using zero-dependency CLI binary on Linux:
@@ -158,7 +158,7 @@ git clone https://github.com/kh813/zee.git
 cd zee
 
 .\make.ps1         # Builds Windows GUI into dist/zee.exe
-.\make.ps1 tui     # Builds Windows TUI into dist/zee-cli.exe
+.\make.ps1 cli     # Builds Windows CLI into dist/zee-cli.exe
 .\make.ps1 test    # Runs workspace tests
 ```
 
@@ -166,7 +166,7 @@ cd zee
 
 ## ⚙️ Configuration / 設定
 
-Settings are saved in `~/.config/zee/config.toml` (or `%APPDATA%\zee\config.toml` on Windows) and automatically shared between GUI and TUI:  
+Settings are saved in `~/.config/zee/config.toml` (or `%APPDATA%\zee\config.toml` on Windows) and automatically shared between GUI and CLI:  
 設定ファイルは GUI版 と CLI版 で自動的に共有されます:
 
 ```toml

@@ -58,14 +58,17 @@ switch ($Target) {
 
     { $_ -in 'tui', 'cli' } {
         Ensure-DistDir
-        Write-Host "==> Building Windows TUI (zee.exe)..." -ForegroundColor Cyan
+        Write-Host "==> Building Windows CLI (zee-cli.exe)..." -ForegroundColor Cyan
         if ($Release) {
             cargo build --release -p zee-tui
         } else {
             cargo build -p zee-tui
         }
-        $SrcBin = Join-Path $ProjectRoot "target\$TargetFolder\zee.exe"
-        $DstBin = Join-Path $DistDir "zee.exe"
+        $SrcBin = Join-Path $ProjectRoot "target\$TargetFolder\zee-cli.exe"
+        if (-not (Test-Path $SrcBin)) {
+            $SrcBin = Join-Path $ProjectRoot "target\$TargetFolder\zee.exe"
+        }
+        $DstBin = Join-Path $DistDir "zee-cli.exe"
         if (Test-Path $SrcBin) {
             Copy-Item $SrcBin $DstBin -Force
             Write-Host "Built: $DstBin" -ForegroundColor Green
@@ -139,7 +142,7 @@ switch ($Target) {
         Write-Host "Available targets:"
         Write-Host "  .\make.ps1            - Build Windows GUI as dist/zee.exe (default)"
         Write-Host "  .\make.ps1 gui        - Build Windows GUI (dist/zee.exe)"
-        Write-Host "  .\make.ps1 tui        - Build Windows TUI (dist/zee-cli.exe)"
+        Write-Host "  .\make.ps1 cli        - Build Windows CLI (dist/zee-cli.exe)"
         Write-Host "  .\make.ps1 test       - Run tests (cargo test --workspace)"
         Write-Host "  .\make.ps1 check      - Check workspace (cargo check --workspace)"
         Write-Host "  .\make.ps1 package    - Build and package into dist/zee-windows-x64.zip"

@@ -1,10 +1,10 @@
 # zee User Manual / ユーザーマニュアル
 
-**zee** is a lightweight, modern GUI and TUI text editor built for plain text, Markdown, code, and configuration files.  
+**zee** is a lightweight, modern GUI and CLI text editor built for plain text, Markdown, code, and configuration files.  
 It provides a native hardware-accelerated desktop application (`Zee.app` / `zee.exe` / `zee --gui`) alongside a high-performance terminal interface (`zee` / `zee-cli`) running across macOS, Linux, and Windows — including seamlessly over SSH.
 
-**zee** は、プレーンテキスト、Markdown、ソースコード、設定ファイル編集のための軽量・モダンなGUI & TUIテキストエディタです。  
-macOS、Linux、Windows上で動作し、ハードウェアアクセラレーションによるデスクトップGUI（`Zee.app` / `zee.exe` / `zee --gui`）と、ターミナルやSSH経由で軽快に動くTUI（`zee` / `zee-cli`）の両方をフルサポートしています。
+**zee** は、プレーンテキスト、Markdown、ソースコード、設定ファイル編集のための軽量・モダンなGUI & CLIテキストエディタです。  
+macOS、Linux、Windows上で動作し、ハードウェアアクセラレーションによるデスクトップGUI（`Zee.app` / `zee.exe` / `zee --gui`）と、ターミナルやSSH経由で軽快に動くCLI（`zee` / `zee-cli`）の両方をフルサポートしています。
 
 ---
 
@@ -38,7 +38,7 @@ Download the pre-compiled archive for your OS from the [GitHub Releases page](ht
 
 ### Linux: Dual Binary vs Pure CLI / Linuxの兼用版とCLI専用版について
 - **`zee` (Dual GUI / CLI Binary / 兼用版)**:
-  - Running `zee [file]` in a terminal launches the **Terminal CLI (TUI)**.
+  - Running `zee [file]` in a terminal launches the **Terminal CLI**.
   - Running `zee --gui [file]` or `zee -g [file]` launches the **GPU Desktop GUI**.
   - Clicking `zee.desktop` launches the **GUI** automatically.
   - *ターミナルから通常実行するとCLI、`--gui` または `-g` を付けるとGUIが立ち上がります。*
@@ -109,15 +109,15 @@ Toggle the sidebar with `View > [x] Sidebar` or `Ctrl+B` / `⌘B`:
 
 - **Files Tab / ファイルツリー**:
   - Interactive file explorer with directory expansion and smooth scrolling.
-  - **Context Menu / コンテキストメニュー**: Right-click on any file/folder (or press `m` / `F10` in TUI) to access:
+  - **Context Menu / コンテキストメニュー**: Right-click on any file/folder (or press `m` / `F10` in CLI) to access:
     - `📄 New File`: Create a new file / 新規ファイル作成
     - `📁 New Folder`: Create a new folder / 新規フォルダ作成
     - `✏️ Rename`: Rename item / 名前変更
     - `🗑️ Delete`: Delete item / 削除（確認付き）
     - `↻ Refresh`: Rescan file tree / ツリー再読み込み
     - `👁 Show/Hide Hidden Files`: Toggle dotfiles (`.gitignore`, `.env`, etc.) / 隠しファイル表示切り替え
-  - **Show Hidden Files**: Click `👁` in header, toggle via context menu, or press `h` in TUI. State is saved to `config.toml`.  
-    *ヘッダーの `👁` ボタン、右クリック、またはTUIで `h` キーを押して隠しファイルを切り替えます。*
+  - **Show Hidden Files**: Click `👁` in header, toggle via context menu, or press `h` in CLI. State is saved to `config.toml`.  
+    *ヘッダーの `👁` ボタン、右クリック、またはCLIで `h` キーを押して隠しファイルを切り替えます。*
 - **Outline Tab / アウトライン**:
   - Code symbol navigator extracting headings, functions, classes, and structs:
     - **Markdown**: Heading hierarchy (`#`, `##`, etc.) / 見出しツリー
@@ -300,7 +300,7 @@ When editing files over remote SSH terminal connections, add the following line 
 stty -ixon
 ```
 
-Zee fully supports the **OSC 52** clipboard protocol: text copied inside a remote TUI terminal session synchronizes directly to your local workstation's clipboard.  
+Zee fully supports the **OSC 52** clipboard protocol: text copied inside a remote CLI terminal session synchronizes directly to your local workstation's clipboard.  
 *OSC 52 クリップボード転送に対応しており、SSHリモート先でコピーしたテキストが手元のマシンのクリップボードにそのまま同期されます。*
 
 ---

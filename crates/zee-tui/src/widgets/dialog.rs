@@ -3189,6 +3189,7 @@ pub struct GoogleDriveDialog {
     pub client_id_input: String,
     pub client_secret_input: String,
     pub setup_active_field: usize, // 0 for client_id, 1 for client_secret
+    pub info_message: Option<String>,
 
     // i18n
     pub i18n_title: String,
@@ -3198,6 +3199,8 @@ pub struct GoogleDriveDialog {
     pub i18n_open: String,
     pub i18n_cancel: String,
     pub i18n_search_placeholder: String,
+    pub i18n_json_loaded_success: String,
+    pub i18n_json_load_failed: String,
 }
 
 impl GoogleDriveDialog {
@@ -3208,6 +3211,7 @@ impl GoogleDriveDialog {
             selected_idx: 0,
             is_loading: false,
             error_message: None,
+            info_message: None,
             current_folder_id: None,
             folder_stack: vec![(None, "My Drive".to_string())],
             search_query: String::new(),
@@ -3225,12 +3229,69 @@ impl GoogleDriveDialog {
             i18n_open: i18n.get("gdrive.open").to_string(),
             i18n_cancel: i18n.get("gdrive.cancel").to_string(),
             i18n_search_placeholder: i18n.get("gdrive.search_placeholder").to_string(),
+            i18n_json_loaded_success: i18n.get("gdrive.json_loaded_success").to_string(),
+            i18n_json_load_failed: i18n.get("gdrive.json_load_failed").to_string(),
         };
 
         if zee_core::gdrive::GDriveManager::is_authenticated() {
             dialog.fetch_files();
         }
         dialog
+    }
+
+    pub fn paste_from_clipboard(&mut self) {
+        if let Some(text) = crate::clipboard::get_clipboard() {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return;
+            }
+
+            // Check if text is raw JSON credentials
+            if trimmed.starts_with('{') {
+                match zee_core::gdrive::GDriveManager::parse_oauth_credentials_json(trimmed) {
+                    Ok((id, sec)) => {
+                        self.client_id_input = id;
+                        self.client_secret_input = sec;
+                        self.info_message = Some(self.i18n_json_loaded_success.clone());
+                        self.error_message = None;
+                        return;
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("{}: {}", self.i18n_json_load_failed, e));
+                        self.info_message = None;
+                        return;
+                    }
+                }
+            }
+
+            // Check if text is a file path to credentials JSON
+            let path = std::path::Path::new(trimmed);
+            if path.exists() && path.is_file() {
+                match zee_core::gdrive::GDriveManager::parse_oauth_credentials_file(path) {
+                    Ok((id, sec)) => {
+                        self.client_id_input = id;
+                        self.client_secret_input = sec;
+                        self.info_message = Some(self.i18n_json_loaded_success.clone());
+                        self.error_message = None;
+                        return;
+                    }
+                    Err(e) => {
+                        self.error_message = Some(format!("{}: {}", self.i18n_json_load_failed, e));
+                        self.info_message = None;
+                        return;
+                    }
+                }
+            }
+
+            // Plain string paste into active input
+            if self.setup_active_field == 0 {
+                self.client_id_input.push_str(trimmed);
+            } else {
+                self.client_secret_input.push_str(trimmed);
+            }
+            self.error_message = None;
+            self.info_message = None;
+        }
     }
 
     pub fn poll_messages(&mut self) -> Option<PathBuf> {
@@ -3437,10 +3498,24 @@ impl Dialog for GoogleDriveDialog {
                 renderer.set_cell(bx + i as u16, by, Cell { ch: c, bg: active_bg, fg: active_fg, ..Default::default() });
             }
 
-            if let Some(ref err) = self.error_message {
+            let hint_str = "Tip: Press Ctrl+V to paste JSON or credentials";
+            let hx = x + (w.saturating_sub(hint_str.len() as u16)) / 2;
+            let hy = y + 19;
+            for (i, c) in hint_str.chars().enumerate() {
+                renderer.set_cell(hx + i as u16, hy, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme), ..Default::default() });
+            }
+
+            if let Some(ref info) = self.info_message {
+                let info_text = format!("✓ {}", info);
+                let ix = x + 3;
+                let iy = y + 21;
+                for (i, c) in info_text.chars().take((w - 6) as usize).enumerate() {
+                    renderer.set_cell(ix + i as u16, iy, Cell { ch: c, bg: dialog_bg, fg: Color::Green, ..Default::default() });
+                }
+            } else if let Some(ref err) = self.error_message {
                 let err_text = format!("Error: {}", err);
                 let ex = x + 3;
-                let ey = y + 20;
+                let ey = y + 21;
                 for (i, c) in err_text.chars().take((w - 6) as usize).enumerate() {
                     renderer.set_cell(ex + i as u16, ey, Cell { ch: c, bg: dialog_bg, fg: Color::Red, ..Default::default() });
                 }
@@ -3633,6 +3708,11 @@ impl Dialog for GoogleDriveDialog {
         }
 
         if self.show_setup || !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V')) {
+                self.paste_from_clipboard();
+                return DialogResult::Pending;
+            }
+
             match key.code {
                 KeyCode::Esc => {
                     if zee_core::gdrive::GDriveManager::has_configured_credentials() {
@@ -3692,6 +3772,10 @@ impl Dialog for GoogleDriveDialog {
         } else {
             match key.code {
                 KeyCode::Esc => DialogResult::Cancel,
+                KeyCode::Char('c') | KeyCode::Char('C') if key.modifiers.is_empty() => {
+                    self.show_setup = true;
+                    DialogResult::Pending
+                }
                 KeyCode::Up => {
                     self.selected_idx = self.selected_idx.saturating_sub(1);
                     DialogResult::Pending

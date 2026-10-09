@@ -153,6 +153,51 @@ impl GDriveManager {
         Self::get_client_id().is_some()
     }
 
+    /// Parse and validate OAuth 2.0 client credentials from a Google Cloud Console JSON string.
+    /// Supports desktop app format ("installed": { ... }), web app format ("web": { ... }), or top-level keys.
+    /// Returns `Ok((client_id, client_secret))` on success.
+    pub fn parse_oauth_credentials_json(content: &str) -> Result<(String, String)> {
+        let value: serde_json::Value = serde_json::from_str(content)
+            .context("Invalid JSON format. Please ensure you selected a valid Google OAuth client JSON file.")?;
+
+        // Extract object from "installed", "web", or root level
+        let target = if let Some(installed) = value.get("installed") {
+            installed
+        } else if let Some(web) = value.get("web") {
+            web
+        } else {
+            &value
+        };
+
+        let client_id = target
+            .get("client_id")
+            .or_else(|| target.get("clientId"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .context("Missing 'client_id' in OAuth credentials JSON.")?;
+
+        let client_secret = target
+            .get("client_secret")
+            .or_else(|| target.get("clientSecret"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
+        if !client_id.contains(".apps.googleusercontent.com") && client_id.len() < 10 {
+            anyhow::bail!("Invalid client_id format. Expected a Google OAuth client ID (e.g. xxx.apps.googleusercontent.com).");
+        }
+
+        Ok((client_id, client_secret))
+    }
+
+    /// Parse OAuth credentials directly from a JSON file path.
+    pub fn parse_oauth_credentials_file(path: &Path) -> Result<(String, String)> {
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read credentials file: {}", path.display()))?;
+        Self::parse_oauth_credentials_json(&content)
+    }
+
     /// Get a valid access token, automatically refreshing it if expired.
     pub fn get_valid_access_token() -> Result<String> {
         let mut token = Self::load_token().context("Google Drive is not connected. Please sign in.")?;
@@ -722,4 +767,69 @@ mod tests {
         std::env::remove_var("ZEE_GDRIVE_CLIENT_ID");
         let _ = has_configured; // quiet warning
     }
+
+    #[test]
+    fn test_parse_oauth_credentials_json_installed() {
+        let json = r#"{
+            "installed": {
+                "client_id": "123456789-abcdef.apps.googleusercontent.com",
+                "project_id": "test-project",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_secret": "GOCSPX-Secret123"
+            }
+        }"#;
+
+        let res = GDriveManager::parse_oauth_credentials_json(json);
+        assert!(res.is_ok());
+        let (id, sec) = res.unwrap();
+        assert_eq!(id, "123456789-abcdef.apps.googleusercontent.com");
+        assert_eq!(sec, "GOCSPX-Secret123");
+    }
+
+    #[test]
+    fn test_parse_oauth_credentials_json_web() {
+        let json = r#"{
+            "web": {
+                "client_id": "987654321-fedcba.apps.googleusercontent.com",
+                "client_secret": "GOCSPX-WebSecret456"
+            }
+        }"#;
+
+        let res = GDriveManager::parse_oauth_credentials_json(json);
+        assert!(res.is_ok());
+        let (id, sec) = res.unwrap();
+        assert_eq!(id, "987654321-fedcba.apps.googleusercontent.com");
+        assert_eq!(sec, "GOCSPX-WebSecret456");
+    }
+
+    #[test]
+    fn test_parse_oauth_credentials_json_flat() {
+        let json = r#"{
+            "client_id": "11223344-test.apps.googleusercontent.com",
+            "client_secret": "my-secret-key"
+        }"#;
+
+        let res = GDriveManager::parse_oauth_credentials_json(json);
+        assert!(res.is_ok());
+        let (id, sec) = res.unwrap();
+        assert_eq!(id, "11223344-test.apps.googleusercontent.com");
+        assert_eq!(sec, "my-secret-key");
+    }
+
+    #[test]
+    fn test_parse_oauth_credentials_json_invalid() {
+        // Missing client_id
+        let json_no_id = r#"{"installed": {"client_secret": "abc"}}"#;
+        assert!(GDriveManager::parse_oauth_credentials_json(json_no_id).is_err());
+
+        // Invalid client_id format
+        let json_bad_id = r#"{"client_id": "short", "client_secret": "abc"}"#;
+        assert!(GDriveManager::parse_oauth_credentials_json(json_bad_id).is_err());
+
+        // Completely invalid json
+        let not_json = "this is not json";
+        assert!(GDriveManager::parse_oauth_credentials_json(not_json).is_err());
+    }
 }
+

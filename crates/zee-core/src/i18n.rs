@@ -409,6 +409,12 @@ impl I18n {
         m.insert("gdrive.configure_api".to_string(), "Configure API Keys…".to_string());
         m.insert("gdrive.credentials_missing".to_string(), "Client ID is required to start authentication.".to_string());
         m.insert("gdrive.cancel_wait".to_string(), "Cancel Authentication".to_string());
+        m.insert("gdrive.load_json_btn".to_string(), "Load from JSON file 📂".to_string());
+        m.insert("gdrive.paste_btn".to_string(), "Paste 📋".to_string());
+        m.insert("gdrive.json_loaded_success".to_string(), "OAuth credentials JSON loaded successfully!".to_string());
+        m.insert("gdrive.json_load_failed".to_string(), "Failed to load OAuth JSON".to_string());
+        m.insert("gdrive.paste_hint".to_string(), "Tip: You can paste (Ctrl+V / Cmd+V) the credentials JSON or keys directly.".to_string());
+        m.insert("gdrive.update_settings".to_string(), "Update Settings ⚙".to_string());
         m
     }
 
@@ -655,6 +661,12 @@ impl I18n {
         m.insert("gdrive.configure_api".to_string(), "API設定・キー変更…".to_string());
         m.insert("gdrive.credentials_missing".to_string(), "認証を開始するにはクライアント ID を入力してください。".to_string());
         m.insert("gdrive.cancel_wait".to_string(), "認証を中止".to_string());
+        m.insert("gdrive.load_json_btn".to_string(), "JSONファイルから読み込む 📂".to_string());
+        m.insert("gdrive.paste_btn".to_string(), "貼り付け 📋".to_string());
+        m.insert("gdrive.json_loaded_success".to_string(), "OAuth設定JSONを読み込みました！".to_string());
+        m.insert("gdrive.json_load_failed".to_string(), "JSONの読み込みに失敗しました".to_string());
+        m.insert("gdrive.paste_hint".to_string(), "ヒント: Ctrl+V / Cmd+V で認証情報JSONまたは各キーを直接貼り付けできます。".to_string());
+        m.insert("gdrive.update_settings".to_string(), "設定を更新 ⚙".to_string());
         m
     }
 

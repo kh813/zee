@@ -682,6 +682,13 @@ impl WindowView {
         if let Some(item) = cx.read_from_clipboard() {
             if let Some(text) = item.text() {
                 let text = text.clone();
+                if let Some(dialog) = &self.dialog {
+                    dialog.update(cx, |d, cx| {
+                        d.handle_paste(&text, cx);
+                    });
+                    return;
+                }
+
                 self.workspace.update(cx, |w, cx| {
                     let vi_mode = w.config.vi_mode;
                     if let Some(editor) = w.active_editor_mut() {

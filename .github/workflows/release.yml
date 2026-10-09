@@ -129,8 +129,8 @@ jobs:
           zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
           cd ..
 
-      # --- Windows: GUI only (zeeg.exe) ---
-      - name: Build Windows GUI (zeeg.exe)
+      # --- Windows: GUI only (zee.exe) ---
+      - name: Build Windows GUI (zee.exe)
         if: matrix.is_windows
         shell: bash
         run: |
@@ -139,7 +139,7 @@ jobs:
           cargo build --release -p zee-gui --target ${{ matrix.target }}
 
           mkdir -p "dist/${GUI_ARCHIVE_NAME}"
-          cp "target/${{ matrix.target }}/release/zeeg.exe" "dist/${GUI_ARCHIVE_NAME}/zeeg.exe"
+          cp "target/${{ matrix.target }}/release/zeeg.exe" "dist/${GUI_ARCHIVE_NAME}/zee.exe"
           cp README.md MANUAL.md LICENSE* "dist/${GUI_ARCHIVE_NAME}/" 2>/dev/null || true
 
           cd dist

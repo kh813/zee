@@ -16,7 +16,7 @@ on:
         type: boolean
         default: true
       build_windows_arm64:
-        description: "Build Windows ARM64 GUI (zeeg.exe)"
+        description: "Build Windows ARM64 GUI (zee.exe)"
         type: boolean
         default: false
       build_linux_arm64:
@@ -142,7 +142,7 @@ jobs:
           GUI_ARCHIVE="zee-${TAG}-windows-arm64"
           cargo build --release -p zee-gui --target aarch64-pc-windows-msvc
           mkdir -p "dist/${GUI_ARCHIVE}"
-          cp "target/aarch64-pc-windows-msvc/release/zeeg.exe" "dist/${GUI_ARCHIVE}/zeeg.exe"
+          cp "target/aarch64-pc-windows-msvc/release/zeeg.exe" "dist/${GUI_ARCHIVE}/zee.exe"
           cp README.md MANUAL.md LICENSE* "dist/${GUI_ARCHIVE}/" 2>/dev/null || true
           cd dist
           7z a "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"

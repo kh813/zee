@@ -16,20 +16,20 @@ else ifeq ($(findstring MINGW,$(UNAME_S)),MINGW)
     OS_TYPE := windows
     EXE_EXT := .exe
     GUI_TARGET := windows-gui
-    ZEE_GUI_BIN := zeeg.exe
-    ZEE_TUI_BIN := zee.exe
+    ZEE_GUI_BIN := zee.exe
+    ZEE_TUI_BIN := zee-tui.exe
 else ifeq ($(findstring MSYS,$(UNAME_S)),MSYS)
     OS_TYPE := windows
     EXE_EXT := .exe
     GUI_TARGET := windows-gui
-    ZEE_GUI_BIN := zeeg.exe
-    ZEE_TUI_BIN := zee.exe
+    ZEE_GUI_BIN := zee.exe
+    ZEE_TUI_BIN := zee-tui.exe
 else ifeq ($(UNAME_S),Windows_NT)
     OS_TYPE := windows
     EXE_EXT := .exe
     GUI_TARGET := windows-gui
-    ZEE_GUI_BIN := zeeg.exe
-    ZEE_TUI_BIN := zee.exe
+    ZEE_GUI_BIN := zee.exe
+    ZEE_TUI_BIN := zee-tui.exe
 else
     OS_TYPE := linux
     EXE_EXT :=
@@ -132,10 +132,10 @@ linux-gui:
 
 windows-gui:
 	@mkdir -p $(DIST_DIR)
-	@echo "==> Building Windows GUI (zeeg.exe)..."
+	@echo "==> Building Windows GUI (zee.exe)..."
 	cargo build --release -p zee-gui $(CARGO_FLAGS)
-	@cp target/release/zeeg.exe $(DIST_DIR)/zeeg.exe
-	@echo "Built $(DIST_DIR)/zeeg.exe"
+	@cp target/release/zeeg.exe $(DIST_DIR)/zee.exe
+	@echo "Built $(DIST_DIR)/zee.exe"
 
 test:
 	@echo "==> Running workspace tests..."

@@ -29,10 +29,10 @@ Download the appropriate binary from the [releases page] and place it in your `P
 | Platform | Binary | Notes |
 | :--- | :--- | :--- |
 | **macOS Apple Silicon (GUI)** | `zeeg-v0.1.x-macos-arm64.zip` | macOS Native App Bundle (`Zee.app`). |
-| **Windows x86-64 (GUI)** | `zeeg-v0.1.x-windows-x64.zip` | Windows 64-bit Native GUI (`zeeg.exe`). |
+| **Windows x86-64 (GUI)** | `zee-v0.1.x-windows-x64.zip` | Windows 64-bit Native GUI (`zee.exe`). |
 | **Linux x86-64 (CLI)** | `zee-v0.1.x-linux-x64.zip` | Linux 64-bit Terminal CLI / TUI (`zee`). |
 
-> **Note on Extended Builds**: Extended support binaries (Linux GUI `zeeg`, macOS CLI `zee`, Windows ARM64 `zeeg.exe`, Linux ARM64) are available on-demand via GitHub Actions Extended Support Releases or buildable directly from source.
+> **Note on Extended Builds**: Extended support binaries (Linux GUI `zeeg`, macOS CLI `zee`, Windows ARM64 `zee.exe`, Linux ARM64) are available on-demand via GitHub Actions Extended Support Releases or buildable directly from source.
 
 **macOS / Linux quick install:**
 ```bash

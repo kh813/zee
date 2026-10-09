@@ -918,11 +918,6 @@ pub fn build_native_menus(
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.edit.format_document"), FormatDocument {}),
                 MenuItem::action(i18n.get("menu.edit.sort_lines"), SortLines {}),
-                MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.edit.to_uppercase"), ToUpperCase {}),
-                MenuItem::action(i18n.get("menu.edit.to_lowercase"), ToLowerCase {}),
-                MenuItem::action(i18n.get("menu.edit.to_snake_case"), ToSnakeCase {}),
-                MenuItem::action(i18n.get("menu.edit.to_camel_case"), ToCamelCase {}),
             ],
             disabled: false,
         },
@@ -1012,7 +1007,7 @@ actions!(zee, [
 
     // Edit
     Undo, Redo, Cut, Copy, Paste, Find, Replace, SelectAll,
-    FormatDocument, SortLines, ToUpperCase, ToLowerCase, ToSnakeCase, ToCamelCase,
+    FormatDocument, SortLines,
     // Tabs
     NextTab, PrevTab,
     // View

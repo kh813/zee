@@ -4,10 +4,18 @@ use zee_core::i18n::I18n;
 use crate::widgets::{led_color_to_gpui, ui_font_family, with_alpha};
 
 #[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmenuId {
+    NewFromTemplate,
+    Language,
+}
+
+#[allow(dead_code)]
 pub struct MenuBar {
     workspace: Entity<Workspace>,
     i18n: I18n,
     pub open_menu: Option<usize>,
+    pub open_submenu: Option<(SubmenuId, f32)>,
 }
 
 #[allow(dead_code)]
@@ -17,14 +25,17 @@ impl MenuBar {
             workspace,
             i18n,
             open_menu: None,
+            open_submenu: None,
         }
     }
 
     pub fn toggle_menu(&mut self, idx: usize, _window: &mut Window, cx: &mut Context<Self>) {
         if self.open_menu == Some(idx) {
             self.open_menu = None;
+            self.open_submenu = None;
         } else {
             self.open_menu = Some(idx);
+            self.open_submenu = None;
         }
         cx.notify();
     }
@@ -32,13 +43,29 @@ impl MenuBar {
     pub fn hover_menu(&mut self, idx: usize, _window: &mut Window, cx: &mut Context<Self>) {
         if self.open_menu.is_some() && self.open_menu != Some(idx) {
             self.open_menu = Some(idx);
+            self.open_submenu = None;
             cx.notify();
         }
     }
 
     pub fn close_menu(&mut self, cx: &mut Context<Self>) {
-        if self.open_menu.is_some() {
+        if self.open_menu.is_some() || self.open_submenu.is_some() {
             self.open_menu = None;
+            self.open_submenu = None;
+            cx.notify();
+        }
+    }
+
+    pub fn open_submenu(&mut self, id: SubmenuId, y: f32, cx: &mut Context<Self>) {
+        if self.open_submenu != Some((id, y)) {
+            self.open_submenu = Some((id, y));
+            cx.notify();
+        }
+    }
+
+    pub fn close_submenu(&mut self, cx: &mut Context<Self>) {
+        if self.open_submenu.is_some() {
+            self.open_submenu = None;
             cx.notify();
         }
     }

@@ -73,10 +73,10 @@ Pre-compiled standalone packages and installers are available on the [Releases p
 | Platform | Type | File Name | Notes |
 | :--- | :--- | :--- | :--- |
 | **macOS (Apple Silicon)** | Native GUI App | `zeeg-macos-arm64.zip` | Extract and drag `Zee.app` to `/Applications` |
-| **Windows (x86-64)** | Native GUI App | `zeeg-windows-x64.zip` | Standalone `zeeg.exe` Windows 64-bit desktop GUI |
+| **Windows (x86-64)** | Native GUI App | `zee-windows-x64.zip` | Standalone `zee.exe` Windows 64-bit desktop GUI |
 | **Linux (x86-64)** | Terminal CLI / TUI | `zee-linux-x64.zip` | Standalone `zee` Linux 64-bit terminal binary |
 
-> **Note on Extended Support Builds**: Binaries for Linux GUI (`zeeg`), macOS Terminal CLI (`zee`), Windows ARM64 (`zeeg.exe`), and Linux ARM64 are available on-demand via GitHub Actions Extended Support Releases or buildable directly from source.
+> **Note on Extended Support Builds**: Binaries for Linux GUI (`zeeg`), macOS Terminal CLI (`zee`), Windows ARM64 (`zee.exe`), and Linux ARM64 are available on-demand via GitHub Actions Extended Support Releases or buildable directly from source.
 
 #### macOS Gatekeeper Note
 On macOS, downloaded applications outside the App Store may show a warning: *"Zee.app cannot be opened because the developer cannot be verified"*.
@@ -114,8 +114,8 @@ make install
 git clone https://github.com/kh813/zee.git
 cd zee
 
-.\make.ps1         # Builds Windows GUI into dist/zeeg.exe
-.\make.ps1 tui     # Builds Windows TUI into dist/zee.exe
+.\make.ps1         # Builds Windows GUI into dist/zee.exe
+.\make.ps1 tui     # Builds Windows TUI into dist/zee-cli.exe
 .\make.ps1 test    # Runs workspace test suite
 ```
 
@@ -125,8 +125,9 @@ cd zee
 
 ### Desktop GUI
 - **macOS**: Launch `Zee.app` from Applications or Spotlight.
-- **Windows / Linux**: Run `zeeg [FILE...]` or launch via application launcher.
-- **Direct Line Jump**: `zeeg src/main.rs:42` or `zeeg +42 src/main.rs`.
+- **Windows**: Run `zee.exe [FILE...]` or launch via application launcher / Start menu.
+- **Linux**: Run `zeeg [FILE...]` or launch via application launcher.
+- **Direct Line Jump**: `zee src/main.rs:42` (or `zeeg src/main.rs:42`) or `+42 src/main.rs`.
 
 ### Terminal TUI / Remote (SSH)
 - Run `zee [FILE...]` in any terminal emulator.

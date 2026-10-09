@@ -39,9 +39,23 @@ impl Workspace {
         let sidebar_visible = if is_custom_root { true } else { config.sidebar };
         let mut plugin_manager = zee_core::plugin::PluginManager::new();
         // Check local development plugins directory if present
-        let dev_plugin_dir = PathBuf::from("plugins/zee-plugin-text");
-        if dev_plugin_dir.exists() {
-            let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
+        let dev_plugin_dir = if PathBuf::from("plugins/zee-plugin-text").exists() {
+            Some(PathBuf::from("plugins/zee-plugin-text"))
+        } else if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let candidate = PathBuf::from(manifest_dir)
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.join("plugins/zee-plugin-text"));
+            if candidate.as_ref().map(|p| p.exists()).unwrap_or(false) {
+                candidate
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(dir) = dev_plugin_dir {
+            let _ = plugin_manager.load_plugin_dir(&dir);
         }
 
         let mut initial_editor = Editor::new();
@@ -81,9 +95,23 @@ impl Workspace {
 
     pub fn reload_plugins(&mut self) {
         let mut plugin_manager = zee_core::plugin::PluginManager::new();
-        let dev_plugin_dir = PathBuf::from("plugins/zee-plugin-text");
-        if dev_plugin_dir.exists() {
-            let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
+        let dev_plugin_dir = if PathBuf::from("plugins/zee-plugin-text").exists() {
+            Some(PathBuf::from("plugins/zee-plugin-text"))
+        } else if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let candidate = PathBuf::from(manifest_dir)
+                .parent()
+                .and_then(|p| p.parent())
+                .map(|p| p.join("plugins/zee-plugin-text"));
+            if candidate.as_ref().map(|p| p.exists()).unwrap_or(false) {
+                candidate
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(dir) = dev_plugin_dir {
+            let _ = plugin_manager.load_plugin_dir(&dir);
         }
         self.plugin_manager = plugin_manager;
         self.plugins_version = self.plugins_version.wrapping_add(1);

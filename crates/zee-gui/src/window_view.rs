@@ -11,7 +11,7 @@ use crate::app::*;
 use zee_core::buffer::Editor;
 
 #[cfg(not(target_os = "macos"))]
-use crate::widgets::menu_bar::MenuBar;
+use crate::widgets::menu_bar::{MenuBar, SubmenuId};
 #[cfg(not(target_os = "macos"))]
 use crate::widgets::{led_color_to_gpui, ui_font_family, with_alpha};
 
@@ -722,34 +722,6 @@ impl WindowView {
         });
     }
 
-    fn handle_to_uppercase(&mut self, _: &crate::app::ToUpperCase, _window: &mut Window, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |w, cx| {
-            w.apply_plugin_transform("to_uppercase");
-            cx.notify();
-        });
-    }
-
-    fn handle_to_lowercase(&mut self, _: &crate::app::ToLowerCase, _window: &mut Window, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |w, cx| {
-            w.apply_plugin_transform("to_lowercase");
-            cx.notify();
-        });
-    }
-
-    fn handle_to_snake_case(&mut self, _: &crate::app::ToSnakeCase, _window: &mut Window, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |w, cx| {
-            w.apply_plugin_transform("to_snake_case");
-            cx.notify();
-        });
-    }
-
-    fn handle_to_camel_case(&mut self, _: &crate::app::ToCamelCase, _window: &mut Window, cx: &mut Context<Self>) {
-        self.workspace.update(cx, |w, cx| {
-            w.apply_plugin_transform("to_camel_case");
-            cx.notify();
-        });
-    }
-
     fn handle_find(&mut self, _: &Find, window: &mut Window, cx: &mut Context<Self>) {
         self.find_panel.update(cx, |p, cx| p.show(false, window, cx));
     }
@@ -1397,10 +1369,6 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_select_all))
             .on_action(cx.listener(Self::handle_format_document))
             .on_action(cx.listener(Self::handle_sort_lines))
-            .on_action(cx.listener(Self::handle_to_uppercase))
-            .on_action(cx.listener(Self::handle_to_lowercase))
-            .on_action(cx.listener(Self::handle_to_snake_case))
-            .on_action(cx.listener(Self::handle_to_camel_case))
             .on_action(cx.listener(Self::handle_find))
             .on_action(cx.listener(Self::handle_replace))
             .on_action(cx.listener(Self::handle_close_find))
@@ -1545,6 +1513,7 @@ impl WindowView {
     fn render_menu_dropdown(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let menu_bar = self.menu_bar.read(cx);
         let open_menu = menu_bar.open_menu;
+        let open_submenu = menu_bar.open_submenu;
 
         if let Some(idx) = open_menu {
             let (bg, fg, border, hover_bg, muted_fg) = {
@@ -1574,7 +1543,7 @@ impl WindowView {
                 _ => self.render_help_menu(fg, hover_bg, muted_fg, cx).into_any_element(),
             };
 
-            div()
+            let mut container = div()
                 .absolute()
                 .top_0()
                 .left_0()
@@ -1608,13 +1577,137 @@ impl WindowView {
                         .shadow_lg()
                         .py_1()
                         .child(menu_content)
-                )
+                );
+
+            if let Some((sub_id, y_offset)) = open_submenu {
+                let sub_left = left_pos + px(228.0);
+                let sub_top = px(28.0 + y_offset.saturating_sub(4.0));
+                let sub_content = match sub_id {
+                    SubmenuId::NewFromTemplate => self.render_templates_submenu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
+                    SubmenuId::Language => self.render_language_submenu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
+                };
+
+                container = container.child(
+                    div()
+                        .occlude()
+                        .absolute()
+                        .top(sub_top)
+                        .left(sub_left)
+                        .w(px(220.0))
+                        .bg(bg)
+                        .text_color(fg)
+                        .font_family(ui_font_family())
+                        .text_size(px(12.5))
+                        .border_1()
+                        .border_color(border)
+                        .rounded_sm()
+                        .shadow_lg()
+                        .py_1()
+                        .child(sub_content)
+                );
+            }
+
+            container
         } else {
             div()
         }
     }
 
     fn render_menu_item<A: Action + Clone + 'static>(
+        &self,
+        label: String,
+        shortcut: Option<&'static str>,
+        checked: bool,
+        action: A,
+        _fg: Rgba,
+        hover_bg: Rgba,
+        muted_fg: Rgba,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let action = action.clone();
+        div()
+            .h(px(26.0))
+            .px_2()
+            .mx_1()
+            .flex()
+            .items_center()
+            .justify_between()
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_mouse_move(cx.listener(|this, _, _, cx| {
+                this.menu_bar.update(cx, |m, cx| m.close_submenu(cx));
+            }))
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                this.menu_bar.update(cx, |m, cx| m.close_menu(cx));
+                window.dispatch_action(Box::new(action.clone()), cx);
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .w(px(14.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(12.0))
+                            .child(if checked { "✓" } else { "" })
+                    )
+                    .child(label)
+            )
+            .child(if let Some(sc) = shortcut {
+                div().text_size(px(11.0)).text_color(muted_fg).child(sc)
+            } else {
+                div()
+            })
+    }
+
+    fn render_submenu_trigger(
+        &self,
+        id: SubmenuId,
+        y_offset: f32,
+        label: String,
+        _fg: Rgba,
+        hover_bg: Rgba,
+        muted_fg: Rgba,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .h(px(26.0))
+            .px_2()
+            .mx_1()
+            .flex()
+            .items_center()
+            .justify_between()
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover_bg))
+            .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                this.menu_bar.update(cx, |m, cx| m.open_submenu(id, y_offset, cx));
+            }))
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                this.menu_bar.update(cx, |m, cx| m.open_submenu(id, y_offset, cx));
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(div().w(px(14.0)))
+                    .child(label)
+            )
+            .child(
+                div()
+                    .text_size(px(13.0))
+                    .text_color(muted_fg)
+                    .child("›")
+            )
+    }
+
+    fn render_submenu_item<A: Action + Clone + 'static>(
         &self,
         label: String,
         shortcut: Option<&'static str>,
@@ -1667,28 +1760,98 @@ impl WindowView {
         div().h(px(1.0)).bg(border).my_1().mx_2()
     }
 
-    fn render_file_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
-        let recent = zee_core::recent::RecentFiles::load();
+    fn render_templates_submenu(
+        &self,
+        fg: Rgba,
+        hover_bg: Rgba,
+        muted_fg: Rgba,
+        border: Rgba,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let templates = zee_core::template::Template::load_all();
-        let mut menu = div()
-            .flex()
-            .flex_col()
-            .child(self.render_menu_item(self.i18n.get("menu.file.new_tab").to_string(), Some("Ctrl+T"), false, NewTab {}, fg, hover_bg, muted_fg, cx));
+        let mut menu = div().flex().flex_col();
 
-        for tpl in templates.iter().take(4) {
-            menu = menu.child(self.render_menu_item(
-                format!("  + {}", tpl.name),
+        if templates.is_empty() {
+            menu = menu.child(self.render_submenu_item(
+                self.i18n.get("status.no_name").to_string(),
                 None,
                 false,
-                ApplyTemplate { id: tpl.id.clone() },
+                NoOp {},
+                fg,
+                hover_bg,
+                muted_fg,
+                cx,
+            ));
+        } else {
+            for tpl in templates {
+                menu = menu.child(self.render_submenu_item(
+                    tpl.name.clone(),
+                    None,
+                    false,
+                    ApplyTemplate { id: tpl.id.clone() },
+                    fg,
+                    hover_bg,
+                    muted_fg,
+                    cx,
+                ));
+            }
+        }
+
+        menu
+            .child(self.render_menu_sep(border))
+            .child(self.render_submenu_item(
+                self.i18n.get("menu.file.open_templates_folder").to_string(),
+                None,
+                false,
+                OpenTemplatesFolder {},
+                fg,
+                hover_bg,
+                muted_fg,
+                cx,
+            ))
+    }
+
+    fn render_language_submenu(
+        &self,
+        fg: Rgba,
+        hover_bg: Rgba,
+        muted_fg: Rgba,
+        _border: Rgba,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut menu = div().flex().flex_col();
+        for lang in zee_core::i18n::AVAILABLE_LANGUAGES {
+            let is_current = if lang.id == "auto" {
+                self.config.language == "auto" || self.config.language.is_empty()
+            } else {
+                self.config.language == lang.id
+            };
+            let label = if lang.id == "auto" {
+                self.i18n.get("dialog.settings.language_auto").to_string()
+            } else {
+                lang.name.to_string()
+            };
+            menu = menu.child(self.render_submenu_item(
+                label,
+                None,
+                is_current,
+                crate::app::SetLanguage { id: lang.id.to_string() },
                 fg,
                 hover_bg,
                 muted_fg,
                 cx,
             ));
         }
+        menu
+    }
 
-        menu = menu
+    fn render_file_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+        let recent = zee_core::recent::RecentFiles::load();
+        let mut menu = div()
+            .flex()
+            .flex_col()
+            .child(self.render_menu_item(self.i18n.get("menu.file.new_tab").to_string(), Some("Ctrl+T"), false, NewTab {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_submenu_trigger(SubmenuId::NewFromTemplate, 30.0, self.i18n.get("menu.file.new_from_template").to_string(), fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.new_window").to_string(), Some("Ctrl+N"), false, NewWindow {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open").to_string(), Some("Ctrl+O"), false, Open {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open_folder").to_string(), Some("Ctrl+Shift+O"), false, OpenFolder {}, fg, hover_bg, muted_fg, cx))
@@ -1748,11 +1911,6 @@ impl WindowView {
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.edit.format_document").to_string(), None, false, crate::app::FormatDocument {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.edit.sort_lines").to_string(), None, false, crate::app::SortLines {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.to_uppercase").to_string(), None, false, crate::app::ToUpperCase {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.to_lowercase").to_string(), None, false, crate::app::ToLowerCase {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.to_snake_case").to_string(), None, false, crate::app::ToSnakeCase {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.to_camel_case").to_string(), None, false, crate::app::ToCamelCase {}, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_view_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1760,7 +1918,7 @@ impl WindowView {
         let word_wrap_checked = self.config.word_wrap;
         let vi_mode_checked = self.config.vi_mode;
 
-        let mut menu = div()
+        div()
             .flex()
             .flex_col()
             .child(self.render_menu_item(self.i18n.get("menu.view.go_to_line").to_string(), None, false, GoToLine {}, fg, hover_bg, muted_fg, cx))
@@ -1773,32 +1931,8 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.view.line_numbers").to_string(), None, line_numbers_checked, ToggleLineNumbers {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.view.word_wrap").to_string(), None, word_wrap_checked, ToggleWordWrap {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.view.vi_mode").to_string(), None, vi_mode_checked, ToggleViMode {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_sep(border));
-
-        for lang in zee_core::i18n::AVAILABLE_LANGUAGES {
-            let is_current = if lang.id == "auto" {
-                self.config.language == "auto" || self.config.language.is_empty()
-            } else {
-                self.config.language == lang.id
-            };
-            let label = if lang.id == "auto" {
-                format!("  {}", self.i18n.get("dialog.settings.language_auto"))
-            } else {
-                format!("  {}", lang.name)
-            };
-            menu = menu.child(self.render_menu_item(
-                label,
-                None,
-                is_current,
-                crate::app::SetLanguage { id: lang.id.to_string() },
-                fg,
-                hover_bg,
-                muted_fg,
-                cx,
-            ));
-        }
-
-        menu
+            .child(self.render_menu_sep(border))
+            .child(self.render_submenu_trigger(SubmenuId::Language, 268.0, self.i18n.get("menu.view.language").to_string(), fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.app.preferences").to_string(), Some("Ctrl+,"), false, OpenSettings {}, fg, hover_bg, muted_fg, cx))
     }

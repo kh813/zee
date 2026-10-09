@@ -703,8 +703,6 @@ impl PluginManager {
 
         // Built-in fallback transforms when no plugin handled the command
         match command {
-            "to_uppercase" => Some(text.to_uppercase()),
-            "to_lowercase" => Some(text.to_lowercase()),
             "sort_lines" => {
                 let mut lines: Vec<&str> = text.lines().collect();
                 lines.sort();

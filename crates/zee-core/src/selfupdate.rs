@@ -301,9 +301,8 @@ pub fn apply_update(asset_url: &str, app_type: AppType) -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let bin_name = if app_type == AppType::Gui { "zeeg.exe" } else { "zee.exe" };
         let is_gui = app_type == AppType::Gui;
-        return apply_windows_binary(&archive_bytes, &current_exe, bin_name, is_gui);
+        return apply_windows_binary(&archive_bytes, &current_exe, &["zee.exe", "zeeg.exe"], is_gui);
     }
 
     #[allow(unreachable_code)]
@@ -639,11 +638,10 @@ fn extract_tar_gz_binary(tar_gz_bytes: &[u8], target_name: &str, dest_file: &Pat
 }
 
 #[cfg(target_os = "windows")]
-fn apply_windows_binary(zip_bytes: &[u8], current_exe: &Path, target_bin_name: &str, is_gui: bool) -> Result<()> {
+fn apply_windows_binary(zip_bytes: &[u8], current_exe: &Path, target_candidates: &[&str], is_gui: bool) -> Result<()> {
     let staging_dir = tempfile_staging_dir("zee-update")?;
-    let new_bin_path = staging_dir.join(target_bin_name);
-
-    extract_zip_binary(zip_bytes, target_bin_name, &new_bin_path)?;
+    let found_name = extract_zip_binary_candidates(zip_bytes, target_candidates, &staging_dir)?;
+    let new_bin_path = staging_dir.join(found_name);
 
     let pid = std::process::id();
     let relaunch_cmd = if is_gui { "start \"\" \"%EXE%\"" } else { "" };
@@ -695,6 +693,30 @@ del /f /q "%~f0" >nul 2>&1
 
     drop(child);
     Ok(())
+}
+
+#[allow(dead_code)]
+fn extract_zip_binary_candidates(zip_bytes: &[u8], target_candidates: &[&str], dest_dir: &Path) -> Result<String> {
+    use std::io::Cursor;
+    let reader = Cursor::new(zip_bytes);
+    let mut zip = zip::ZipArchive::new(reader).context("Failed to read ZIP archive")?;
+
+    for candidate in target_candidates {
+        for i in 0..zip.len() {
+            let mut file = zip.by_index(i).context("Failed to access file in ZIP")?;
+            let raw_name = file.name();
+
+            if raw_name.ends_with(candidate) {
+                let dest_file = dest_dir.join(candidate);
+                let mut out = File::create(&dest_file)
+                    .context("Failed to create destination file for extracted binary")?;
+                io::copy(&mut file, &mut out)?;
+                return Ok(candidate.to_string());
+            }
+        }
+    }
+
+    Err(anyhow!("None of the binaries {:?} found in update ZIP archive", target_candidates))
 }
 
 #[allow(dead_code)]

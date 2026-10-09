@@ -531,11 +531,6 @@ impl App {
                 MenuItem::Separator,
                 MenuItem::Action { label: i18n.get("menu.edit.format_document").to_string(), action: Action::FormatDocument, shortcut: None },
                 MenuItem::Action { label: i18n.get("menu.edit.sort_lines").to_string(), action: Action::SortLines, shortcut: None },
-                MenuItem::Separator,
-                MenuItem::Action { label: i18n.get("menu.edit.to_uppercase").to_string(), action: Action::ToUpperCase, shortcut: None },
-                MenuItem::Action { label: i18n.get("menu.edit.to_lowercase").to_string(), action: Action::ToLowerCase, shortcut: None },
-                MenuItem::Action { label: i18n.get("menu.edit.to_snake_case").to_string(), action: Action::ToSnakeCase, shortcut: None },
-                MenuItem::Action { label: i18n.get("menu.edit.to_camel_case").to_string(), action: Action::ToCamelCase, shortcut: None },
             ]),
             Menu::new(i18n.get("menu.view"), vec![
                 MenuItem::Action { label: i18n.get("menu.view.go_to_line").to_string(), action: Action::GoToLine, shortcut: Some("Ctrl+G".to_string()) },
@@ -4309,18 +4304,6 @@ impl App {
             }
             Action::SortLines => {
                 self.apply_plugin_transform("sort_lines");
-            }
-            Action::ToUpperCase => {
-                self.apply_plugin_transform("to_uppercase");
-            }
-            Action::ToLowerCase => {
-                self.apply_plugin_transform("to_lowercase");
-            }
-            Action::ToSnakeCase => {
-                self.apply_plugin_transform("to_snake_case");
-            }
-            Action::ToCamelCase => {
-                self.apply_plugin_transform("to_camel_case");
             }
             Action::PluginCommand(ref cmd) => {
                 self.apply_plugin_transform(cmd);

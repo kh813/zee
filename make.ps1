@@ -74,14 +74,14 @@ switch ($Target) {
 
     'gui' {
         Ensure-DistDir
-        Write-Host "==> Building Windows GUI (zeeg.exe)..." -ForegroundColor Cyan
+        Write-Host "==> Building Windows GUI (zee.exe)..." -ForegroundColor Cyan
         if ($Release) {
             cargo build --release -p zee-gui
         } else {
             cargo build -p zee-gui
         }
         $SrcBin = Join-Path $ProjectRoot "target\$TargetFolder\zeeg.exe"
-        $DstBin = Join-Path $DistDir "zeeg.exe"
+        $DstBin = Join-Path $DistDir "zee.exe"
         if (Test-Path $SrcBin) {
             Copy-Item $SrcBin $DstBin -Force
             Write-Host "Built: $DstBin" -ForegroundColor Green
@@ -100,8 +100,8 @@ switch ($Target) {
         if (Test-Path $StageDir) { Remove-Item -Recurse -Force $StageDir }
         New-Item -ItemType Directory -Path $StageDir | Out-Null
         
-        Copy-Item $GuiSrcBin (Join-Path $StageDir "zeeg.exe") -Force
-        Copy-Item $TuiSrcBin (Join-Path $StageDir "zee.exe") -Force
+        Copy-Item $GuiSrcBin (Join-Path $StageDir "zee.exe") -Force
+        Copy-Item $TuiSrcBin (Join-Path $StageDir "zee-cli.exe") -Force
         if (Test-Path "README.md") { Copy-Item "README.md" $StageDir -Force }
         if (Test-Path "MANUAL.md") { Copy-Item "MANUAL.md" $StageDir -Force }
         if (Test-Path "LICENSE") { Copy-Item "LICENSE" $StageDir -Force }
@@ -117,14 +117,14 @@ switch ($Target) {
 
     { $_ -in 'all', 'default', 'local' } {
         Ensure-DistDir
-        Write-Host "==> Building Windows GUI (zeeg.exe)..." -ForegroundColor Cyan
+        Write-Host "==> Building Windows GUI (zee.exe)..." -ForegroundColor Cyan
         if ($Release) {
             cargo build --release -p zee-gui
         } else {
             cargo build -p zee-gui
         }
         $SrcBin = Join-Path $ProjectRoot "target\$TargetFolder\zeeg.exe"
-        $DstBin = Join-Path $DistDir "zeeg.exe"
+        $DstBin = Join-Path $DistDir "zee.exe"
         if (Test-Path $SrcBin) {
             Copy-Item $SrcBin $DstBin -Force
             Write-Host "==> Build complete in $DistDir" -ForegroundColor Green
@@ -137,9 +137,9 @@ switch ($Target) {
         Write-Host "Usage: .\make.ps1 [target] [-Release <`$true|`$false>]"
         Write-Host ""
         Write-Host "Available targets:"
-        Write-Host "  .\make.ps1            - Build Windows GUI as dist/zeeg.exe (default)"
-        Write-Host "  .\make.ps1 gui        - Build Windows GUI (dist/zeeg.exe)"
-        Write-Host "  .\make.ps1 tui        - Build Windows TUI (dist/zee.exe)"
+        Write-Host "  .\make.ps1            - Build Windows GUI as dist/zee.exe (default)"
+        Write-Host "  .\make.ps1 gui        - Build Windows GUI (dist/zee.exe)"
+        Write-Host "  .\make.ps1 tui        - Build Windows TUI (dist/zee-cli.exe)"
         Write-Host "  .\make.ps1 test       - Run tests (cargo test --workspace)"
         Write-Host "  .\make.ps1 check      - Check workspace (cargo check --workspace)"
         Write-Host "  .\make.ps1 package    - Build and package into dist/zee-windows-x64.zip"

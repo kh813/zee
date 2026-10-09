@@ -369,6 +369,9 @@ impl I18n {
         m.insert("dialog.plugin.repo_placeholder".to_string(), "GitHub URL (e.g. user/plugins) or index.json URL".to_string());
         m.insert("dialog.plugin.repo_add".to_string(), "Add".to_string());
         m.insert("dialog.plugin.repo_cancel".to_string(), "Cancel".to_string());
+        m.insert("dialog.plugin.search_placeholder".to_string(), "Search plugins by name, description, ID…".to_string());
+        m.insert("dialog.plugin.no_search_results".to_string(), "No plugins match the search criteria.".to_string());
+        m.insert("dialog.plugin.clear_search".to_string(), "Clear search".to_string());
 
         m.insert("about.version".to_string(), "Version".to_string());
         m.insert("about.license".to_string(), "License".to_string());
@@ -603,6 +606,9 @@ impl I18n {
         m.insert("dialog.plugin.repo_placeholder".to_string(), "GitHub URL (例: user/plugins) または index.json URL".to_string());
         m.insert("dialog.plugin.repo_add".to_string(), "追加".to_string());
         m.insert("dialog.plugin.repo_cancel".to_string(), "キャンセル".to_string());
+        m.insert("dialog.plugin.search_placeholder".to_string(), "プラグイン名、説明、IDで検索…".to_string());
+        m.insert("dialog.plugin.no_search_results".to_string(), "検索条件に一致するプラグインは見つかりませんでした。".to_string());
+        m.insert("dialog.plugin.clear_search".to_string(), "検索をクリア".to_string());
 
         m.insert("about.version".to_string(), "バージョン".to_string());
         m.insert("about.license".to_string(), "ライセンス".to_string());
@@ -1236,5 +1242,26 @@ mod tests {
         assert_eq!(ja.get("dialog.settings.language_auto"), "自動（システム設定）");
         assert_eq!(ja.get("dialog.settings.theme"), "テーマ");
         assert_eq!(ja.get("dialog.settings.font_family"), "エディタフォント");
+    }
+
+    #[test]
+    fn test_all_english_keys_have_japanese_translations() {
+        let en_keys = I18n::get_en_defaults();
+        let ja = I18n::load("ja");
+        let mut missing_keys = Vec::new();
+
+        for key in en_keys.keys() {
+            let translated = ja.get(key);
+            // If get(key) returns key itself, translation is missing
+            if translated == key {
+                missing_keys.push(key.clone());
+            }
+        }
+
+        assert!(
+            missing_keys.is_empty(),
+            "The following keys lack Japanese translations: {:?}",
+            missing_keys
+        );
     }
 }

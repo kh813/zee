@@ -526,8 +526,10 @@ impl App {
     pub fn apply_plugin_transform(&mut self, cmd: &str) {
         let (has_selection, range, text_to_transform) = if let Some(buffer) = self.buffers.get(self.active_buffer) {
             if let Some(range) = buffer.selection.clone() {
-                if range.start < range.end {
-                    (true, range.clone(), buffer.rope.slice(range).to_string())
+                let start = range.start.min(range.end);
+                let end = range.start.max(range.end);
+                if start < end {
+                    (true, start..end, buffer.rope.slice(start..end).to_string())
                 } else {
                     (false, 0..0, buffer.rope.to_string())
                 }
@@ -542,12 +544,19 @@ impl App {
             .transform_text(cmd, &text_to_transform)
             .unwrap_or(text_to_transform);
 
+        let is_insertion_cmd = cmd.starts_with("lorem_") || cmd == "generate_toc";
+
         if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
             if has_selection {
                 buffer.delete(range.clone());
                 buffer.insert(range.start, &transformed);
                 buffer.cursor = range.start + transformed.chars().count();
                 buffer.selection = Some(range.start..buffer.cursor);
+            } else if is_insertion_cmd {
+                let insert_pos = buffer.cursor.min(buffer.rope.len_chars());
+                buffer.insert(insert_pos, &transformed);
+                buffer.cursor = insert_pos + transformed.chars().count();
+                buffer.selection = None;
             } else {
                 buffer.delete(0..buffer.rope.len_chars());
                 buffer.insert(0, &transformed);

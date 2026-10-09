@@ -125,6 +125,16 @@ impl Renderer {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn get_cell(&self, x: u16, y: u16) -> Cell {
+        if x < self.width && y < self.height {
+            let idx = (y as usize) * (self.width as usize) + (x as usize);
+            self.curr_buffer[idx]
+        } else {
+            Cell::default()
+        }
+    }
+
     pub fn present<W: Write>(&mut self, writer: &mut W) -> io::Result<()> {
         let mut last_style = ContentStyle::default();
         let mut term_cursor: Option<(u16, u16)> = None;

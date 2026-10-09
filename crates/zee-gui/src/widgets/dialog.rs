@@ -67,6 +67,9 @@ pub struct Dialog {
     settings_dropdown: Option<SettingsDropdown>,
     // Plugin Manager state
     plugin_tab: usize,
+    plugin_search_query: String,
+    plugin_installed_scroll_handle: ScrollHandle,
+    plugin_registry_scroll_handle: ScrollHandle,
     registry_plugins: Option<Vec<zee_core::plugin::RegistryPlugin>>,
     registry_loading: bool,
     registry_error: Option<String>,
@@ -137,6 +140,9 @@ impl Dialog {
             update_status: if is_update { Some(UpdateStatus::Checking) } else { None },
             settings_dropdown: None,
             plugin_tab: 0,
+            plugin_search_query: String::new(),
+            plugin_installed_scroll_handle: ScrollHandle::new(),
+            plugin_registry_scroll_handle: ScrollHandle::new(),
             registry_plugins: None,
             registry_loading: false,
             registry_error: None,
@@ -166,6 +172,18 @@ impl Dialog {
             }
         }
         this
+    }
+
+    pub fn dialog_dimensions_for_type(dialog_type: &DialogType) -> (f32, f32) {
+        match dialog_type {
+            DialogType::PluginManager => (720.0, 680.0),
+            DialogType::Settings | DialogType::GoogleDrive => (620.0, 660.0),
+            _ => (460.0, 580.0),
+        }
+    }
+
+    pub fn dialog_dimensions(&self) -> (f32, f32) {
+        Self::dialog_dimensions_for_type(&self.dialog_type)
     }
 
     fn start_update_check(&mut self, cx: &mut Context<Self>) {
@@ -345,6 +363,75 @@ impl Dialog {
                 });
             }
         }).detach();
+    }
+
+    fn render_plugin_scrollbar(
+        &self,
+        scroll_handle: &ScrollHandle,
+        item_count: usize,
+        theme: &zee_core::theme::Theme,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let max_y = scroll_handle.max_offset().y;
+        let offset_y = scroll_handle.offset().y;
+        let bounds = scroll_handle.bounds();
+        let track_height = bounds.size.height.max(px(220.0));
+
+        if (max_y <= px(1.0) && item_count <= 3) || track_height <= px(20.0) {
+            return div().w_0().h_0().into_any_element();
+        }
+
+        let total_content = if max_y > px(1.0) {
+            track_height + max_y
+        } else {
+            (px(68.0) * item_count as f32).max(track_height + px(1.0))
+        };
+
+        let ratio = (track_height / total_content).clamp(0.10, 0.95);
+        let thumb_height = (track_height * ratio).max(px(24.0)).min(track_height);
+        let scrollable_track = (track_height - thumb_height).max(px(0.0));
+        let scroll_ratio = if max_y > px(0.0) {
+            (-offset_y / max_y).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let thumb_top = scrollable_track * scroll_ratio;
+
+        let thumb_color = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.35);
+        let thumb_hover = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.65);
+        let track_hover = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.08);
+
+        let handle = scroll_handle.clone();
+        div()
+            .absolute()
+            .top_0()
+            .right_0()
+            .bottom_0()
+            .w(px(10.0))
+            .cursor_default()
+            .hover(move |s| s.bg(track_hover))
+            .on_mouse_down(MouseButton::Left, cx.listener(move |_, event: &MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                if max_y > px(0.0) && track_height > px(0.0) {
+                    let click_y = event.position.y - bounds.origin.y;
+                    let r = (click_y / track_height).clamp(0.0, 1.0);
+                    let target_y = -max_y * r;
+                    handle.set_offset(gpui::point(px(0.0), target_y));
+                    cx.notify();
+                }
+            }))
+            .child(
+                div()
+                    .absolute()
+                    .right(px(2.0))
+                    .w(px(6.0))
+                    .top(thumb_top)
+                    .h(thumb_height)
+                    .rounded_full()
+                    .bg(thumb_color)
+                    .hover(move |s| s.bg(thumb_hover))
+            )
+            .into_any_element()
     }
 
     fn load_gdrive_files(&mut self, cx: &mut Context<Self>) {
@@ -596,8 +683,12 @@ impl Dialog {
             }
             "v" if event.keystroke.modifiers.platform || event.keystroke.modifiers.control => {
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
-                        self.plugin_new_repo_url.push_str(text.trim());
+                    if matches!(self.dialog_type, DialogType::PluginManager) {
+                        if self.plugin_show_add_repo {
+                            self.plugin_new_repo_url.push_str(text.trim());
+                        } else {
+                            self.plugin_search_query.push_str(text.trim());
+                        }
                     } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
                         if self.gdrive_show_setup {
                             if self.gdrive_setup_active_input == 0 {
@@ -615,8 +706,12 @@ impl Dialog {
                 }
             }
             "backspace" => {
-                if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
-                    self.plugin_new_repo_url.pop();
+                if matches!(self.dialog_type, DialogType::PluginManager) {
+                    if self.plugin_show_add_repo {
+                        self.plugin_new_repo_url.pop();
+                    } else {
+                        self.plugin_search_query.pop();
+                    }
                 } else if matches!(self.dialog_type, DialogType::OpenFile | DialogType::SaveAs) && event.keystroke.modifiers.platform {
                     if let Some(parent) = self.current_dir.parent() {
                         self.current_dir = parent.to_path_buf();
@@ -674,9 +769,15 @@ impl Dialog {
                 }
             }
             "escape" => {
-                if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
-                    self.plugin_show_add_repo = false;
-                    self.plugin_new_repo_url.clear();
+                if matches!(self.dialog_type, DialogType::PluginManager) {
+                    if self.plugin_show_add_repo {
+                        self.plugin_show_add_repo = false;
+                        self.plugin_new_repo_url.clear();
+                    } else if !self.plugin_search_query.is_empty() {
+                        self.plugin_search_query.clear();
+                    } else {
+                        self.close(cx);
+                    }
                 } else if matches!(self.dialog_type, DialogType::GoogleDrive) && self.gdrive_show_setup {
                     self.gdrive_show_setup = false;
                 } else if self.settings_dropdown.is_some() {
@@ -685,9 +786,13 @@ impl Dialog {
                     self.close(cx);
                 }
             }
-            k if k.len() == 1 && !event.keystroke.modifiers.platform && !event.keystroke.modifiers.control => {
-                if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
-                    self.plugin_new_repo_url.push_str(k);
+            k if (k.chars().count() == 1 || k.len() == 1) && !event.keystroke.modifiers.platform && !event.keystroke.modifiers.control => {
+                if matches!(self.dialog_type, DialogType::PluginManager) {
+                    if self.plugin_show_add_repo {
+                        self.plugin_new_repo_url.push_str(k);
+                    } else {
+                        self.plugin_search_query.push_str(k);
+                    }
                 } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
                     if self.gdrive_show_setup {
                         if self.gdrive_setup_active_input == 0 {
@@ -704,6 +809,7 @@ impl Dialog {
                 }
             }
             _ => {}
+
         }
         cx.notify();
     }
@@ -812,9 +918,9 @@ impl Render for Dialog {
         let fg = led_color_to_gpui(theme.editor.foreground);
         let border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
 
-        let is_wide = matches!(self.dialog_type, DialogType::Settings | DialogType::PluginManager | DialogType::GoogleDrive);
-        let dialog_width = if is_wide { px(560.0) } else { px(460.0) };
-        let dialog_max_h = if is_wide { px(640.0) } else { px(580.0) };
+        let (width, height) = self.dialog_dimensions();
+        let dialog_width = px(width);
+        let dialog_max_h = px(height);
 
         div()
             .absolute()
@@ -2697,8 +2803,67 @@ impl Dialog {
                                     .child(self.i18n.get("dialog.plugin.tab_registry").to_string())
                             )
                     )
+                    .child(
+                        // Search bar
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .h(px(32.0))
+                            .bg(input_bg)
+                            .border_1()
+                            .border_color(chip_border)
+                            .rounded_md()
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(with_alpha(fg, 0.5))
+                                    .child("🔍")
+                            )
+                            .child(
+                                div()
+                                    .flex_grow()
+                                    .text_size(px(12.5))
+                                    .text_color(if self.plugin_search_query.is_empty() { with_alpha(fg, 0.45) } else { fg })
+                                    .child(if self.plugin_search_query.is_empty() {
+                                        self.i18n.get("dialog.plugin.search_placeholder").to_string()
+                                    } else {
+                                        format!("{}|", self.plugin_search_query)
+                                    })
+                            )
+                            .children(if !self.plugin_search_query.is_empty() {
+                                Some(
+                                    div()
+                                        .px_1p5()
+                                        .py_0p5()
+                                        .text_size(px(11.0))
+                                        .text_color(with_alpha(fg, 0.6))
+                                        .cursor_pointer()
+                                        .hover(|s| s.text_color(fg))
+                                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                            this.plugin_search_query.clear();
+                                            cx.notify();
+                                        }))
+                                        .child("✕")
+                                )
+                            } else {
+                                None
+                            })
+                    )
                     .child(if self.plugin_tab == 0 {
                         // TAB 0: Installed Plugins
+                        let filtered_plugins: Vec<_> = plugins.into_iter().filter(|manifest| {
+                            if self.plugin_search_query.trim().is_empty() {
+                                return true;
+                            }
+                            let q = self.plugin_search_query.trim().to_lowercase();
+                            manifest.name.to_lowercase().contains(&q)
+                                || manifest.description.as_deref().unwrap_or("").to_lowercase().contains(&q)
+                                || manifest.id.to_lowercase().contains(&q)
+                        }).collect();
+                        let filtered_plugins_count = filtered_plugins.len();
+
                         div()
                             .flex()
                             .flex_col()
@@ -2772,34 +2937,78 @@ impl Dialog {
                             // Plugins list
                             .child(
                                 div()
+                                    .relative()
                                     .flex_grow()
                                     .min_h(px(220.0))
-                                    .max_h(px(340.0))
-                                    .overflow_hidden()
-                                    .p_2()
-                                    .bg(input_bg)
-                                    .border_1()
-                                    .border_color(chip_border)
-                                    .rounded_md()
-                                    .child(if plugins.is_empty() {
+                                    .max_h(px(360.0))
+                                    .child(
                                         div()
+                                            .id("installed-plugins-list")
+                                            .track_scroll(&self.plugin_installed_scroll_handle)
+                                            .w_full()
                                             .h_full()
-                                            .w_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .text_size(px(12.5))
-                                            .text_color(with_alpha(fg, 0.5))
-                                            .child(self.i18n.get("dialog.plugin.empty").to_string())
-                                            .into_any_element()
-                                    } else {
-                                        let uninstall_label = self.i18n.get("dialog.plugin.uninstall").to_string();
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_2()
-                                            .w_full()
-                                            .children(plugins.into_iter().map(|manifest| {
+                                            .min_h(px(220.0))
+                                            .max_h(px(360.0))
+                                            .overflow_y_scroll()
+                                            .p_2()
+                                            .pr_4()
+                                            .bg(input_bg)
+                                            .border_1()
+                                            .border_color(chip_border)
+                                            .rounded_md()
+                                            .child(if filtered_plugins.is_empty() {
+                                                if self.plugin_search_query.trim().is_empty() {
+                                                    div()
+                                                        .h_full()
+                                                        .w_full()
+                                                        .flex()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .text_size(px(12.5))
+                                                        .text_color(with_alpha(fg, 0.5))
+                                                        .child(self.i18n.get("dialog.plugin.empty").to_string())
+                                                        .into_any_element()
+                                                } else {
+                                                    div()
+                                                        .h_full()
+                                                        .w_full()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .items_center()
+                                                        .justify_center()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_size(px(12.5))
+                                                                .text_color(with_alpha(fg, 0.5))
+                                                                .child(self.i18n.get("dialog.plugin.no_search_results").to_string())
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .px_2p5()
+                                                                .py_1()
+                                                                .rounded_xs()
+                                                                .bg(button_bg)
+                                                                .text_size(px(11.0))
+                                                                .cursor_pointer()
+                                                                .hover(move |s| s.bg(button_hover))
+                                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                                    this.plugin_search_query.clear();
+                                                                    cx.notify();
+                                                                }))
+                                                                .child(self.i18n.get("dialog.plugin.clear_search").to_string())
+                                                        )
+                                                        .into_any_element()
+                                                }
+                                            } else {
+                                                let uninstall_label = self.i18n.get("dialog.plugin.uninstall").to_string();
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .w_full()
+                                                    .children(filtered_plugins.into_iter().map(|manifest| {
+
                                                 let plugin_id = manifest.id.clone();
                                                 let has_commands = !manifest.capabilities.commands.is_empty();
                                                 let has_outline = manifest.capabilities.outline_provider;
@@ -2924,12 +3133,33 @@ impl Dialog {
                                             .into_any_element()
                                     })
                             )
-                            .into_any_element()
-                    } else {
+                            .child(
+                                self.render_plugin_scrollbar(&self.plugin_installed_scroll_handle, filtered_plugins_count, theme, cx)
+                            )
+                    )
+                    .into_any_element()
+            } else {
                         // TAB 1: Online Registry (from zee-plugins)
                         let registry_plugins = self.registry_plugins.clone();
                         let is_loading = self.registry_loading;
                         let reg_error = self.registry_error.clone();
+                        let (filtered_reg_list, filtered_reg_count) = match registry_plugins.as_ref() {
+                            Some(list) => {
+                                let f: Vec<_> = list.iter().filter(|p| {
+                                    if self.plugin_search_query.trim().is_empty() {
+                                        return true;
+                                    }
+                                    let q = self.plugin_search_query.trim().to_lowercase();
+                                    p.name.to_lowercase().contains(&q)
+                                        || p.description.as_deref().unwrap_or("").to_lowercase().contains(&q)
+                                        || p.id.to_lowercase().contains(&q)
+                                        || p.author.as_deref().unwrap_or("").to_lowercase().contains(&q)
+                                }).cloned().collect();
+                                let count = f.len();
+                                (Some(f), count)
+                            }
+                            None => (None, 0),
+                        };
 
                         div()
                             .flex()
@@ -3135,55 +3365,99 @@ impl Dialog {
                             )
                             .child(
                                 div()
+                                    .relative()
                                     .flex_grow()
                                     .min_h(px(220.0))
-                                    .max_h(px(340.0))
-                                    .overflow_hidden()
-                                    .p_2()
-                                    .bg(input_bg)
-                                    .border_1()
-                                    .border_color(chip_border)
-                                    .rounded_md()
-                                    .child(if is_loading && registry_plugins.is_none() {
+                                    .max_h(px(360.0))
+                                    .child(
                                         div()
-                                            .h_full()
+                                            .id("online-plugins-list")
+                                            .track_scroll(&self.plugin_registry_scroll_handle)
                                             .w_full()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .text_size(px(12.5))
-                                            .text_color(with_alpha(fg, 0.6))
-                                            .child(self.i18n.get("dialog.plugin.loading").to_string())
-                                            .into_any_element()
-                                    } else if let Some(ref err) = reg_error {
-                                        div()
                                             .h_full()
-                                            .w_full()
-                                            .flex()
-                                            .flex_col()
-                                            .items_center()
-                                            .justify_center()
-                                            .gap_2()
-                                            .child(
+                                            .min_h(px(220.0))
+                                            .max_h(px(360.0))
+                                            .overflow_y_scroll()
+                                            .p_2()
+                                            .pr_4()
+                                            .bg(input_bg)
+                                            .border_1()
+                                            .border_color(chip_border)
+                                            .rounded_md()
+                                            .child(if is_loading && registry_plugins.is_none() {
                                                 div()
-                                                    .text_size(px(12.0))
-                                                    .text_color(gpui::rgb(0xe53935))
-                                                    .child(format!("Error: {}", err))
-                                            )
-                                            .into_any_element()
-                                    } else if let Some(ref reg_list) = registry_plugins {
-                                        if reg_list.is_empty() {
-                                            div()
-                                                .h_full()
-                                                .w_full()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .text_size(px(12.5))
-                                                .text_color(with_alpha(fg, 0.5))
-                                                .child(self.i18n.get("dialog.plugin.registry_empty").to_string())
-                                                .into_any_element()
-                                        } else {
+                                                    .h_full()
+                                                    .w_full()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .text_size(px(12.5))
+                                                    .text_color(with_alpha(fg, 0.6))
+                                                    .child(self.i18n.get("dialog.plugin.loading").to_string())
+                                                    .into_any_element()
+                                            } else if let Some(ref err) = reg_error {
+                                                div()
+                                                    .h_full()
+                                                    .w_full()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(12.0))
+                                                            .text_color(gpui::rgb(0xe53935))
+                                                            .child(format!("Error: {}", err))
+                                                    )
+                                                    .into_any_element()
+                                            } else if let Some(ref reg_list) = filtered_reg_list {
+                                                if reg_list.is_empty() {
+                                                    if self.plugin_search_query.trim().is_empty() {
+                                                        div()
+                                                            .h_full()
+                                                            .w_full()
+                                                            .flex()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .text_size(px(12.5))
+                                                            .text_color(with_alpha(fg, 0.5))
+                                                            .child(self.i18n.get("dialog.plugin.registry_empty").to_string())
+                                                            .into_any_element()
+                                                    } else {
+                                                        div()
+                                                            .h_full()
+                                                            .w_full()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .items_center()
+                                                            .justify_center()
+                                                            .gap_2()
+                                                            .child(
+                                                                div()
+                                                                    .text_size(px(12.5))
+                                                                    .text_color(with_alpha(fg, 0.5))
+                                                                    .child(self.i18n.get("dialog.plugin.no_search_results").to_string())
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .px_2p5()
+                                                                    .py_1()
+                                                                    .rounded_xs()
+                                                                    .bg(button_bg)
+                                                                    .text_size(px(11.0))
+                                                                    .cursor_pointer()
+                                                                    .hover(move |s| s.bg(button_hover))
+                                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                                        this.plugin_search_query.clear();
+                                                                        cx.notify();
+                                                                    }))
+                                                                    .child(self.i18n.get("dialog.plugin.clear_search").to_string())
+                                                            )
+                                                            .into_any_element()
+                                                    }
+                                                } else {
+
                                             let installed_ids: std::collections::HashSet<String> = plugins.iter().map(|p| p.id.clone()).collect();
                                             let install_online_label = self.i18n.get("dialog.plugin.install_online").to_string();
                                             div()
@@ -3308,8 +3582,12 @@ impl Dialog {
                                             .into_any_element()
                                     })
                             )
-                            .into_any_element()
-                    })
+                            .child(
+                                self.render_plugin_scrollbar(&self.plugin_registry_scroll_handle, filtered_reg_count, theme, cx)
+                            )
+                    )
+                    .into_any_element()
+            })
                     // Footer
                     .child(
                         div()
@@ -4014,10 +4292,11 @@ impl Dialog {
                         // File list container
                         .child(
                             div()
+                                .id("gdrive-file-list")
                                 .flex_grow()
-                                .min_h(px(280.0))
-                                .max_h(px(360.0))
-                                .overflow_hidden()
+                                .min_h(px(220.0))
+                                .max_h(px(340.0))
+                                .overflow_y_scroll()
                                 .bg(input_bg)
                                 .border_1()
                                 .border_color(border_color)

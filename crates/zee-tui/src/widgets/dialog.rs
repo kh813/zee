@@ -3519,6 +3519,115 @@ mod tests {
         dialog.handle_key(make_key(KeyCode::Enter));
         assert_eq!(dialog.config.tab_size, 8);
     }
+
+    #[test]
+    fn test_open_dialog_workflow_and_rendering() {
+        let i18n = zee_core::I18n::load("ja");
+        let mut dialog = OpenDialog::new(&i18n);
+        let (dw, dh) = dialog.dimensions();
+        assert_eq!((dw, dh), (80, 22));
+        assert_eq!(dialog.title(), i18n.get("dialog.open_file"));
+
+        // Render check into buffer to ensure no panics or out-of-bounds cells
+        let theme = zee_core::theme::Theme::load_all().into_iter().next().unwrap();
+        let mut renderer = Renderer::new(dw, dh);
+        dialog.render(&mut renderer, &theme, 0, 0, dw, dh);
+
+        // Verify title rendered in header row
+        let mut found_title = false;
+        let title_str = dialog.title();
+        for y in 0..dh {
+            let row_text: String = (0..dw)
+                .map(|x| renderer.get_cell(x, y))
+                .filter(|c| c.width > 0)
+                .map(|c| c.ch)
+                .collect();
+            if row_text.contains(title_str) {
+                found_title = true;
+                break;
+            }
+        }
+        assert!(found_title, "OpenDialog title '{}' must be rendered in dialog header", title_str);
+
+        // Test keyboard Esc closes dialog
+        match dialog.handle_key(make_key(KeyCode::Esc)) {
+            DialogResult::Cancel => {}
+            _ => panic!("Expected DialogResult::Cancel on Esc"),
+        }
+    }
+
+    #[test]
+    fn test_save_as_dialog_workflow_and_rendering() {
+        let i18n = zee_core::I18n::load("ja");
+        let mut dialog = SaveAsDialog::new(None, Some(".txt"), zee_core::Encoding::Utf8, &i18n);
+        let (dw, dh) = dialog.dimensions();
+        assert_eq!((dw, dh), (80, 22));
+        assert_eq!(dialog.title(), i18n.get("dialog.save_as"));
+
+        // Render check into buffer
+        let theme = zee_core::theme::Theme::load_all().into_iter().next().unwrap();
+        let mut renderer = Renderer::new(dw, dh);
+        dialog.render(&mut renderer, &theme, 0, 0, dw, dh);
+
+        // Verify title rendered in header row
+        let mut found_title = false;
+        let title_str = dialog.title();
+        for y in 0..dh {
+            let row_text: String = (0..dw)
+                .map(|x| renderer.get_cell(x, y))
+                .filter(|c| c.width > 0)
+                .map(|c| c.ch)
+                .collect();
+            if row_text.contains(title_str) {
+                found_title = true;
+                break;
+            }
+        }
+        assert!(found_title, "SaveAsDialog title '{}' must be rendered in dialog header", title_str);
+
+        // Input filename and confirm
+        dialog.browser.input_text = "report.txt".to_string();
+        match dialog.handle_key(make_key(KeyCode::Enter)) {
+            DialogResult::Ok(Action::ConfirmPath(p)) => {
+                assert_eq!(p.file_name().unwrap(), "report.txt");
+            }
+            _ => panic!("Expected Action::ConfirmPath on Enter"),
+        }
+    }
+
+    #[test]
+    fn test_googledrive_dialog_setup_and_rendering() {
+        let i18n = zee_core::I18n::load("ja");
+        let mut dialog = GoogleDriveDialog::new(&i18n);
+        let (dw, dh) = dialog.dimensions();
+        assert_eq!((dw, dh), (76, 22));
+
+        let theme = zee_core::theme::Theme::load_all().into_iter().next().unwrap();
+        let mut renderer = Renderer::new(dw, dh);
+        dialog.render(&mut renderer, &theme, 0, 0, dw, dh);
+
+        // Ensure title is rendered in header
+        let mut found_title = false;
+        let title_str = dialog.title();
+        for y in 0..dh {
+            let row_text: String = (0..dw)
+                .map(|x| renderer.get_cell(x, y))
+                .filter(|c| c.width > 0)
+                .map(|c| c.ch)
+                .collect();
+            if row_text.contains(title_str) {
+                found_title = true;
+                break;
+            }
+        }
+        assert!(found_title, "GoogleDriveDialog title '{}' must be rendered in header", title_str);
+
+        // Verify Esc key cancels
+        match dialog.handle_key(make_key(KeyCode::Esc)) {
+            DialogResult::Cancel => {}
+            _ => panic!("Expected DialogResult::Cancel on Esc"),
+        }
+    }
 }
 
 

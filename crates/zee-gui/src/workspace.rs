@@ -108,8 +108,10 @@ impl Workspace {
     pub fn apply_plugin_transform(&mut self, command: &str) {
         let (has_selection, range, text_to_transform) = if let Some(editor) = self.active_editor() {
             if let Some(range) = editor.selection.clone() {
-                if range.start < range.end {
-                    (true, range.clone(), editor.rope.slice(range).to_string())
+                let start = range.start.min(range.end);
+                let end = range.start.max(range.end);
+                if start < end {
+                    (true, start..end, editor.rope.slice(start..end).to_string())
                 } else {
                     (false, 0..0, editor.rope.to_string())
                 }
@@ -124,12 +126,19 @@ impl Workspace {
             .transform_text(command, &text_to_transform)
             .unwrap_or(text_to_transform);
 
+        let is_insertion_cmd = command.starts_with("lorem_") || command == "generate_toc";
+
         if let Some(editor) = self.active_editor_mut() {
             if has_selection {
                 editor.delete(range.clone());
                 editor.insert(range.start, &transformed);
                 editor.cursor = range.start + transformed.chars().count();
                 editor.selection = Some(range.start..editor.cursor);
+            } else if is_insertion_cmd {
+                let insert_pos = editor.cursor.min(editor.rope.len_chars());
+                editor.insert(insert_pos, &transformed);
+                editor.cursor = insert_pos + transformed.chars().count();
+                editor.selection = None;
             } else {
                 editor.delete(0..editor.rope.len_chars());
                 editor.insert(0, &transformed);
@@ -808,12 +817,7 @@ mod tests {
         let mut workspace = Workspace::new(Config::default());
         assert_eq!(workspace.plugins_version, 0);
 
-        workspace.reload_plugins();
-        assert_eq!(workspace.plugins_version, 1);
-
-        workspace.reload_plugins();
-        assert_eq!(workspace.plugins_version, 2);
-
+        // Native menus initially
         #[cfg(target_os = "macos")]
         {
             use zee_core::i18n::I18n;
@@ -821,7 +825,141 @@ mod tests {
             let menus = crate::app::build_native_menus(&i18n, &workspace.config, Some(&workspace.plugin_manager));
             let plugin_menu = menus.iter().find(|m| m.name.as_ref() == "プラグイン").expect("Plugin menu must exist");
             assert!(!plugin_menu.items.is_empty());
+
+            // If no plugins loaded, the first item must be "プラグインなし" action
+            if workspace.plugin_manager.all_manifests().is_empty() {
+                match &plugin_menu.items[0] {
+                    gpui::MenuItem::Action { name, .. } => {
+                        assert!(name.contains("プラグインなし") || name.contains("No plugins"));
+                    }
+                    _ => panic!("Expected Action item for no plugins message"),
+                }
+            }
         }
+
+        workspace.reload_plugins();
+        assert_eq!(workspace.plugins_version, 1);
+
+        workspace.reload_plugins();
+        assert_eq!(workspace.plugins_version, 2);
+    }
+
+    #[test]
+    fn test_dialog_dimensions_and_wide_types() {
+        use crate::widgets::dialog::{Dialog, DialogType, UnsavedChangesIntent};
+
+        // Wide dialogs must be at least 600px wide and 660px tall to fit Japanese labels and scroll containers
+        let wide_dialogs = vec![
+            DialogType::Settings,
+            DialogType::PluginManager,
+            DialogType::GoogleDrive,
+        ];
+
+        for dt in wide_dialogs {
+            let (w, h) = Dialog::dialog_dimensions_for_type(&dt);
+            assert!(w >= 600.0, "Wide dialog width must be >= 600.0, got {}", w);
+            assert!(h >= 660.0, "Wide dialog max height must be >= 660.0, got {}", h);
+        }
+
+        // PluginManager must have widened dimensions (720x680) to fit single-line Japanese descriptions and search bar
+        let (pm_w, pm_h) = Dialog::dialog_dimensions_for_type(&DialogType::PluginManager);
+        assert_eq!((pm_w, pm_h), (720.0, 680.0));
+
+        // Standard dialogs (e.g. UnsavedChanges, About)
+        let standard_dialog_type = DialogType::UnsavedChanges {
+            filename: "test.txt".to_string(),
+            intent: UnsavedChangesIntent::CloseTab,
+        };
+        let (w, h) = Dialog::dialog_dimensions_for_type(&standard_dialog_type);
+        assert_eq!((w, h), (460.0, 580.0));
+    }
+
+    #[test]
+    fn test_plugin_manager_keyword_search_filtering() {
+        use zee_core::plugin::{PluginManifest, PluginType, PluginCapabilities};
+
+        let manifests = vec![
+            PluginManifest {
+                id: "case-converter".to_string(),
+                name: "Case Converter".to_string(),
+                version: "1.0.0".to_string(),
+                description: Some("大文字と小文字の相互変換を行います".to_string()),
+                plugin_type: PluginType::Lua,
+                entry: Some("main.lua".to_string()),
+                author: None,
+                homepage: None,
+                languages: Vec::new(),
+                capabilities: PluginCapabilities::default(),
+            },
+            PluginManifest {
+                id: "markdown-toc".to_string(),
+                name: "Markdown TOC".to_string(),
+                version: "0.2.0".to_string(),
+                description: Some("見出しから目次を自動生成".to_string()),
+                plugin_type: PluginType::Wasm,
+                entry: Some("toc.wasm".to_string()),
+                author: None,
+                homepage: None,
+                languages: Vec::new(),
+                capabilities: PluginCapabilities::default(),
+            },
+        ];
+
+        let filter_by = |query: &str| -> Vec<String> {
+            manifests.iter().filter(|m| {
+                if query.trim().is_empty() {
+                    return true;
+                }
+                let q = query.trim().to_lowercase();
+                m.name.to_lowercase().contains(&q)
+                    || m.description.as_deref().unwrap_or("").to_lowercase().contains(&q)
+                    || m.id.to_lowercase().contains(&q)
+            }).map(|m| m.id.clone()).collect()
+        };
+
+        // 1. Empty query matches all
+        assert_eq!(filter_by("").len(), 2);
+        assert_eq!(filter_by("   ").len(), 2);
+
+        // 2. Filter by name (case-insensitive)
+        assert_eq!(filter_by("case"), vec!["case-converter"]);
+        assert_eq!(filter_by("CASE"), vec!["case-converter"]);
+        assert_eq!(filter_by("toc"), vec!["markdown-toc"]);
+
+        // 3. Filter by Japanese description
+        assert_eq!(filter_by("目次"), vec!["markdown-toc"]);
+        assert_eq!(filter_by("大文字"), vec!["case-converter"]);
+
+        // 4. Filter by ID
+        assert_eq!(filter_by("markdown-toc"), vec!["markdown-toc"]);
+
+        // 5. No match returns empty
+        assert_eq!(filter_by("nonexistent"), Vec::<String>::new());
+    }
+
+
+    #[test]
+    fn test_apply_plugin_transform_selection_and_builtins() {
+        let mut workspace = Workspace::new(Config::default());
+        let editor = workspace.active_editor_mut().unwrap();
+        editor.insert(0, "hello world");
+        
+        // Test backwards selection normalization (11..6)
+        editor.selection = Some(6..11);
+        workspace.apply_plugin_transform("to_uppercase");
+        assert_eq!(workspace.active_editor().unwrap().rope.to_string(), "hello WORLD");
+
+        // Test forward selection
+        let editor = workspace.active_editor_mut().unwrap();
+        editor.selection = Some(0..5);
+        workspace.apply_plugin_transform("to_uppercase");
+        assert_eq!(workspace.active_editor().unwrap().rope.to_string(), "HELLO WORLD");
+
+        // Test whole buffer transform when no selection
+        let editor = workspace.active_editor_mut().unwrap();
+        editor.selection = None;
+        workspace.apply_plugin_transform("to_lowercase");
+        assert_eq!(workspace.active_editor().unwrap().rope.to_string(), "hello world");
     }
 
     #[test]

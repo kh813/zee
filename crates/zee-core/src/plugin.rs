@@ -700,7 +700,30 @@ impl PluginManager {
                 }
             }
         }
-        None
+
+        // Built-in fallback transforms when no plugin handled the command
+        match command {
+            "to_uppercase" => Some(text.to_uppercase()),
+            "to_lowercase" => Some(text.to_lowercase()),
+            "sort_lines" => {
+                let mut lines: Vec<&str> = text.lines().collect();
+                lines.sort();
+                Some(lines.join("\n"))
+            }
+            "reverse_lines" => {
+                let mut lines: Vec<&str> = text.lines().collect();
+                lines.reverse();
+                Some(lines.join("\n"))
+            }
+            "format_json" => {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(text) {
+                    Some(serde_json::to_string_pretty(&val).unwrap_or_else(|_| text.to_string()))
+                } else {
+                    Some(text.to_string())
+                }
+            }
+            _ => None,
+        }
     }
 
     pub fn install_plugin_from_path(src: &Path) -> Result<String> {

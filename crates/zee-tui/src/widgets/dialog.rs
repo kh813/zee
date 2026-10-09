@@ -837,6 +837,545 @@ impl Dialog for OpenDialog {
     }
 }
 
+pub struct OpenFolderDialog {
+    pub browser: FileBrowser,
+    pub error_message: Option<String>,
+    pub i18n_title: String,
+    pub i18n_open_btn: String,
+    pub selected_open_btn: bool,
+}
+
+impl OpenFolderDialog {
+    pub fn new(initial_path: Option<&PathBuf>, i18n: &zee_core::I18n) -> Self {
+        let root = initial_path.cloned().unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        let mut browser = FileBrowser::new(root);
+        browser.localize(i18n);
+        browser.i18n_filename = format!("{}: ", i18n.get("dialog.folder_name"));
+        Self {
+            browser,
+            error_message: None,
+            i18n_title: i18n.get("menu.file.open_folder").to_string(),
+            i18n_open_btn: i18n.get("menu.file.open_folder").to_string(),
+            selected_open_btn: false,
+        }
+    }
+}
+
+impl Dialog for OpenFolderDialog {
+    fn title(&self) -> &str {
+        &self.i18n_title
+    }
+
+    fn dimensions(&self) -> (u16, u16) {
+        (80, 22)
+    }
+
+    fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
+        render_base_dialog(renderer, theme, self.title(), x, y, w, h);
+        self.browser.render(renderer, theme, x, y, w, h);
+
+        // Draw [ Open This Folder ] button next to bottom input line
+        let btn_text = format!("[ {} ]", self.i18n_open_btn);
+        let btn_w = btn_text.chars().map(|c| c.width().unwrap_or(1) as u16).sum::<u16>();
+        let bx = x + w - btn_w - 3;
+        let by = y + h - 2;
+
+        let active_bg = to_ct_color(theme.ui.button_active_bg, theme);
+        let active_fg = to_ct_color(theme.ui.button_active_fg, theme);
+        let btn_bg = if self.selected_open_btn { active_bg } else { to_ct_color(theme.ui.status_bar_bg, theme) };
+        let btn_fg = if self.selected_open_btn { active_fg } else { to_ct_color(theme.ui.status_bar_fg, theme) };
+
+        let mut cur_bx = bx;
+        for c in btn_text.chars() {
+            let cw = c.width().unwrap_or(1) as u16;
+            renderer.set_cell(cur_bx, by, Cell { ch: c, bg: btn_bg, fg: btn_fg, bold: self.selected_open_btn, width: cw as u8, ..Default::default() });
+            cur_bx += cw;
+        }
+
+        if let Some(ref msg) = self.error_message {
+            let mut cur_msg_x = x + 2;
+            let msg_y = y + h - 3;
+            for c in msg.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_msg_x + cw < x + w - 2 {
+                    renderer.set_cell(cur_msg_x, msg_y, Cell { ch: c, bg: to_ct_color(theme.ui.dialog_bg, theme), fg: Color::Red, width: cw as u8, ..Default::default() });
+                    cur_msg_x += cw;
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> DialogResult<Action> {
+        match key.code {
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.selected_open_btn = !self.selected_open_btn;
+                return DialogResult::Pending;
+            }
+            KeyCode::Enter => {
+                if self.selected_open_btn {
+                    // Open currently viewed folder
+                    return DialogResult::Ok(Action::ConfirmPath(self.browser.current_dir.clone()));
+                }
+                // Check if currently selected entry is dir
+                if let Some(entry) = self.browser.entries.get(self.browser.selected_idx) {
+                    if entry.is_dir && entry.name != ".." {
+                        // User can navigate or enter
+                    }
+                }
+            }
+            KeyCode::Char('o') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) || key.modifiers.contains(crossterm::event::KeyModifiers::ALT) => {
+                return DialogResult::Ok(Action::ConfirmPath(self.browser.current_dir.clone()));
+            }
+            KeyCode::Esc => return DialogResult::Cancel,
+            _ => {}
+        }
+
+        if let Some(path) = self.browser.handle_key(key) {
+            if path.is_dir() {
+                return DialogResult::Ok(Action::ConfirmPath(path));
+            } else if let Some(parent) = path.parent() {
+                return DialogResult::Ok(Action::ConfirmPath(parent.to_path_buf()));
+            }
+        }
+        DialogResult::Pending
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent, x: u16, y: u16, w: u16, h: u16) -> DialogResult<Action> {
+        let (mx, my) = (mouse.column, mouse.row);
+        let btn_text = format!("[ {} ]", self.i18n_open_btn);
+        let btn_w = btn_text.chars().map(|c| c.width().unwrap_or(1) as u16).sum::<u16>();
+        let bx = x + w - btn_w - 3;
+        let by = y + h - 2;
+
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) && my == by && mx >= bx && mx < bx + btn_w {
+            return DialogResult::Ok(Action::ConfirmPath(self.browser.current_dir.clone()));
+        }
+
+        if let Some(path) = self.browser.handle_mouse(mouse, x, y, w, h) {
+            if path.is_dir() {
+                return DialogResult::Ok(Action::ConfirmPath(path));
+            }
+        }
+        DialogResult::Pending
+    }
+
+    fn set_error(&mut self, msg: String) {
+        self.error_message = Some(msg);
+    }
+}
+
+pub struct PluginManagerDialog {
+    pub manifests: Vec<zee_core::plugin::PluginManifest>,
+    pub registry_plugins: Vec<zee_core::plugin::RegistryPlugin>,
+    pub selected_idx: usize,
+    pub active_tab: usize, // 0 = Installed, 1 = Registry
+    pub search_query: String,
+    pub input_focused: bool,
+    pub i18n_title: String,
+    pub i18n_installed_tab: String,
+    pub i18n_registry_tab: String,
+    pub i18n_install: String,
+    pub i18n_uninstall: String,
+    pub i18n_empty: String,
+    pub i18n_search: String,
+    pub message: Option<(String, bool)>,
+}
+
+impl PluginManagerDialog {
+    pub fn new(pm: &zee_core::plugin::PluginManager, registries: Option<&[String]>, i18n: &zee_core::I18n) -> Self {
+        let manifests = pm.all_manifests();
+        let registry_plugins = zee_core::plugin::PluginManager::fetch_registries(registries.unwrap_or(&[])).unwrap_or_default();
+        Self {
+            manifests,
+            registry_plugins,
+            selected_idx: 0,
+            active_tab: 0,
+            search_query: String::new(),
+            input_focused: false,
+            i18n_title: i18n.get("dialog.plugin.title").to_string(),
+            i18n_installed_tab: i18n.get("dialog.plugin.tab_installed").to_string(),
+            i18n_registry_tab: i18n.get("dialog.plugin.tab_registry").to_string(),
+            i18n_install: i18n.get("dialog.plugin.btn_install").to_string(),
+            i18n_uninstall: i18n.get("dialog.plugin.btn_uninstall").to_string(),
+            i18n_empty: i18n.get("dialog.plugin.empty").to_string(),
+            i18n_search: i18n.get("dialog.plugin.search_placeholder").to_string(),
+            message: None,
+        }
+    }
+
+    pub fn filtered_installed(&self) -> Vec<&zee_core::plugin::PluginManifest> {
+        let q = self.search_query.trim().to_lowercase();
+        self.manifests.iter().filter(|m| {
+            if q.is_empty() { return true; }
+            m.name.to_lowercase().contains(&q) || m.id.to_lowercase().contains(&q) || m.description.as_deref().unwrap_or("").to_lowercase().contains(&q)
+        }).collect()
+    }
+
+    pub fn filtered_registry(&self) -> Vec<&zee_core::plugin::RegistryPlugin> {
+        let q = self.search_query.trim().to_lowercase();
+        self.registry_plugins.iter().filter(|p| {
+            if q.is_empty() { return true; }
+            p.name.to_lowercase().contains(&q) || p.id.to_lowercase().contains(&q) || p.description.as_deref().unwrap_or("").to_lowercase().contains(&q)
+        }).collect()
+    }
+}
+
+impl Dialog for PluginManagerDialog {
+    fn title(&self) -> &str {
+        &self.i18n_title
+    }
+
+    fn dimensions(&self) -> (u16, u16) {
+        (80, 22)
+    }
+
+    fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
+        render_base_dialog(renderer, theme, self.title(), x, y, w, h);
+
+        let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
+        let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let active_bg = to_ct_color(theme.ui.button_active_bg, theme);
+        let active_fg = to_ct_color(theme.ui.button_active_fg, theme);
+        let accent = to_ct_color(theme.ui.tab_active_fg, theme);
+
+        // Header Tab bar: [ Installed (0) ]  [ Online Registry (1) ]
+        let tab0_str = format!(" [ {} ] ", self.i18n_installed_tab);
+        let tab1_str = format!(" [ {} ] ", self.i18n_registry_tab);
+
+        let mut tx = x + 2;
+        let ty = y + 1;
+        for c in tab0_str.chars() {
+            let cw = c.width().unwrap_or(1) as u16;
+            let (bg, fg) = if self.active_tab == 0 { (active_bg, active_fg) } else { (dialog_bg, dialog_fg) };
+            renderer.set_cell(tx, ty, Cell { ch: c, bg, fg, bold: self.active_tab == 0, width: cw as u8, ..Default::default() });
+            tx += cw;
+        }
+        tx += 2;
+        for c in tab1_str.chars() {
+            let cw = c.width().unwrap_or(1) as u16;
+            let (bg, fg) = if self.active_tab == 1 { (active_bg, active_fg) } else { (dialog_bg, dialog_fg) };
+            renderer.set_cell(tx, ty, Cell { ch: c, bg, fg, bold: self.active_tab == 1, width: cw as u8, ..Default::default() });
+            tx += cw;
+        }
+
+        // Search bar on y + 2
+        let sy = y + 2;
+        let search_label = "Search: ";
+        let mut sx = x + 2;
+        for c in search_label.chars() {
+            let cw = c.width().unwrap_or(1) as u16;
+            renderer.set_cell(sx, sy, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
+            sx += cw;
+        }
+        let input_box_w = (w.saturating_sub(14)).min(40);
+        let input_bg = if self.input_focused { active_bg } else { to_ct_color(theme.ui.panel_bg, theme) };
+        let input_fg = if self.input_focused { active_fg } else { dialog_fg };
+        for dx in 0..input_box_w {
+            renderer.set_cell(sx + dx, sy, Cell { ch: ' ', bg: input_bg, ..Default::default() });
+        }
+        let display_search = if self.search_query.is_empty() && !self.input_focused {
+            &self.i18n_search
+        } else {
+            &self.search_query
+        };
+        let mut stx = sx;
+        for c in display_search.chars() {
+            let cw = c.width().unwrap_or(1) as u16;
+            if stx + cw < sx + input_box_w {
+                renderer.set_cell(stx, sy, Cell { ch: c, bg: input_bg, fg: input_fg, width: cw as u8, ..Default::default() });
+                stx += cw;
+            }
+        }
+
+        // List Area: y + 4 .. y + h - 3
+        let list_top = y + 4;
+        let list_h = (h.saturating_sub(7)) as usize;
+
+        if self.active_tab == 0 {
+            let installed = self.filtered_installed();
+            if installed.is_empty() {
+                let msg_x = x + 4;
+                let msg_y = y + 6;
+                for (i, c) in self.i18n_empty.chars().enumerate() {
+                    renderer.set_cell(msg_x + i as u16, msg_y, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.editor.line_number, theme), ..Default::default() });
+                }
+            } else {
+                let start_idx = if self.selected_idx >= list_h { self.selected_idx - list_h + 1 } else { 0 };
+                for row in 0..list_h {
+                    let idx = start_idx + row;
+                    if idx >= installed.len() { break; }
+                    let item = installed[idx];
+                    let is_sel = idx == self.selected_idx;
+                    let (bg, fg) = if is_sel { (to_ct_color(theme.editor.selection, theme), accent) } else { (dialog_bg, dialog_fg) };
+
+                    let iy = list_top + row as u16;
+                    for dx in 1..w - 1 {
+                        renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg, ..Default::default() });
+                    }
+
+                    let name_str = format!("{} v{}", item.name, item.version);
+                    let mut cur_x = x + 3;
+                    for c in name_str.chars() {
+                        let cw = c.width().unwrap_or(1) as u16;
+                        if cur_x + cw < x + 30 {
+                            renderer.set_cell(cur_x, iy, Cell { ch: c, bg, fg, bold: is_sel, width: cw as u8, ..Default::default() });
+                            cur_x += cw;
+                        }
+                    }
+
+                    // Description
+                    if let Some(ref desc) = item.description {
+                        let mut desc_x = x + 32;
+                        for c in desc.chars() {
+                            let cw = c.width().unwrap_or(1) as u16;
+                            if desc_x + cw < x + w - 16 {
+                                renderer.set_cell(desc_x, iy, Cell { ch: c, bg, fg: to_ct_color(theme.editor.line_number, theme), width: cw as u8, ..Default::default() });
+                                desc_x += cw;
+                            }
+                        }
+                    }
+
+                    // Uninstall action hint
+                    if is_sel {
+                        let act_str = format!("[ {} ]", self.i18n_uninstall);
+                        let mut ax = x + w - (act_str.len() as u16) - 3;
+                        for c in act_str.chars() {
+                            renderer.set_cell(ax, iy, Cell { ch: c, bg: active_bg, fg: active_fg, bold: true, width: 1, ..Default::default() });
+                            ax += 1;
+                        }
+                    }
+                }
+            }
+        } else {
+            let registry = self.filtered_registry();
+            if registry.is_empty() {
+                let msg_x = x + 4;
+                let msg_y = y + 6;
+                let empty_txt = "No plugins found in registry";
+                for (i, c) in empty_txt.chars().enumerate() {
+                    renderer.set_cell(msg_x + i as u16, msg_y, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.editor.line_number, theme), ..Default::default() });
+                }
+            } else {
+                let start_idx = if self.selected_idx >= list_h { self.selected_idx - list_h + 1 } else { 0 };
+                for row in 0..list_h {
+                    let idx = start_idx + row;
+                    if idx >= registry.len() { break; }
+                    let item = registry[idx];
+                    let is_installed = self.manifests.iter().any(|m| m.id == item.id);
+                    let is_sel = idx == self.selected_idx;
+                    let (bg, fg) = if is_sel { (to_ct_color(theme.editor.selection, theme), accent) } else { (dialog_bg, dialog_fg) };
+
+                    let iy = list_top + row as u16;
+                    for dx in 1..w - 1 {
+                        renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg, ..Default::default() });
+                    }
+
+                    let name_str = format!("{} v{}", item.name, item.version);
+                    let mut cur_x = x + 3;
+                    for c in name_str.chars() {
+                        let cw = c.width().unwrap_or(1) as u16;
+                        if cur_x + cw < x + 30 {
+                            renderer.set_cell(cur_x, iy, Cell { ch: c, bg, fg, bold: is_sel, width: cw as u8, ..Default::default() });
+                            cur_x += cw;
+                        }
+                    }
+
+                    // Description
+                    if let Some(ref desc) = item.description {
+                        let mut desc_x = x + 32;
+                        for c in desc.chars() {
+                            let cw = c.width().unwrap_or(1) as u16;
+                            if desc_x + cw < x + w - 16 {
+                                renderer.set_cell(desc_x, iy, Cell { ch: c, bg, fg: to_ct_color(theme.editor.line_number, theme), width: cw as u8, ..Default::default() });
+                                desc_x += cw;
+                            }
+                        }
+                    }
+
+                    // Install / Installed badge
+                    let badge = if is_installed { "✓ Installed" } else { &self.i18n_install };
+                    let act_str = format!("[ {} ]", badge);
+                    let mut ax = x + w - (act_str.len() as u16) - 3;
+                    let b_bg = if is_sel && !is_installed { active_bg } else { to_ct_color(theme.ui.status_bar_bg, theme) };
+                    let b_fg = if is_sel && !is_installed { active_fg } else { to_ct_color(theme.ui.status_bar_fg, theme) };
+                    for c in act_str.chars() {
+                        renderer.set_cell(ax, iy, Cell { ch: c, bg: b_bg, fg: b_fg, bold: is_sel, width: 1, ..Default::default() });
+                        ax += 1;
+                    }
+                }
+            }
+        }
+
+        // Bottom status message or hints
+        let by = y + h - 2;
+        if let Some((ref msg, is_err)) = self.message {
+            let msg_fg = if is_err { Color::Red } else { Color::Green };
+            let mut cur_x = x + 2;
+            for c in msg.chars() {
+                let cw = c.width().unwrap_or(1) as u16;
+                if cur_x + cw < x + w - 2 {
+                    renderer.set_cell(cur_x, by, Cell { ch: c, bg: dialog_bg, fg: msg_fg, width: cw as u8, ..Default::default() });
+                    cur_x += cw;
+                }
+            }
+        } else {
+            let hint = "Tab: Switch Tab | ↑↓: Select | Enter: Install/Uninstall | /: Search | Esc: Close";
+            let mut cur_x = x + 2;
+            for c in hint.chars() {
+                let cw = c.width().unwrap_or(1) as u16;
+                if cur_x + cw < x + w - 2 {
+                    renderer.set_cell(cur_x, by, Cell { ch: c, bg: dialog_bg, fg: to_ct_color(theme.editor.line_number, theme), width: cw as u8, ..Default::default() });
+                    cur_x += cw;
+                }
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> DialogResult<Action> {
+        if self.input_focused {
+            match key.code {
+                KeyCode::Esc => {
+                    self.input_focused = false;
+                    return DialogResult::Pending;
+                }
+                KeyCode::Enter => {
+                    self.input_focused = false;
+                    return DialogResult::Pending;
+                }
+                KeyCode::Backspace => {
+                    self.search_query.pop();
+                    self.selected_idx = 0;
+                    return DialogResult::Pending;
+                }
+                KeyCode::Char(c) => {
+                    self.search_query.push(c);
+                    self.selected_idx = 0;
+                    return DialogResult::Pending;
+                }
+                _ => return DialogResult::Pending,
+            }
+        }
+
+        match key.code {
+            KeyCode::Esc => DialogResult::Cancel,
+            KeyCode::Tab => {
+                self.active_tab = (self.active_tab + 1) % 2;
+                self.selected_idx = 0;
+                DialogResult::Pending
+            }
+            KeyCode::BackTab => {
+                self.active_tab = if self.active_tab == 0 { 1 } else { 0 };
+                self.selected_idx = 0;
+                DialogResult::Pending
+            }
+            KeyCode::Char('/') => {
+                self.input_focused = true;
+                DialogResult::Pending
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if self.selected_idx > 0 {
+                    self.selected_idx -= 1;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let count = if self.active_tab == 0 {
+                    self.filtered_installed().len()
+                } else {
+                    self.filtered_registry().len()
+                };
+                if count > 0 && self.selected_idx + 1 < count {
+                    self.selected_idx += 1;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Enter => {
+                if self.active_tab == 0 {
+                    let installed = self.filtered_installed();
+                    if let Some(item) = installed.get(self.selected_idx) {
+                        let id = item.id.clone();
+                        match zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id) {
+                            Ok(true) => {
+                                self.message = Some((format!("Plugin '{}' uninstalled successfully", id), false));
+                                let pm = zee_core::plugin::PluginManager::new();
+                                self.manifests = pm.all_manifests();
+                                if self.selected_idx >= self.filtered_installed().len() && self.selected_idx > 0 {
+                                    self.selected_idx -= 1;
+                                }
+                            }
+                            Ok(false) => {
+                                self.message = Some((format!("Plugin '{}' not found", id), true));
+                            }
+                            Err(e) => {
+                                self.message = Some((format!("Failed to uninstall: {}", e), true));
+                            }
+                        }
+                    }
+                } else {
+                    let registry = self.filtered_registry();
+                    if let Some(item) = registry.get(self.selected_idx) {
+                        let id = item.id.clone();
+                        let is_installed = self.manifests.iter().any(|m| m.id == id);
+                        if !is_installed {
+                            match zee_core::plugin::PluginManager::install_from_registry(&id, None, None) {
+                                Ok(()) => {
+                                    self.message = Some((format!("Plugin '{}' installed successfully", id), false));
+                                    let pm = zee_core::plugin::PluginManager::new();
+                                    self.manifests = pm.all_manifests();
+                                }
+                                Err(e) => {
+                                    self.message = Some((format!("Failed to install: {}", e), true));
+                                }
+                            }
+                        }
+                    }
+                }
+                DialogResult::Pending
+            }
+            _ => DialogResult::Pending,
+        }
+    }
+
+    fn handle_mouse(&mut self, mouse: MouseEvent, x: u16, y: u16, w: u16, h: u16) -> DialogResult<Action> {
+        let (mx, my) = (mouse.column, mouse.row);
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            // Check tab header click
+            if my == y + 1 {
+                if mx >= x + 2 && mx < x + 16 {
+                    self.active_tab = 0;
+                    self.selected_idx = 0;
+                } else if mx >= x + 18 && mx < x + 36 {
+                    self.active_tab = 1;
+                    self.selected_idx = 0;
+                }
+                return DialogResult::Pending;
+            }
+            // Check search bar click
+            if my == y + 2 && mx >= x + 10 && mx < x + 50 {
+                self.input_focused = true;
+                return DialogResult::Pending;
+            }
+            // Check list row click
+            let list_top = y + 4;
+            let list_h = (h.saturating_sub(7)) as usize;
+            if my >= list_top && my < list_top + list_h as u16 {
+                let clicked_idx = (my - list_top) as usize;
+                let count = if self.active_tab == 0 { self.filtered_installed().len() } else { self.filtered_registry().len() };
+                if clicked_idx < count {
+                    self.selected_idx = clicked_idx;
+                    // Trigger enter on click if near action button
+                    if mx >= x + w - 16 {
+                        return self.handle_key(KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE));
+                    }
+                }
+            }
+        }
+        DialogResult::Pending
+    }
+}
+
 pub struct SaveAsDialog {
     pub browser: FileBrowser,
     pub error_message: Option<String>,
@@ -3623,6 +4162,87 @@ mod tests {
         assert!(found_title, "GoogleDriveDialog title '{}' must be rendered in header", title_str);
 
         // Verify Esc key cancels
+        match dialog.handle_key(make_key(KeyCode::Esc)) {
+            DialogResult::Cancel => {}
+            _ => panic!("Expected DialogResult::Cancel on Esc"),
+        }
+    }
+
+    #[test]
+    fn test_open_folder_dialog_setup_and_navigation() {
+        let i18n = zee_core::I18n::load("en");
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_dlg_open_dir_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let mut dialog = OpenFolderDialog::new(Some(&temp_dir), &i18n);
+        let (dw, dh) = dialog.dimensions();
+        assert_eq!((dw, dh), (80, 22));
+
+        let theme = zee_core::theme::Theme::load_all().into_iter().next().unwrap();
+        let mut renderer = Renderer::new(dw, dh);
+        dialog.render(&mut renderer, &theme, 0, 0, dw, dh);
+
+        // Verify title rendered
+        let mut found_title = false;
+        let title_str = dialog.title();
+        for y in 0..dh {
+            let row_text: String = (0..dw)
+                .map(|x| renderer.get_cell(x, y))
+                .filter(|c| c.width > 0)
+                .map(|c| c.ch)
+                .collect();
+            if row_text.contains(title_str) {
+                found_title = true;
+                break;
+            }
+        }
+        assert!(found_title, "OpenFolderDialog title must be rendered in header");
+
+        // Focus the confirm button and press Enter
+        dialog.selected_open_btn = true; // Confirm button
+        match dialog.handle_key(make_key(KeyCode::Enter)) {
+            DialogResult::Ok(Action::ConfirmPath(p)) => {
+                assert_eq!(p, temp_dir);
+            }
+            _ => panic!("Expected ConfirmPath when pressing Enter on confirm button"),
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_plugin_manager_dialog_tabs_and_search() {
+        let i18n = zee_core::I18n::load("en");
+        let pm = zee_core::plugin::PluginManager::new();
+        let mut dialog = PluginManagerDialog::new(&pm, None, &i18n);
+        let (dw, dh) = dialog.dimensions();
+        assert_eq!((dw, dh), (80, 22));
+
+        let theme = zee_core::theme::Theme::load_all().into_iter().next().unwrap();
+        let mut renderer = Renderer::new(dw, dh);
+        dialog.render(&mut renderer, &theme, 0, 0, dw, dh);
+
+        // Test Tab switches between Installed (0) and Registry (1)
+        assert_eq!(dialog.active_tab, 0);
+        let _ = dialog.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(dialog.active_tab, 1);
+        let _ = dialog.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(dialog.active_tab, 0);
+
+        // Test '/' enters search mode and typing filters
+        let _ = dialog.handle_key(make_key(KeyCode::Char('/')));
+        assert!(dialog.input_focused);
+        let _ = dialog.handle_key(make_key(KeyCode::Char('t')));
+        let _ = dialog.handle_key(make_key(KeyCode::Char('e')));
+        let _ = dialog.handle_key(make_key(KeyCode::Char('x')));
+        let _ = dialog.handle_key(make_key(KeyCode::Char('t')));
+        assert_eq!(dialog.search_query, "text");
+
+        // Press Enter to finish search
+        let _ = dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(!dialog.input_focused);
+
+        // Esc closes dialog
         match dialog.handle_key(make_key(KeyCode::Esc)) {
             DialogResult::Cancel => {}
             _ => panic!("Expected DialogResult::Cancel on Esc"),

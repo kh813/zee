@@ -223,6 +223,7 @@ impl I18n {
         m.insert("menu.view.theme".to_string(), "Theme".to_string());
         m.insert("menu.view.syntax".to_string(), "Syntax".to_string());
         m.insert("menu.view.language".to_string(), "Language".to_string());
+        m.insert("menu.view.files".to_string(), "Files".to_string());
         m.insert("menu.view.outline".to_string(), "Outline".to_string());
 
         m.insert("menu.help".to_string(), "Help".to_string());
@@ -460,6 +461,7 @@ impl I18n {
         m.insert("menu.view.theme".to_string(), "テーマ".to_string());
         m.insert("menu.view.syntax".to_string(), "シンタックス".to_string());
         m.insert("menu.view.language".to_string(), "言語".to_string());
+        m.insert("menu.view.files".to_string(), "ファイル一覧".to_string());
         m.insert("menu.view.outline".to_string(), "アウトライン".to_string());
 
         m.insert("menu.help".to_string(), "ヘルプ".to_string());

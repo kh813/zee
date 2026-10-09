@@ -39,6 +39,10 @@ pub enum PendingOp {
     NewFolder,
     Rename,
     Delete,
+    OpenFolder,
+    ImportConfig,
+    ExportConfig,
+    ExportAll,
 }
 
 pub struct App {
@@ -401,6 +405,7 @@ impl App {
                 menu: Menu::new("Templates", template_items),
             },
             MenuItem::Action { label: i18n.get("menu.file.open").to_string(), action: Action::Open, shortcut: Some("Ctrl+O".to_string()) },
+            MenuItem::Action { label: i18n.get("menu.file.open_folder").to_string(), action: Action::OpenFolder, shortcut: Some("Ctrl+Shift+O".to_string()) },
             MenuItem::Action { label: i18n.get("menu.file.open_gdrive").to_string(), action: Action::OpenGoogleDrive, shortcut: None },
             MenuItem::Separator,
             MenuItem::Action { label: i18n.get("menu.file.reload").to_string(), action: Action::ReloadFile, shortcut: Some("Ctrl+Shift+R".to_string()) },
@@ -443,11 +448,71 @@ impl App {
             is_radio: false,
         });
         file_items.push(MenuItem::Separator);
+        file_items.push(MenuItem::Action {
+            label: i18n.get("menu.file.export_config").to_string(),
+            action: Action::ExportConfig,
+            shortcut: None,
+        });
+        file_items.push(MenuItem::Action {
+            label: i18n.get("menu.file.import_config").to_string(),
+            action: Action::ImportConfig,
+            shortcut: None,
+        });
+        file_items.push(MenuItem::Separator);
         file_items.push(MenuItem::Action { label: i18n.get("menu.app.preferences").to_string(), action: Action::OpenSettings, shortcut: Some("Ctrl+,".to_string()) });
         file_items.push(MenuItem::Separator);
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.close").to_string(), action: Action::Close, shortcut: Some("Ctrl+W".to_string()) });
         file_items.push(MenuItem::Separator);
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.exit").to_string(), action: Action::Exit, shortcut: Some("Ctrl+Q".to_string()) });
+
+        let mut plugin_items = Vec::new();
+        let mut pm = zee_core::plugin::PluginManager::new();
+        let dev_plugin_dir = std::path::PathBuf::from("plugins/zee-plugin-text");
+        if dev_plugin_dir.exists() {
+            let _ = pm.load_plugin_dir(&dev_plugin_dir);
+        }
+        let manifests = pm.all_manifests();
+        if manifests.is_empty() {
+            plugin_items.push(MenuItem::Action {
+                label: i18n.get("menu.plugins.no_plugins").to_string(),
+                action: Action::NoOp,
+                shortcut: None,
+            });
+        } else {
+            for manifest in manifests {
+                if manifest.capabilities.commands.is_empty() {
+                    plugin_items.push(MenuItem::Action {
+                        label: format!("✓ {}", manifest.name),
+                        action: Action::NoOp,
+                        shortcut: None,
+                    });
+                } else {
+                    let mut cmd_items = Vec::new();
+                    for cmd in &manifest.capabilities.commands {
+                        cmd_items.push(MenuItem::Action {
+                            label: cmd.clone(),
+                            action: Action::PluginCommand(cmd.clone()),
+                            shortcut: None,
+                        });
+                    }
+                    plugin_items.push(MenuItem::Submenu {
+                        label: manifest.name.clone(),
+                        menu: Menu::new(&manifest.name, cmd_items),
+                    });
+                }
+            }
+        }
+        plugin_items.push(MenuItem::Separator);
+        plugin_items.push(MenuItem::Action {
+            label: i18n.get("menu.plugins.manage").to_string(),
+            action: Action::ManagePlugins,
+            shortcut: None,
+        });
+        plugin_items.push(MenuItem::Action {
+            label: i18n.get("menu.plugins.open_folder").to_string(),
+            action: Action::OpenPluginsFolder,
+            shortcut: None,
+        });
 
         vec![
             Menu::new(i18n.get("menu.file"), file_items),
@@ -476,7 +541,9 @@ impl App {
                 MenuItem::Action { label: i18n.get("menu.view.go_to_line").to_string(), action: Action::GoToLine, shortcut: Some("Ctrl+G".to_string()) },
                 MenuItem::Separator,
                 MenuItem::Toggle { label: format!("{} (Ctrl+B)", i18n.get("menu.view.sidebar")), action: Action::ToggleSidebar, checked: config.sidebar, is_radio: false },
+                MenuItem::Action { label: i18n.get("menu.view.files").to_string(), action: Action::ToggleFiles, shortcut: Some("Alt+1".to_string()) },
                 MenuItem::Action { label: i18n.get("menu.view.outline").to_string(), action: Action::ToggleOutline, shortcut: Some("Alt+2".to_string()) },
+                MenuItem::Action { label: i18n.get("menu.view.refresh_files").to_string(), action: Action::RefreshFileTree, shortcut: Some("F5".to_string()) },
                 MenuItem::Separator,
                 MenuItem::Toggle { label: i18n.get("menu.view.line_numbers").to_string(), action: Action::ToggleLineNumbers, checked: config.line_numbers, is_radio: false },
                 MenuItem::Toggle { label: i18n.get("menu.view.word_wrap").to_string(), action: Action::ToggleWordWrap, checked: config.word_wrap, is_radio: false },
@@ -492,6 +559,7 @@ impl App {
                 MenuItem::Submenu { label: i18n.get("menu.view.syntax").to_string(), menu: Menu::new(i18n.get("menu.view.syntax"), syntax_items)},
                 MenuItem::Submenu { label: i18n.get("menu.view.language").to_string(), menu: Menu::new(i18n.get("menu.view.language"), language_items)},
             ]),
+            Menu::new(i18n.get("menu.plugins"), plugin_items),
             Menu::new(i18n.get("menu.help"), vec![
                 MenuItem::Action { label: i18n.get("menu.help.about").to_string(), action: Action::About, shortcut: Some("Ctrl+H".to_string()) },
                 MenuItem::Action { label: i18n.get("menu.help.check_for_updates").to_string(), action: Action::CheckForUpdates, shortcut: None },
@@ -818,6 +886,12 @@ impl App {
             return;
         }
 
+        // F5 refreshes file tree
+        if key.code == KeyCode::F(5) {
+            self.perform_action(Action::RefreshFileTree);
+            return;
+        }
+
         // Global shortcuts (Ctrl+...) only if not in a dialog
         if self.focus != Focus::Dialog && key.modifiers == KeyModifiers::CONTROL {
             match key.code {
@@ -864,6 +938,7 @@ impl App {
         }
         if self.focus != Focus::Dialog && key.modifiers == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
             match key.code {
+                KeyCode::Char('O') | KeyCode::Char('o') => { self.perform_action(Action::OpenFolder); return; }
                 KeyCode::Char('F') | KeyCode::Char('f') => { self.perform_action(Action::Replace); return; }
                 KeyCode::Char('S') | KeyCode::Char('s') => { self.perform_action(Action::SaveAs); return; }
                 KeyCode::Char('R') | KeyCode::Char('r') => { self.perform_action(Action::ReloadFile); return; }
@@ -897,7 +972,8 @@ impl App {
                 KeyCode::Char('f') => { self.open_menu(0); return; }
                 KeyCode::Char('e') => { self.open_menu(1); return; }
                 KeyCode::Char('v') => { self.open_menu(2); return; }
-                KeyCode::Char('h') => { self.open_menu(3); return; }
+                KeyCode::Char('p') => { self.open_menu(3); return; }
+                KeyCode::Char('h') => { self.open_menu(4); return; }
                 KeyCode::Left => {
                     self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
                     self.update_active_outline();
@@ -919,23 +995,11 @@ impl App {
                     return;
                 }
                 KeyCode::Char('1') => {
-                    if !self.sidebar.visible {
-                        self.sidebar.visible = true;
-                        self.config.sidebar = true;
-                        self.recompute_layout();
-                    }
-                    self.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Files;
-                    self.focus = Focus::Sidebar;
+                    self.perform_action(Action::ToggleFiles);
                     return;
                 }
                 KeyCode::Char('2') => {
-                    if !self.sidebar.visible {
-                        self.sidebar.visible = true;
-                        self.config.sidebar = true;
-                        self.recompute_layout();
-                    }
-                    self.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Outline;
-                    self.focus = Focus::Sidebar;
+                    self.perform_action(Action::ToggleOutline);
                     return;
                 }
                 KeyCode::Char('i') | KeyCode::Char('I') => {
@@ -3099,6 +3163,109 @@ impl App {
                                 self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
                                 self.recompute_layout();
                             }
+                            PendingOp::OpenFolder => {
+                                self.sidebar.set_root(path);
+                                self.sidebar.visible = true;
+                                self.config.sidebar = true;
+                                let _ = Config::write_key("sidebar", "true");
+                                self.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Files;
+                                self.current_dialog = None;
+                                self.pending_op = PendingOp::None;
+                                self.focus = Focus::Sidebar;
+                                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                self.recompute_layout();
+                                return;
+                            }
+                            PendingOp::ExportConfig => {
+                                let res = zee_core::export_backup(&path, false);
+                                self.pending_op = PendingOp::None;
+                                match res {
+                                    Ok(report) => {
+                                        let title = self.i18n.get("dialog.backup.export_title").to_string();
+                                        let msg = self.i18n.get("dialog.backup.export_success")
+                                            .replace("{count}", &report.total_files.to_string())
+                                            .replace("{path}", &path.to_string_lossy());
+                                        self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                                            title,
+                                            msg,
+                                            vec![(self.i18n.get("dialog.ok").to_string(), dialog::Action::Cancel)],
+                                        )));
+                                    }
+                                    Err(e) => {
+                                        let title = self.i18n.get("dialog.backup.error_title").to_string();
+                                        let msg = format!("{}", e);
+                                        self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                                            title,
+                                            msg,
+                                            vec![(self.i18n.get("dialog.ok").to_string(), dialog::Action::Cancel)],
+                                        )));
+                                    }
+                                }
+                                self.focus = Focus::Dialog;
+                                return;
+                            }
+                            PendingOp::ExportAll => {
+                                let res = zee_core::export_backup(&path, true);
+                                self.pending_op = PendingOp::None;
+                                match res {
+                                    Ok(report) => {
+                                        let title = self.i18n.get("dialog.backup.export_title").to_string();
+                                        let msg = self.i18n.get("dialog.backup.export_success")
+                                            .replace("{count}", &report.total_files.to_string())
+                                            .replace("{path}", &path.to_string_lossy());
+                                        self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                                            title,
+                                            msg,
+                                            vec![(self.i18n.get("dialog.ok").to_string(), dialog::Action::Cancel)],
+                                        )));
+                                    }
+                                    Err(e) => {
+                                        let title = self.i18n.get("dialog.backup.error_title").to_string();
+                                        let msg = format!("{}", e);
+                                        self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                                            title,
+                                            msg,
+                                            vec![(self.i18n.get("dialog.ok").to_string(), dialog::Action::Cancel)],
+                                        )));
+                                    }
+                                }
+                                self.focus = Focus::Dialog;
+                                return;
+                            }
+                            PendingOp::ImportConfig => {
+                                let res = zee_core::import_backup(&path);
+                                self.pending_op = PendingOp::None;
+                                match res {
+                                    Ok(report) => {
+                                        self.config = Config::load();
+                                        self.i18n = I18n::load(&self.config.language);
+                                        self.sidebar.reload_plugins();
+                                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                        self.recompute_layout();
+
+                                        let title = self.i18n.get("dialog.backup.import_title").to_string();
+                                        let msg = self.i18n.get("dialog.backup.import_success")
+                                            .replace("{count}", &report.total_files.to_string())
+                                            .replace("{path}", &path.to_string_lossy());
+                                        self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                                            title,
+                                            msg,
+                                            vec![(self.i18n.get("dialog.ok").to_string(), dialog::Action::Cancel)],
+                                        )));
+                                    }
+                                    Err(e) => {
+                                        let title = self.i18n.get("dialog.backup.error_title").to_string();
+                                        let msg = format!("{}", e);
+                                        self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
+                                            title,
+                                            msg,
+                                            vec![(self.i18n.get("dialog.ok").to_string(), dialog::Action::Cancel)],
+                                        )));
+                                    }
+                                }
+                                self.focus = Focus::Dialog;
+                                return;
+                            }
                             _ => {}
                         }
                     }
@@ -3367,11 +3534,23 @@ impl App {
                     }
                     dialog::Action::Cancel => {}
                 }
+                if let Some(ref d) = self.current_dialog {
+                    if d.title() == self.i18n.get("dialog.plugin.title") {
+                        self.sidebar.reload_plugins();
+                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    }
+                }
                 self.current_dialog = None;
                 self.pending_op = PendingOp::None;
                 self.focus = Focus::Editor;
             }
             DialogResult::Cancel => {
+                if let Some(ref d) = self.current_dialog {
+                    if d.title() == self.i18n.get("dialog.plugin.title") {
+                        self.sidebar.reload_plugins();
+                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    }
+                }
                 self.current_dialog = None;
                 self.pending_op = PendingOp::None;
                 self.focus = Focus::Editor;
@@ -4288,6 +4467,64 @@ impl App {
             }
             Action::OpenSettings => {
                 self.open_settings_dialog();
+            }
+            Action::OpenFolder => {
+                self.focus = Focus::Dialog;
+                self.pending_op = PendingOp::OpenFolder;
+                self.current_dialog = Some(Box::new(dialog::OpenFolderDialog::new(Some(&self.sidebar.file_tree.root_path), &self.i18n)));
+            }
+            Action::ToggleFiles => {
+                if !self.sidebar.visible {
+                    self.sidebar.visible = true;
+                    self.config.sidebar = true;
+                    let _ = Config::write_key("sidebar", "true");
+                }
+                self.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Files;
+                self.focus = Focus::Sidebar;
+                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.recompute_layout();
+            }
+            Action::RefreshFileTree => {
+                self.sidebar.refresh_files();
+            }
+            Action::ManagePlugins => {
+                self.focus = Focus::Dialog;
+                self.current_dialog = Some(Box::new(dialog::PluginManagerDialog::new(
+                    &self.sidebar.plugin_manager,
+                    Some(&self.config.plugin_registries),
+                    &self.i18n,
+                )));
+            }
+            Action::OpenPluginsFolder => {
+                if let Some(dir) = zee_core::plugin::PluginManager::plugins_dir() {
+                    let _ = std::fs::create_dir_all(&dir);
+                    let _ = zee_core::selfupdate::open_url(&dir.to_string_lossy());
+                }
+            }
+            Action::ExportConfig => {
+                self.focus = Focus::Dialog;
+                self.pending_op = PendingOp::ExportConfig;
+                self.current_dialog = Some(Box::new(dialog::SaveAsDialog::new(
+                    Some(&std::path::PathBuf::from("zee-config.zip")),
+                    Some(".zip"),
+                    Encoding::Utf8,
+                    &self.i18n,
+                )));
+            }
+            Action::ExportAll => {
+                self.focus = Focus::Dialog;
+                self.pending_op = PendingOp::ExportAll;
+                self.current_dialog = Some(Box::new(dialog::SaveAsDialog::new(
+                    Some(&std::path::PathBuf::from("zee-backup.zip")),
+                    Some(".zip"),
+                    Encoding::Utf8,
+                    &self.i18n,
+                )));
+            }
+            Action::ImportConfig => {
+                self.focus = Focus::Dialog;
+                self.pending_op = PendingOp::ImportConfig;
+                self.current_dialog = Some(Box::new(dialog::OpenDialog::new(&self.i18n)));
             }
             _ => {} // TODO: other actions
         }
@@ -7130,6 +7367,100 @@ mod tests {
         let (line_v_pu, _) = app.buffers[0].char_to_line_col(app.buffers[0].cursor);
         assert_eq!(line_v_pu, 0);
         assert!(app.buffers[0].selection.is_some());
+    }
+
+    #[test]
+    fn test_open_folder_action_workflow() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_open_folder_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // 1. Trigger OpenFolder action
+        app.perform_action(Action::OpenFolder);
+        assert_eq!(app.focus, Focus::Dialog);
+        assert_eq!(app.pending_op, PendingOp::OpenFolder);
+        assert!(app.current_dialog.is_some());
+
+        // 2. Confirm path from dialog
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Ok(
+            crate::widgets::dialog::Action::ConfirmPath(temp_dir.clone())
+        ));
+
+        assert!(app.sidebar.visible);
+        assert_eq!(app.sidebar.active_tab, crate::widgets::sidebar::SidebarTab::Files);
+        assert_eq!(app.sidebar.file_tree.root_path, temp_dir);
+        assert_eq!(app.focus, Focus::Sidebar);
+        assert_eq!(app.pending_op, PendingOp::None);
+        assert!(app.current_dialog.is_none());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_toggle_files_and_refresh_file_tree_action() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.sidebar.visible = false;
+        app.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Outline;
+
+        app.perform_action(Action::ToggleFiles);
+        assert!(app.sidebar.visible);
+        assert_eq!(app.sidebar.active_tab, crate::widgets::sidebar::SidebarTab::Files);
+        assert_eq!(app.focus, Focus::Sidebar);
+
+        // Refresh file tree should run cleanly
+        app.perform_action(Action::RefreshFileTree);
+    }
+
+    #[test]
+    fn test_plugin_manager_action_and_plugins_menu() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        
+        // Check that Plugins menu exists in top-level menus
+        let plugins_menu_label = app.i18n.get("menu.plugins").to_string();
+        let has_plugins_menu = app.menus.iter().any(|m| m.label == plugins_menu_label);
+        assert!(has_plugins_menu, "App menus must contain Plugins menu");
+
+        // Trigger ManagePlugins action
+        app.perform_action(Action::ManagePlugins);
+        assert_eq!(app.focus, Focus::Dialog);
+        assert!(app.current_dialog.is_some());
+
+        // Close dialog
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Cancel);
+        assert_eq!(app.focus, Focus::Editor);
+        assert!(app.current_dialog.is_none());
+    }
+
+    #[test]
+    fn test_export_and_import_config_actions() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+
+        // 1. Export Config
+        app.perform_action(Action::ExportConfig);
+        assert_eq!(app.focus, Focus::Dialog);
+        assert_eq!(app.pending_op, PendingOp::ExportConfig);
+        assert!(app.current_dialog.is_some());
+
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Cancel);
+        assert_eq!(app.focus, Focus::Editor);
+
+        // 2. Export All
+        app.perform_action(Action::ExportAll);
+        assert_eq!(app.focus, Focus::Dialog);
+        assert_eq!(app.pending_op, PendingOp::ExportAll);
+        assert!(app.current_dialog.is_some());
+
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Cancel);
+        assert_eq!(app.focus, Focus::Editor);
+
+        // 3. Import Config
+        app.perform_action(Action::ImportConfig);
+        assert_eq!(app.focus, Focus::Dialog);
+        assert_eq!(app.pending_op, PendingOp::ImportConfig);
+        assert!(app.current_dialog.is_some());
+
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Cancel);
+        assert_eq!(app.focus, Focus::Editor);
     }
 }
 

@@ -16,7 +16,7 @@
 | :--- | :--- | :--- | :--- | :--- |
 | **macOS** | **Zee.app** (Metal GPU) | **zee** / **zee-cli** | Apple Silicon (M1/M2/M3/M4) & Intel | ✅ Fully Supported |
 | **Windows** | **zee.exe** (DirectX GPU) | **zee.exe** (Console mode) | 64-bit (x86-64) & ARM64 | ✅ Fully Supported |
-| **Linux** | **zee** (`--gui`) / **zeeg** (Vulkan GPU) | **zee** (Default) / **zee-cli** (Zero-dep) | x86-64 & ARM64 (aarch64) | ✅ Fully Supported |
+| **Linux** | **zee** (`--gui`, Vulkan GPU) | **zee** (Default) / **zee-cli** (Zero-dep) | x86-64 & ARM64 (aarch64) | ✅ Fully Supported |
 
 ---
 
@@ -47,7 +47,7 @@ Whether launching the GUI app on a Mac/Windows workstation or editing over SSH o
 ## ✨ Highlights & Features / 主な機能と特徴
 
 - **Dual GUI & TUI Parity / GUIとCLIの完全同期**:
-  - Native hardware-accelerated desktop GUI (`Zee.app` / `zee.exe` / `zeeg`) and terminal TUI (`zee` / `zee-cli`) share 100% feature and shortcut parity.
+  - Native hardware-accelerated desktop GUI (`Zee.app` / `zee.exe` / `zee --gui`) and terminal TUI (`zee` / `zee-cli`) share 100% feature and shortcut parity.
   - *GUI版とターミナルCLI版でショートカットや操作体系が100%一致。*
 - **Sidebar: File Tree & Outline / サイドバー（ファイルツリー & アウトライン）**:
   - Collapsible file explorer and code symbol outline navigation.
@@ -88,10 +88,10 @@ Pre-compiled standalone packages and installers are available on the [Releases p
 
 | Package / パッケージ | Platform / OS | Edition / 内容 | Description / 説明 |
 | :--- | :--- | :--- | :--- |
-| `zeeg-macos-arm64.zip` | macOS (Apple Silicon) | Native GUI (`Zee.app`) | Drag & drop to `/Applications` (Finder / Spotlight対応) |
+| `zee-macos-arm64.zip` | macOS (Apple Silicon) | Native GUI (`Zee.app`) | Drag & drop to `/Applications` (Finder / Spotlight対応) |
 | `zee-windows-x64.zip` | Windows (x86-64) | Native GUI (`zee.exe`) | Standalone desktop executable (デスクトップアプリ単体) |
 | `zee-linux-x64.zip` | Linux (x86-64) | Pure CLI (`zee` & `zee-cli`) | Zero-dependency terminal binaries (サーバー・SSH向け軽量版) |
-| `zee-desktop-linux-x64.zip` | Linux (x86-64) | Desktop (`zee` dual, `zee-cli`, `zeeg`) | Full desktop bundle with .desktop file & icon (デスクトップ向け兼用版) |
+| `zee-desktop-linux-x64.zip` | Linux (x86-64) | Desktop (`zee` dual, `zee-cli`) | Full desktop bundle with .desktop file & icon (デスクトップ向け兼用版) |
 
 ### macOS Gatekeeper Note / macOSでの初回起動時の注意
 On macOS, downloaded apps outside the App Store may show a warning: *"Zee.app cannot be opened because the developer cannot be verified"*.  
@@ -111,14 +111,10 @@ macOSで「開発元を確認できないため開けません」と表示され
 - **Windows**: Launch `zee.exe` or open from Start menu.
 - **Linux (Dual Binary)**:
   ```bash
-  # Launch hardware-accelerated GUI
+  # Launch hardware-accelerated GUI (Vulkan GPU)
   zee --gui file.txt
   # or short flag:
   zee -g file.txt
-  ```
-- **Linux (Standalone GUI)**:
-  ```bash
-  zeeg file.txt
   ```
 
 ### 2. Launching Terminal CLI / CLI（ターミナル）版の起動
@@ -150,7 +146,7 @@ make
 
 # Or build individually / 個別ビルド:
 make cli      # Pure CLI binaries: dist/zee-cli and dist/zee
-make gui      # GUI: dist/Zee.app (macOS) or dist/zeeg & dist/zee (Linux)
+make gui      # GUI: dist/Zee.app (macOS) or dist/zee (Linux dual binary)
 
 # Install to ~/.local/bin and ~/Applications (macOS)
 make install

@@ -1,10 +1,10 @@
 # zee User Manual / ユーザーマニュアル
 
 **zee** is a lightweight, modern GUI and TUI text editor built for plain text, Markdown, code, and configuration files.  
-It provides a native hardware-accelerated desktop application (`Zee.app` / `zee.exe` / `zeeg`) alongside a high-performance terminal interface (`zee` / `zee-cli`) running across macOS, Linux, and Windows — including seamlessly over SSH.
+It provides a native hardware-accelerated desktop application (`Zee.app` / `zee.exe` / `zee --gui`) alongside a high-performance terminal interface (`zee` / `zee-cli`) running across macOS, Linux, and Windows — including seamlessly over SSH.
 
 **zee** は、プレーンテキスト、Markdown、ソースコード、設定ファイル編集のための軽量・モダンなGUI & TUIテキストエディタです。  
-macOS、Linux、Windows上で動作し、ハードウェアアクセラレーションによるデスクトップGUI（`Zee.app` / `zee.exe` / `zeeg`）と、ターミナルやSSH経由で軽快に動くTUI（`zee` / `zee-cli`）の両方をフルサポートしています。
+macOS、Linux、Windows上で動作し、ハードウェアアクセラレーションによるデスクトップGUI（`Zee.app` / `zee.exe` / `zee --gui`）と、ターミナルやSSH経由で軽快に動くTUI（`zee` / `zee-cli`）の両方をフルサポートしています。
 
 ---
 
@@ -31,10 +31,10 @@ Download the pre-compiled archive for your OS from the [GitHub Releases page](ht
 
 | Platform / プラットフォーム | Package / パッケージ | Contents / 収録バイナリ | Notes / 備考 |
 | :--- | :--- | :--- | :--- |
-| **macOS Apple Silicon** | `zeeg-v0.x.x-macos-arm64.zip` | `Zee.app` | Drag & drop to `/Applications` (M1/M2/M3/M4対応) |
+| **macOS Apple Silicon** | `zee-v0.x.x-macos-arm64.zip` | `Zee.app` | Drag & drop to `/Applications` (M1/M2/M3/M4対応) |
 | **Windows x86-64** | `zee-v0.x.x-windows-x64.zip` | `zee.exe` | Standalone native GUI executable (Windows 64bit GUI) |
 | **Linux x86-64 (CLI)** | `zee-cli-v0.x.x-linux-x64.zip` | `zee`, `zee-cli` | Ultra-fast, zero-dependency terminal CLI binaries (サーバー・SSH向け) |
-| **Linux Desktop (Dual)** | `zee-desktop-v0.x.x-linux-x64.zip` | `zee`, `zee-cli`, `zeeg` | Desktop bundle with .desktop file & icon (GUI/CLI兼用デスクトップ向け) |
+| **Linux Desktop (Dual)** | `zee-desktop-v0.x.x-linux-x64.zip` | `zee`, `zee-cli` | Desktop bundle with .desktop file & icon (GUI/CLI兼用デスクトップ向け) |
 
 ### Linux: Dual Binary vs Pure CLI / Linuxの兼用版とCLI専用版について
 - **`zee` (Dual GUI / CLI Binary / 兼用版)**:

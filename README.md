@@ -14,7 +14,7 @@
 
 | Operating System / OS | GUI Edition / デスクトップ版 | CLI Edition / ターミナル版 | Architectures / アーキテクチャ | Status / 状態 |
 | :--- | :--- | :--- | :--- | :--- |
-| **macOS** | **Zee.app** (Metal GPU) | **zee** | Apple Silicon (M1/M2/M3/M4) & Intel | ✅ Fully Supported |
+| **macOS** | **Zee.app** (Metal GPU) | **zee** | Apple Silicon (M1/M2/M3/M4) | ✅ Fully Supported |
 | **Windows** | **zee.exe** (DirectX GPU) | — *(Self-build)* | 64-bit (x86-64) & ARM64 | ✅ Fully Supported |
 | **Linux** | **zee** (`--gui`, Vulkan GPU) | **zee** (Default) / **zee-cli** (Zero-dep) | x86-64 & ARM64 (aarch64) | ✅ Fully Supported |
 

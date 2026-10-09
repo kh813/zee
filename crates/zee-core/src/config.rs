@@ -47,7 +47,7 @@ impl Default for Config {
             vi_mode: false,
             word_wrap: true,
             sidebar: false,
-            sidebar_position: "left".to_string(),
+            sidebar_position: "right".to_string(),
             show_hidden: false,
             tab_size: 4,
             expand_tab: false,
@@ -498,7 +498,7 @@ mod tests {
         assert_eq!(config.ui_font_family, Some("Inter".to_string()));
         assert_eq!(config.ui_font_size, 13.5);
 
-        assert_eq!(Config::default().sidebar_position, "left");
+        assert_eq!(Config::default().sidebar_position, "right");
         assert_eq!(Config::default().language, "auto");
     }
 

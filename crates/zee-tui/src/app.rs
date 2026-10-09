@@ -6804,6 +6804,11 @@ mod tests {
 
     #[test]
     fn test_ui_menu_and_view_toggles() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_ui_toggles_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+        zee_core::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
         let mut app = App::new(vec![]).expect("Failed to init App");
 
         // 1. Toggle Sidebar
@@ -6835,6 +6840,9 @@ mod tests {
         app.perform_action(Action::ToggleViMode);
         assert!(!app.config.vi_mode);
         assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert);
+
+        zee_core::Config::set_custom_config_dir(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
@@ -6867,6 +6875,11 @@ mod tests {
 
     #[test]
     fn test_settings_dialog_open_from_menu_and_keyboard_navigation() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_settings_nav_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+        zee_core::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
         let mut app = App::new(vec![]).expect("Failed to init App");
         app.config.sidebar_position = "left".to_string();
 
@@ -6903,10 +6916,18 @@ mod tests {
         assert_eq!(app.focus, Focus::Editor);
         assert_eq!(app.config.sidebar_position, "right");
         assert!(app.layout.is_right_sidebar);
+
+        zee_core::Config::set_custom_config_dir(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
     fn test_settings_dialog_open_and_mouse_click_navigation() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_settings_mouse_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+        zee_core::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
         let mut app = App::new(vec![]).expect("Failed to init App");
         app.config.sidebar_position = "left".to_string();
 
@@ -6948,6 +6969,9 @@ mod tests {
         assert!(app.current_dialog.is_none());
         assert_eq!(app.config.sidebar_position, "right");
         assert!(app.layout.is_right_sidebar);
+
+        zee_core::Config::set_custom_config_dir(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
@@ -6962,6 +6986,11 @@ mod tests {
 
     #[test]
     fn test_settings_dialog_dropdown_language_selection_in_app() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_settings_lang_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+        zee_core::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
         let mut app = App::new(vec![]).expect("Failed to init App");
         app.config.language = "auto".to_string();
 
@@ -6989,6 +7018,9 @@ mod tests {
         assert!(app.current_dialog.is_none());
         assert_eq!(app.focus, Focus::Editor);
         assert_eq!(app.config.language, "en");
+
+        zee_core::Config::set_custom_config_dir(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
@@ -7248,6 +7280,11 @@ mod tests {
 
     #[test]
     fn test_sidebar_context_menu_toggle_hidden_workflow() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_sb_toggle_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+        zee_core::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
         let mut app = App::new(vec![]).expect("Failed to init App");
         let initial_hidden = app.config.show_hidden;
 
@@ -7261,6 +7298,9 @@ mod tests {
 
         assert_eq!(app.config.show_hidden, !initial_hidden);
         assert_eq!(app.sidebar.file_tree.show_hidden, !initial_hidden);
+
+        zee_core::Config::set_custom_config_dir(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
@@ -7406,6 +7446,11 @@ mod tests {
 
     #[test]
     fn test_toggle_files_and_refresh_file_tree_action() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_toggle_files_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+        zee_core::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
         let mut app = App::new(vec![]).expect("Failed to init App");
         app.sidebar.visible = false;
         app.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Outline;
@@ -7417,6 +7462,9 @@ mod tests {
 
         // Refresh file tree should run cleanly
         app.perform_action(Action::RefreshFileTree);
+
+        zee_core::Config::set_custom_config_dir(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]

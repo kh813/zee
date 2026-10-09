@@ -18,13 +18,14 @@
 
 
 # UI language.
-# Built-in locales: "en" (English), "ja" (Japanese).
+# "auto" detects system locale automatically (default).
+# Built-in locales: "auto", "ja" (Japanese), "en" (English), "zh-CN", "zh-TW", "ko", etc.
 # Custom locales can be placed in ~/.config/zee/locales/<code>.toml.
 # Any key missing from a custom locale falls back to the English built-in.
 #
 # Type    : string
-# Default : "en"
-language = "en"
+# Default : "auto"
+language = "auto"
 
 
 # Active theme.

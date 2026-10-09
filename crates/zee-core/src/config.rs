@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::fs::{self, File};
+use std::sync::RwLock;
 use anyhow::{Result, Context};
+
+static CUSTOM_CONFIG_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -57,7 +60,7 @@ impl Default for Config {
             font_size: 12.0,
             line_height: 19.0,
             ui_font_family: None,
-            ui_font_size: 12.5,
+            ui_font_size: 13.0,
             plugin_registries: default_plugin_registries(),
             gdrive_client_id: None,
             gdrive_client_secret: None,
@@ -168,7 +171,26 @@ impl Config {
         Ok(config)
     }
 
+    pub fn set_custom_config_dir(path: Option<PathBuf>) {
+        if let Ok(mut lock) = CUSTOM_CONFIG_DIR.write() {
+            *lock = path;
+        }
+    }
+
     pub fn config_dir() -> Option<PathBuf> {
+        if let Ok(lock) = CUSTOM_CONFIG_DIR.read() {
+            if let Some(ref p) = *lock {
+                return Some(p.clone());
+            }
+        }
+
+        if let Some(custom) = std::env::var_os("ZEE_CONFIG_DIR") {
+            let p = PathBuf::from(custom);
+            if !p.as_os_str().is_empty() {
+                return Some(p);
+            }
+        }
+
         #[cfg(target_os = "windows")]
         {
             std::env::var_os("APPDATA").map(|appdata| PathBuf::from(appdata).join("zee"))
@@ -573,6 +595,11 @@ mod tests {
 
     #[test]
     fn test_config_plugin_registries() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_plugin_reg_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        let _ = fs::create_dir_all(&temp_dir);
+        Config::set_custom_config_dir(Some(temp_dir.clone()));
+
         let toml_content = r#"
 theme = "nord"
 plugin_registries = [
@@ -597,5 +624,74 @@ plugin_registries = [
         let removed = config.remove_plugin_registry("third-user").unwrap();
         assert!(removed);
         assert_eq!(config.plugin_registries.len(), 2);
+
+        Config::set_custom_config_dir(None);
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_config_defaults_match_template() {
+        let default_cfg = Config::default();
+
+        // 1. Verify default values of Config struct
+        assert_eq!(default_cfg.language, "auto");
+        assert_eq!(default_cfg.sidebar_position, "right");
+        assert_eq!(default_cfg.sidebar, false);
+        assert_eq!(default_cfg.theme, "terminal-default");
+        assert_eq!(default_cfg.line_numbers, true);
+        assert_eq!(default_cfg.vi_mode, false);
+        assert_eq!(default_cfg.word_wrap, true);
+        assert_eq!(default_cfg.tab_size, 4);
+        assert_eq!(default_cfg.expand_tab, false);
+        assert_eq!(default_cfg.font_size, 12.0);
+        assert_eq!(default_cfg.line_height, 19.0);
+        assert_eq!(default_cfg.ui_font_size, 13.0);
+
+        // 2. Parse config.toml.default template and ensure its values match Config::default()
+        let template = include_str!("../../../config.toml.default");
+        let raw = toml_span::parse(template).expect("Failed to parse config.toml.default");
+        let parsed = Config::deserialize_from_value(&raw).expect("Failed to deserialize template");
+
+        assert_eq!(parsed.language, default_cfg.language, "language mismatch between Config::default and config.toml.default");
+        assert_eq!(parsed.sidebar_position, default_cfg.sidebar_position, "sidebar_position mismatch");
+        assert_eq!(parsed.sidebar, default_cfg.sidebar, "sidebar mismatch");
+        assert_eq!(parsed.line_numbers, default_cfg.line_numbers, "line_numbers mismatch");
+        assert_eq!(parsed.vi_mode, default_cfg.vi_mode, "vi_mode mismatch");
+        assert_eq!(parsed.word_wrap, default_cfg.word_wrap, "word_wrap mismatch");
+        assert_eq!(parsed.tab_size, default_cfg.tab_size, "tab_size mismatch");
+        assert_eq!(parsed.expand_tab, default_cfg.expand_tab, "expand_tab mismatch");
+        assert_eq!(parsed.font_size, default_cfg.font_size, "font_size mismatch");
+        assert_eq!(parsed.line_height, default_cfg.line_height, "line_height mismatch");
+        assert_eq!(parsed.ui_font_size, default_cfg.ui_font_size, "ui_font_size mismatch");
+
+        // 3. Verify assets/config.toml.default matches config.toml.default
+        let assets_template = include_str!("../../../assets/config.toml.default");
+        let raw_assets = toml_span::parse(assets_template).expect("Failed to parse assets/config.toml.default");
+        let parsed_assets = Config::deserialize_from_value(&raw_assets).expect("Failed to deserialize assets template");
+
+        assert_eq!(parsed_assets.language, default_cfg.language);
+        assert_eq!(parsed_assets.sidebar_position, default_cfg.sidebar_position);
+        assert_eq!(parsed_assets.ui_font_size, default_cfg.ui_font_size);
+    }
+
+    #[test]
+    fn test_custom_config_dir_isolation() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_custom_config_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        Config::set_custom_config_dir(Some(temp_dir.clone()));
+        assert_eq!(Config::config_dir(), Some(temp_dir.clone()));
+
+        // Write a test key
+        Config::write_key("language", "\"ja\"").unwrap();
+        assert!(temp_dir.join("config.toml").exists());
+        let content = fs::read_to_string(temp_dir.join("config.toml")).unwrap();
+        assert!(content.contains("language = \"ja\""));
+
+        // Reset
+        Config::set_custom_config_dir(None);
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
+

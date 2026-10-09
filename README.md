@@ -170,7 +170,7 @@ Settings are saved in `~/.config/zee/config.toml` (or `%APPDATA%\zee\config.toml
 設定ファイルは GUI版 と CLI版 で自動的に共有されます:
 
 ```toml
-language = "en"               # "en" or "ja" (言語: 英語または日本語)
+language = "auto"             # "auto" (default), "ja", "en", etc. (言語: 自動検出、日本語、英語など)
 theme = "tokyo-night"         # "tokyo-night", "catppuccin-latte", "dracula", "nord", etc.
 line_numbers = true           # 行番号表示
 word_wrap = true              # 右端折り返し

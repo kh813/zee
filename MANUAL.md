@@ -220,8 +220,8 @@ Configuration is saved in `~/.config/zee/config.toml` (or `%APPDATA%\zee\config.
 *設定ファイルは `~/.config/zee/config.toml`（Windowsは `%APPDATA%\zee\config.toml`）に保存され、GUI版とCLI版で同期されます。*
 
 ```toml
-# UI language ("en" for English, "ja" for 日本語)
-language = "en"
+# UI language ("auto" for system locale, "ja" for 日本語, "en" for English)
+language = "auto"
 
 # Active theme / 配色テーマ
 # ("tokyo-night", "catppuccin-latte", "catppuccin-mocha", "dracula", "nord", "solarized-dark", etc.)

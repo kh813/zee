@@ -64,7 +64,7 @@ jobs:
           TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
           VERSION="${TAG_NAME#v}"
           GUI_ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
-          cargo build --release -p zee-gui --target ${{ matrix.target }}
+          cargo build --release -p zee-gui --bin zeeg --target ${{ matrix.target }}
           mkdir -p dist/Zee.app/Contents/MacOS
           mkdir -p dist/Zee.app/Contents/Resources
           cp "target/${{ matrix.target }}/release/zeeg" dist/Zee.app/Contents/MacOS/zeeg
@@ -191,7 +191,7 @@ jobs:
         run: |
           TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
           GUI_ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
-          cargo build --release -p zee-gui --target ${{ matrix.target }}
+          cargo build --release -p zee-gui --bin zeeg --target ${{ matrix.target }}
 
           mkdir -p "dist/${GUI_ARCHIVE_NAME}"
           cp "target/${{ matrix.target }}/release/zeeg.exe" "dist/${GUI_ARCHIVE_NAME}/zee.exe"

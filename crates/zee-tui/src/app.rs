@@ -7528,39 +7528,148 @@ mod tests {
         assert_eq!(app.focus, Focus::Editor);
     }
 
+    fn ct_color_to_rgb(c: crossterm::style::Color) -> (u8, u8, u8) {
+        match c {
+            crossterm::style::Color::Rgb { r, g, b } => (r, g, b),
+            crossterm::style::Color::AnsiValue(i) => ansi256_to_rgb(i),
+            crossterm::style::Color::Reset => (255, 255, 255),
+            crossterm::style::Color::Black => (0, 0, 0),
+            crossterm::style::Color::DarkGrey => (128, 128, 128),
+            crossterm::style::Color::Red => (255, 0, 0),
+            crossterm::style::Color::DarkRed => (128, 0, 0),
+            crossterm::style::Color::Green => (0, 255, 0),
+            crossterm::style::Color::DarkGreen => (0, 128, 0),
+            crossterm::style::Color::Yellow => (255, 255, 0),
+            crossterm::style::Color::DarkYellow => (128, 128, 0),
+            crossterm::style::Color::Blue => (0, 0, 255),
+            crossterm::style::Color::DarkBlue => (0, 0, 128),
+            crossterm::style::Color::Magenta => (255, 0, 255),
+            crossterm::style::Color::DarkMagenta => (128, 0, 128),
+            crossterm::style::Color::Cyan => (0, 255, 255),
+            crossterm::style::Color::DarkCyan => (0, 128, 128),
+            crossterm::style::Color::White => (255, 255, 255),
+            crossterm::style::Color::Grey => (192, 192, 192),
+        }
+    }
+
+    fn ansi256_to_rgb(i: u8) -> (u8, u8, u8) {
+        if i < 16 {
+            match i {
+                0 => (0, 0, 0),
+                1 => (128, 0, 0),
+                2 => (0, 128, 0),
+                3 => (128, 128, 0),
+                4 => (0, 0, 128),
+                5 => (128, 0, 128),
+                6 => (0, 128, 128),
+                7 => (192, 192, 192),
+                8 => (128, 128, 128),
+                9 => (255, 0, 0),
+                10 => (0, 255, 0),
+                11 => (255, 255, 0),
+                12 => (0, 0, 255),
+                13 => (255, 0, 255),
+                14 => (0, 255, 255),
+                15 => (255, 255, 255),
+                _ => (0, 0, 0),
+            }
+        } else if i < 232 {
+            let idx = i - 16;
+            let cube = [0, 95, 135, 175, 215, 255];
+            let r = cube[(idx / 36) as usize];
+            let g = cube[((idx / 6) % 6) as usize];
+            let b = cube[(idx % 6) as usize];
+            (r, g, b)
+        } else {
+            let v = 8 + (i - 232) * 10;
+            (v, v, v)
+        }
+    }
+
+    fn srgb_to_linear(c: u8) -> f64 {
+        let cf = c as f64 / 255.0;
+        if cf <= 0.04045 {
+            cf / 12.92
+        } else {
+            ((cf + 0.055) / 1.055).powf(2.4)
+        }
+    }
+
+    fn relative_luminance(rgb: (u8, u8, u8)) -> f64 {
+        0.2126 * srgb_to_linear(rgb.0) + 0.7152 * srgb_to_linear(rgb.1) + 0.0722 * srgb_to_linear(rgb.2)
+    }
+
+    fn contrast_ratio(c1: (u8, u8, u8), c2: (u8, u8, u8)) -> f64 {
+        let l1 = relative_luminance(c1);
+        let l2 = relative_luminance(c2);
+        let (bright, dark) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+        (bright + 0.05) / (dark + 0.05)
+    }
+
     #[test]
     fn test_menu_dropdown_rendering_contrast_all_themes() {
         let mut app = App::new(vec![]).expect("Failed to init App");
         let themes = zee_core::theme::Theme::load_all();
         assert!(!themes.is_empty());
 
-        for theme in themes {
-            app.theme = theme.clone();
-            app.active_menu = Some(0);
-            app.selected_item = 0;
-            app.dropdown_rects.clear();
-            app.renderer.clear();
-
-            app.render_menu();
-            if let Some(menu) = app.menus.get(0).cloned() {
-                app.render_dropdown(0, 1, &menu, 0);
+        // Test in both TrueColor mode and simulated Apple_Terminal (256-color) mode
+        for is_apple_term in [false, true] {
+            if is_apple_term {
+                std::env::set_var("TERM_PROGRAM", "Apple_Terminal");
+            } else {
+                std::env::remove_var("TERM_PROGRAM");
             }
 
-            for &(x, y, w, h, _, item_idx) in &app.dropdown_rects {
-                for dy in 0..h {
-                    for dx in 1..(w.saturating_sub(1)) {
-                        let cell = app.renderer.get_cell(x + dx, y + dy);
-                        if cell.ch != ' ' && cell.ch != '│' && cell.ch != '─' {
-                            assert_ne!(
-                                cell.fg, cell.bg,
-                                "Theme '{}' has identical fg and bg for character '{}' at item {}",
-                                theme.meta.name, cell.ch, item_idx
+            for theme in &themes {
+                app.theme = theme.clone();
+                app.active_menu = Some(0);
+                app.selected_item = 0;
+                app.dropdown_rects.clear();
+                app.renderer.clear();
+
+                // 1. Verify Menu Bar items contrast
+                app.render_menu();
+                for (_idx, (label, start, end)) in app.layout.menu_bar_items.iter().enumerate() {
+                    for x in *start..*end {
+                        let cell = app.renderer.get_cell(x, 0);
+                        if cell.ch != ' ' {
+                            let fg_rgb = ct_color_to_rgb(cell.fg);
+                            let bg_rgb = ct_color_to_rgb(cell.bg);
+                            let ratio = contrast_ratio(fg_rgb, bg_rgb);
+                            assert!(
+                                ratio >= 2.5,
+                                "Menu bar item '{}' in theme '{}' (256-col: {}) has low contrast ratio {:.2}:1 (fg: {:?}, bg: {:?})",
+                                label, theme.meta.name, is_apple_term, ratio, cell.fg, cell.bg
                             );
+                        }
+                    }
+                }
+
+                // 2. Verify Dropdown items contrast
+                if let Some(menu) = app.menus.get(0).cloned() {
+                    app.render_dropdown(0, 1, &menu, 0);
+                }
+
+                for &(x, y, w, h, _, item_idx) in &app.dropdown_rects {
+                    for dy in 0..h {
+                        for dx in 1..(w.saturating_sub(1)) {
+                            let cell = app.renderer.get_cell(x + dx, y + dy);
+                            if cell.ch != ' ' && cell.ch != '│' && cell.ch != '─' {
+                                let fg_rgb = ct_color_to_rgb(cell.fg);
+                                let bg_rgb = ct_color_to_rgb(cell.bg);
+                                let ratio = contrast_ratio(fg_rgb, bg_rgb);
+                                assert!(
+                                    ratio >= 2.5,
+                                    "Dropdown item {} char '{}' in theme '{}' (256-col: {}) has low contrast ratio {:.2}:1 (fg: {:?}, bg: {:?})",
+                                    item_idx, cell.ch, theme.meta.name, is_apple_term, ratio, cell.fg, cell.bg
+                                );
+                            }
                         }
                     }
                 }
             }
         }
+        std::env::remove_var("TERM_PROGRAM");
     }
 }
 

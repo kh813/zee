@@ -964,4 +964,70 @@ mod tests {
         let normal_path = PathBuf::from("/Applications/Zee.app");
         assert_eq!(untranslocate_path(&normal_path), normal_path);
     }
+
+    #[test]
+    fn test_release_workflow_matrix_standard_build_only() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let release_yml_path = workspace_root.join(".github/workflows/release.yml");
+
+        assert!(
+            release_yml_path.exists(),
+            "Release workflow file must exist at {}",
+            release_yml_path.display()
+        );
+
+        let content = fs::read_to_string(&release_yml_path).expect("Failed to read release.yml");
+
+        // 1. Strictly forbid full-build / non-standard desktop targets in regular release
+        assert!(
+            !content.contains("linux-desktop-x64"),
+            "CRITICAL REGRESSION: .github/workflows/release.yml must NOT contain 'linux-desktop-x64'. Standard release must only build Linux CLI, macOS GUI, and Windows GUI."
+        );
+        assert!(
+            !content.contains("zee-desktop"),
+            "CRITICAL REGRESSION: .github/workflows/release.yml must NOT contain 'zee-desktop' archives."
+        );
+        assert!(
+            !content.contains("is_linux_desktop"),
+            "CRITICAL REGRESSION: .github/workflows/release.yml must NOT contain 'is_linux_desktop' flags."
+        );
+
+        // 2. Parse matrix.include target names
+        let matrix_block = if let Some(start) = content.find("matrix:") {
+            if let Some(steps_pos) = content[start..].find("steps:") {
+                &content[start..start + steps_pos]
+            } else {
+                &content[start..]
+            }
+        } else {
+            panic!("matrix section not found in release.yml");
+        };
+
+        let target_names: Vec<String> = matrix_block
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.starts_with("- name:") {
+                    let name = trimmed.trim_start_matches("- name:").trim();
+                    Some(name.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // 3. Ensure exact match with standard 3 patterns only
+        assert_eq!(
+            target_names,
+            vec!["macos-arm64", "linux-x64", "windows-x64"],
+            "Standard release matrix must exactly match [macos-arm64, linux-x64, windows-x64]. Found: {:?}",
+            target_names
+        );
+        assert_eq!(
+            target_names.len(),
+            3,
+            "Release workflow must have exactly 3 build targets (macOS GUI, Linux CLI, Windows GUI)."
+        );
+    }
 }

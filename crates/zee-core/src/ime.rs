@@ -79,6 +79,66 @@ pub(crate) fn evaluate_input_source_cjk(
     None
 }
 
+/// Evaluates Linux IME status based on output from `fcitx5-remote`, `fcitx-remote`, or `ibus engine`.
+#[allow(dead_code)]
+pub(crate) fn evaluate_linux_ime_status(raw: &str) -> Option<bool> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // 1. Fcitx5 / Fcitx remote output:
+    // 0 = close / unavailable
+    // 1 = inactive (direct input / English)
+    // 2 = active (IME on / Japanese, etc.)
+    match trimmed {
+        "2" => return Some(true),
+        "1" | "0" => return Some(false),
+        _ => {}
+    }
+
+    // 2. IBus engine output:
+    // "xkb:us::eng", "xkb:jp::jpn" etc. -> direct keyboard layout (IME off)
+    // "mozc-jp", "anthy", "kkc", "libpinyin", "hangul" etc. -> IME engine active
+    let lower = trimmed.to_lowercase();
+    if lower.starts_with("xkb:") {
+        return Some(false);
+    }
+
+    if lower.contains("mozc")
+        || lower.contains("anthy")
+        || lower.contains("kkc")
+        || lower.contains("skk")
+        || lower.contains("pinyin")
+        || lower.contains("hangul")
+        || lower.contains("chewing")
+        || lower.contains("cangjie")
+        || lower.contains("rime")
+        || lower.contains("bogo")
+        || lower.contains("japanese")
+        || lower.contains("korean")
+        || lower.contains("chinese")
+    {
+        return Some(true);
+    }
+
+    None
+}
+
+/// Evaluates Windows IME status given the open status and keyboard layout language ID.
+#[allow(dead_code)]
+pub(crate) fn evaluate_windows_ime_status(is_open: bool, lang_id: u16) -> bool {
+    // 0x0411: Japanese
+    // 0x0412: Korean
+    // 0x0804, 0x0404, 0x0c04, 0x1004, 0x1404: Chinese variants
+    let is_cjk_lang = matches!(
+        lang_id,
+        0x0411 | 0x0412 | 0x0804 | 0x0404 | 0x0c04 | 0x1004 | 0x1404
+    );
+
+    is_cjk_lang && is_open
+}
+
 #[cfg(target_os = "macos")]
 fn detect_macos_ime() -> bool {
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -229,29 +289,89 @@ fn detect_macos_ime() -> bool {
 fn detect_windows_ime() -> bool {
     extern "system" {
         fn GetKeyboardLayout(id_thread: u32) -> *mut std::ffi::c_void;
+        fn GetForegroundWindow() -> *mut std::ffi::c_void;
+        fn ImmGetDefaultIMEWnd(hwnd: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn SendMessageA(hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
     }
     unsafe {
         let layout = GetKeyboardLayout(0) as usize;
         let lang_id = (layout & 0xFFFF) as u16;
-        // 0x0411: Japanese, 0x0412: Korean, 0x0804 / 0x0404: Chinese
-        matches!(lang_id, 0x0411 | 0x0412 | 0x0804 | 0x0404 | 0x0c04 | 0x1004 | 0x1404)
+
+        let hwnd = GetForegroundWindow();
+        let is_open = if !hwnd.is_null() {
+            let ime_hwnd = ImmGetDefaultIMEWnd(hwnd);
+            if !ime_hwnd.is_null() {
+                // WM_IME_CONTROL = 0x0283, IMC_GETOPENSTATUS = 0x0005
+                SendMessageA(ime_hwnd, 0x0283, 0x0005, 0) != 0
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        evaluate_windows_ime_status(is_open, lang_id)
     }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn detect_linux_ime() -> bool {
-    if let Ok(m) = std::env::var("GTK_IM_MODULE") {
-        let lower = m.to_lowercase();
-        if lower.contains("ibus") || lower.contains("fcitx") || lower.contains("uim") {
-            return true;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Instant;
+
+    static LAST_CHECK_MS: AtomicU64 = AtomicU64::new(0);
+    static LAST_RESULT: AtomicBool = AtomicBool::new(false);
+    static START_INSTANT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+    let start = START_INSTANT.get_or_init(Instant::now);
+    let now_ms = start.elapsed().as_millis() as u64;
+    let last = LAST_CHECK_MS.load(Ordering::Relaxed);
+
+    // Throttle queries to once every 100ms to avoid excessive process spawns in TUI event loop
+    if now_ms.saturating_sub(last) < 100 {
+        return LAST_RESULT.load(Ordering::Relaxed);
+    }
+
+    let result = query_linux_ime();
+    LAST_RESULT.store(result, Ordering::Relaxed);
+    LAST_CHECK_MS.store(now_ms, Ordering::Relaxed);
+    result
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn query_linux_ime() -> bool {
+    // 1. Try fcitx5-remote
+    if let Ok(output) = std::process::Command::new("fcitx5-remote").output() {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            if let Some(status) = evaluate_linux_ime_status(&s) {
+                return status;
+            }
         }
     }
-    if let Ok(m) = std::env::var("QT_IM_MODULE") {
-        let lower = m.to_lowercase();
-        if lower.contains("ibus") || lower.contains("fcitx") || lower.contains("uim") {
-            return true;
+
+    // 2. Try fcitx-remote
+    if let Ok(output) = std::process::Command::new("fcitx-remote").output() {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            if let Some(status) = evaluate_linux_ime_status(&s) {
+                return status;
+            }
         }
     }
+
+    // 3. Try ibus engine
+    if let Ok(output) = std::process::Command::new("ibus").arg("engine").output() {
+        if output.status.success() {
+            let s = String::from_utf8_lossy(&output.stdout);
+            if let Some(status) = evaluate_linux_ime_status(&s) {
+                return status;
+            }
+        }
+    }
+
+    // Fallback: If no dynamic tool answered, default to false (ASCII) to prevent
+    // false-positive Japanese mode.
     false
 }
 
@@ -335,5 +455,59 @@ mod tests {
             ),
             Some(false)
         );
+    }
+
+    #[test]
+    fn test_evaluate_linux_ime_status_cases() {
+        // Fcitx 5 / Fcitx 4
+        assert_eq!(evaluate_linux_ime_status("2"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("2\n"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("2\r\n"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("1"), Some(false));
+        assert_eq!(evaluate_linux_ime_status("1\n"), Some(false));
+        assert_eq!(evaluate_linux_ime_status("0"), Some(false));
+
+        // IBus CJK engines
+        assert_eq!(evaluate_linux_ime_status("mozc-jp"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("anthy"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("kkc"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("skk"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("libpinyin"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("hangul"), Some(true));
+        assert_eq!(evaluate_linux_ime_status("rime"), Some(true));
+
+        // IBus direct keyboard layouts (IME off / English)
+        assert_eq!(evaluate_linux_ime_status("xkb:us::eng"), Some(false));
+        assert_eq!(evaluate_linux_ime_status("xkb:jp::jpn"), Some(false));
+
+        // Empty or unknown
+        assert_eq!(evaluate_linux_ime_status(""), None);
+        assert_eq!(evaluate_linux_ime_status("   \n"), None);
+        assert_eq!(evaluate_linux_ime_status("unknown_engine"), None);
+    }
+
+    #[test]
+    fn test_evaluate_windows_ime_status_cases() {
+        // Japanese (0x0411)
+        assert!(evaluate_windows_ime_status(true, 0x0411));
+        assert!(!evaluate_windows_ime_status(false, 0x0411));
+
+        // Korean (0x0412)
+        assert!(evaluate_windows_ime_status(true, 0x0412));
+        assert!(!evaluate_windows_ime_status(false, 0x0412));
+
+        // Chinese Simplified (0x0804) & Traditional (0x0404)
+        assert!(evaluate_windows_ime_status(true, 0x0804));
+        assert!(!evaluate_windows_ime_status(false, 0x0804));
+        assert!(evaluate_windows_ime_status(true, 0x0404));
+        assert!(!evaluate_windows_ime_status(false, 0x0404));
+
+        // Non-CJK: US English (0x0409)
+        assert!(!evaluate_windows_ime_status(true, 0x0409));
+        assert!(!evaluate_windows_ime_status(false, 0x0409));
+
+        // Non-CJK: German (0x0407)
+        assert!(!evaluate_windows_ime_status(true, 0x0407));
+        assert!(!evaluate_windows_ime_status(false, 0x0407));
     }
 }

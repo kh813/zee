@@ -299,11 +299,15 @@ fn detect_macos_ime() -> bool {
 
 #[cfg(target_os = "windows")]
 fn detect_windows_ime() -> bool {
+    #[link(name = "user32")]
     extern "system" {
         fn GetKeyboardLayout(id_thread: u32) -> *mut std::ffi::c_void;
         fn GetForegroundWindow() -> *mut std::ffi::c_void;
-        fn ImmGetDefaultIMEWnd(hwnd: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
         fn SendMessageA(hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
+    }
+    #[link(name = "imm32")]
+    extern "system" {
+        fn ImmGetDefaultIMEWnd(hwnd: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     }
     unsafe {
         let layout = GetKeyboardLayout(0) as usize;

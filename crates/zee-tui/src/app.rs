@@ -98,6 +98,7 @@ pub struct App {
     pub pending_backtick: bool,
     pub count: usize,
     pub pending_op_count: usize,
+    pub adaptive_ime_active: bool,
 }
 
 impl App {
@@ -242,6 +243,7 @@ impl App {
             pending_backtick: false,
             count: 0,
             pending_op_count: 0,
+            adaptive_ime_active: false,
         };
 
         app.update_active_outline();
@@ -257,6 +259,26 @@ impl App {
         }
 
         Ok(app)
+    }
+
+    pub fn is_ime_active(&self) -> bool {
+        if zee_core::is_ssh_session() {
+            self.adaptive_ime_active
+        } else {
+            let native = zee_core::is_cjk_ime_active();
+            #[cfg(target_os = "macos")]
+            {
+                native
+            }
+            #[cfg(target_os = "windows")]
+            {
+                native
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            {
+                native || self.adaptive_ime_active
+            }
+        }
     }
 
     fn to_ct_color(&self, c: zee_core::theme::Color) -> crossterm::style::Color {
@@ -1189,6 +1211,14 @@ impl App {
     }
 
     fn handle_vi_normal_key(&mut self, key: KeyEvent) {
+        if let KeyCode::Char(raw_c) = key.code {
+            if zee_core::is_cjk_char(raw_c) {
+                self.adaptive_ime_active = true;
+            } else if raw_c.is_ascii() && !raw_c.is_ascii_control() {
+                self.adaptive_ime_active = false;
+            }
+        }
+
         let code = match key.code {
             KeyCode::Char(c) => KeyCode::Char(zee_core::normalize_vi_char(c)),
             other => other,
@@ -2914,6 +2944,14 @@ impl App {
 
 
     fn handle_editor_key(&mut self, key: KeyEvent) {
+        // Toggle IME indicator with Ctrl-\ or Ctrl-Space
+        if (key.code == KeyCode::Char('\\') || key.code == KeyCode::Char(' '))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            self.adaptive_ime_active = !self.adaptive_ime_active;
+            return;
+        }
+
         let extend_selection = key.modifiers.contains(KeyModifiers::SHIFT);
 
         match key.code {
@@ -2983,6 +3021,12 @@ impl App {
             }
             KeyCode::Char(c)
                 if (key.modifiers == KeyModifiers::NONE || key.modifiers == KeyModifiers::SHIFT) => {
+                    if zee_core::is_cjk_char(c) {
+                        self.adaptive_ime_active = true;
+                    } else if c.is_ascii() && !c.is_ascii_control() {
+                        self.adaptive_ime_active = false;
+                    }
+
                     if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                         if let Some(selection) = buffer.selection.take() {
                             buffer.delete(selection);
@@ -4975,7 +5019,7 @@ impl App {
                                 true
                             };
                             let style = if is_insert_mode {
-                                if zee_core::is_cjk_ime_active() {
+                                if self.is_ime_active() {
                                     crossterm::cursor::SetCursorStyle::BlinkingUnderScore
                                 } else {
                                     crossterm::cursor::SetCursorStyle::BlinkingBar
@@ -5667,6 +5711,7 @@ impl App {
         }
 
         let focus = self.focus;
+        let is_ime_active = self.is_ime_active();
         let App { ref mut renderer, ref mut buffers, .. } = *self;
         let buffer = &mut buffers[active_buffer_idx];
 
@@ -5770,7 +5815,6 @@ impl App {
                         } else {
                             true
                         };
-                        let is_ime_active = zee_core::is_cjk_ime_active();
                         let is_cursor_cell = char_idx == buffer.cursor && focus == Focus::Editor;
 
                         let mut cell_underline = false;
@@ -5821,7 +5865,7 @@ impl App {
                              };
                              if !is_insert_mode {
                                  renderer.set_cell(ex + visual_x, ry, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, ..Default::default() });
-                             } else if zee_core::is_cjk_ime_active() {
+                             } else if is_ime_active {
                                  renderer.set_cell(ex + visual_x, ry, Cell { ch: '_', bg: line_bg, fg: crossterm::style::Color::Rgb { r: 255, g: 167, b: 38 }, underline: true, ..Default::default() });
                              }
                              visual_x += 1;
@@ -5948,7 +5992,6 @@ impl App {
                         } else {
                             true
                         };
-                        let is_ime_active = zee_core::is_cjk_ime_active();
                         let is_cursor_cell = char_idx == buffer.cursor && focus == Focus::Editor;
 
                         let mut cell_underline = false;
@@ -6006,7 +6049,7 @@ impl App {
                              };
                              if !is_insert_mode {
                                  renderer.set_cell(ex + (visual_x - buffer.scroll_col as u16), ey + dy, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, ..Default::default() });
-                             } else if zee_core::is_cjk_ime_active() {
+                             } else if is_ime_active {
                                  renderer.set_cell(ex + (visual_x - buffer.scroll_col as u16), ey + dy, Cell { ch: '_', bg: line_bg, fg: crossterm::style::Color::Rgb { r: 255, g: 167, b: 38 }, underline: true, ..Default::default() });
                              }
                              visual_x += 1;
@@ -6125,7 +6168,7 @@ impl App {
             match buffer.vi_mode {
                 zee_core::ViMode::Normal => (" NORMAL", crossterm::style::Color::DarkBlue, crossterm::style::Color::White),
                 zee_core::ViMode::Insert => {
-                    if zee_core::is_cjk_ime_active() {
+                    if self.is_ime_active() {
                         (" INSERT [あ]", crossterm::style::Color::DarkRed, crossterm::style::Color::White)
                     } else {
                         (" INSERT", crossterm::style::Color::DarkGreen, crossterm::style::Color::White)
@@ -6219,7 +6262,7 @@ impl App {
         } else if let Some(buf) = self.buffers.get(self.active_buffer) {
             let (hint, hint_fg) = match buf.vi_mode {
                 zee_core::ViMode::Insert => {
-                    if zee_core::is_cjk_ime_active() {
+                    if self.is_ime_active() {
                         ("-- INSERT [あ] --", crossterm::style::Color::Red)
                     } else {
                         ("-- INSERT --", crossterm::style::Color::Green)
@@ -7763,6 +7806,48 @@ mod tests {
         let insert_cell = app.renderer.get_cell(ex, ey);
         assert_ne!(insert_cell.bg, cursor_color, "Insert mode should keep regular line background and not invert as block");
         assert_ne!(insert_cell.fg, editor_bg, "Insert mode should keep regular text foreground");
+    }
+
+    #[test]
+    fn test_adaptive_ime_and_manual_toggle_ssh_session() {
+        std::env::set_var("SSH_CONNECTION", "127.0.0.1 50000 127.0.0.1 22");
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.vi_mode = true;
+        app.focus = Focus::Editor;
+
+        // 1. Initially Inactive
+        assert!(!app.is_ime_active(), "Should default to false in SSH session");
+
+        // 2. Manual toggle with Ctrl-\ in Insert mode
+        app.buffers[app.active_buffer].vi_mode = zee_core::ViMode::Insert;
+        app.handle_key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL));
+        assert!(app.is_ime_active(), "Ctrl-\\ should toggle IME active");
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('\\'), KeyModifiers::CONTROL));
+        assert!(!app.is_ime_active(), "Ctrl-\\ should toggle IME inactive");
+
+        // Manual toggle with Ctrl-Space
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL));
+        assert!(app.is_ime_active(), "Ctrl-Space should toggle IME active");
+
+        // 3. Adaptive tracking on character typing in Insert mode
+        // Typing ASCII should switch to inactive
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(!app.is_ime_active(), "Typing ASCII char 'x' should switch IME to inactive");
+
+        // Typing CJK character should switch to active
+        app.handle_key(KeyEvent::new(KeyCode::Char('あ'), KeyModifiers::NONE));
+        assert!(app.is_ime_active(), "Typing CJK char 'あ' should switch IME to active");
+
+        // 4. In Normal mode, typing CJK character (e.g. 'っ' for dd) preserves/sets active
+        app.buffers[app.active_buffer].vi_mode = zee_core::ViMode::Normal;
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert!(!app.is_ime_active(), "Typing ASCII 'j' in normal mode should sync IME to inactive");
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('っ'), KeyModifiers::NONE));
+        assert!(app.is_ime_active(), "Typing full-width 'っ' in normal mode should sync IME to active");
+
+        std::env::remove_var("SSH_CONNECTION");
     }
 }
 

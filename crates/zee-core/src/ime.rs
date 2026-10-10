@@ -18,6 +18,18 @@ pub fn is_cjk_ime_active() -> bool {
     }
 }
 
+/// Returns `true` if the current process is running inside an SSH session.
+pub fn is_ssh_session() -> bool {
+    std::env::var("SSH_CONNECTION").is_ok()
+        || std::env::var("SSH_CLIENT").is_ok()
+        || std::env::var("SSH_TTY").is_ok()
+}
+
+/// Returns `true` if the character is typically inputted via CJK IME (wide characters, kana, kanji, etc.).
+pub fn is_cjk_char(c: char) -> bool {
+    unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) >= 2
+}
+
 pub(crate) fn evaluate_input_source_cjk(
     input_mode: Option<&str>,
     bundle_id: Option<&str>,
@@ -509,5 +521,30 @@ mod tests {
         // Non-CJK: German (0x0407)
         assert!(!evaluate_windows_ime_status(true, 0x0407));
         assert!(!evaluate_windows_ime_status(false, 0x0407));
+    }
+
+    #[test]
+    fn test_is_cjk_char_cases() {
+        assert!(is_cjk_char('あ'));
+        assert!(is_cjk_char('ア'));
+        assert!(is_cjk_char('漢'));
+        assert!(is_cjk_char('字'));
+        assert!(is_cjk_char('、'));
+        assert!(is_cjk_char('。'));
+        assert!(is_cjk_char('　')); // Full-width space
+        assert!(is_cjk_char('Ａ')); // Full-width Latin
+        assert!(is_cjk_char('한')); // Hangul
+
+        assert!(!is_cjk_char('a'));
+        assert!(!is_cjk_char('Z'));
+        assert!(!is_cjk_char('0'));
+        assert!(!is_cjk_char(' '));
+        assert!(!is_cjk_char(':'));
+        assert!(!is_cjk_char('\n'));
+    }
+
+    #[test]
+    fn test_is_ssh_session_does_not_panic() {
+        let _ = is_ssh_session();
     }
 }

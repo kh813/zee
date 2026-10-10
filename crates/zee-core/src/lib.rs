@@ -163,6 +163,6 @@ pub mod vi_cmd;
 pub use vi_cmd::{ExCommand, ExRange, parse_ex_command};
 
 pub mod ime;
-pub use ime::is_cjk_ime_active;
+pub use ime::{is_cjk_ime_active, is_cjk_char, is_ssh_session};
 
 

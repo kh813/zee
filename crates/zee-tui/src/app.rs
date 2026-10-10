@@ -271,6 +271,13 @@ impl App {
                 _ => {}
             }
         }
+
+        // Detect if running under Apple_Terminal (which only supports 256 colors, not 24-bit truecolor)
+        let is_apple_terminal = std::env::var("TERM_PROGRAM").map(|p| p == "Apple_Terminal").unwrap_or(false);
+        if is_apple_terminal {
+            return crossterm::style::Color::AnsiValue(c.to_ansi256());
+        }
+
         match c {
             zee_core::theme::Color::Rgb(r, g, b) => crossterm::style::Color::Rgb { r, g, b },
             zee_core::theme::Color::Ansi(i) => crossterm::style::Color::AnsiValue(i),
@@ -5064,6 +5071,7 @@ impl App {
                     width: cw as u8,
                     bg: item_bg,
                     fg: item_fg,
+                    bold: is_active,
                     ..Default::default()
                 });
                 cur_l_x += cw as u16;
@@ -5108,22 +5116,23 @@ impl App {
             y = self.height.saturating_sub(total_h);
         }
 
-        let editor_bg = self.to_ct_color(self.theme.editor.background);
         let mut bg = self.to_ct_color(self.theme.ui.dialog_bg);
-        // Ensure menu background is clearly distinct from editor background (e.g. pure black)
-        if bg == editor_bg || bg == crossterm::style::Color::Reset || matches!(bg, crossterm::style::Color::Rgb { r: 0, g: 0, b: 0 }) {
+        if bg == crossterm::style::Color::Reset || matches!(bg, crossterm::style::Color::Rgb { r: 0, g: 0, b: 0 }) {
             bg = crossterm::style::Color::AnsiValue(236);
         }
 
-        let fg = self.to_ct_color(self.theme.ui.menu_bar_fg);
-        let mut active_bg = self.to_ct_color(self.theme.ui.menu_item_active_bg);
-        if active_bg == bg || active_bg == crossterm::style::Color::Reset || active_bg == editor_bg {
-            active_bg = crossterm::style::Color::AnsiValue(240);
+        let fg = self.to_ct_color(self.theme.ui.panel_fg);
+        let mut active_bg = self.to_ct_color(self.theme.ui.button_active_bg);
+        if active_bg == bg || active_bg == crossterm::style::Color::Reset {
+            active_bg = crossterm::style::Color::AnsiValue(24);
         }
-        let active_fg = self.to_ct_color(self.theme.ui.menu_item_active_fg);
+        let mut active_fg = self.to_ct_color(self.theme.ui.button_active_fg);
+        if active_fg == active_bg {
+            active_fg = crossterm::style::Color::AnsiValue(231);
+        }
 
         let mut border_fg = self.to_ct_color(self.theme.ui.dialog_border);
-        if border_fg == crossterm::style::Color::Reset || border_fg == bg || border_fg == editor_bg {
+        if border_fg == crossterm::style::Color::Reset || border_fg == bg {
             border_fg = crossterm::style::Color::AnsiValue(245);
         }
         let sc_fg = self.to_ct_color(self.theme.editor.line_number);
@@ -7517,6 +7526,41 @@ mod tests {
 
         app.handle_dialog_result(crate::widgets::dialog::DialogResult::Cancel);
         assert_eq!(app.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn test_menu_dropdown_rendering_contrast_all_themes() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        let themes = zee_core::theme::Theme::load_all();
+        assert!(!themes.is_empty());
+
+        for theme in themes {
+            app.theme = theme.clone();
+            app.active_menu = Some(0);
+            app.selected_item = 0;
+            app.dropdown_rects.clear();
+            app.renderer.clear();
+
+            app.render_menu();
+            if let Some(menu) = app.menus.get(0).cloned() {
+                app.render_dropdown(0, 1, &menu, 0);
+            }
+
+            for &(x, y, w, h, _, item_idx) in &app.dropdown_rects {
+                for dy in 0..h {
+                    for dx in 1..(w.saturating_sub(1)) {
+                        let cell = app.renderer.get_cell(x + dx, y + dy);
+                        if cell.ch != ' ' && cell.ch != '│' && cell.ch != '─' {
+                            assert_ne!(
+                                cell.fg, cell.bg,
+                                "Theme '{}' has identical fg and bg for character '{}' at item {}",
+                                theme.meta.name, cell.ch, item_idx
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

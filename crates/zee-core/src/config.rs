@@ -593,8 +593,11 @@ mod tests {
         let _ = fs::remove_dir_all(&temp_dir);
     }
 
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_config_plugin_registries() {
+        let _lock = TEST_MUTEX.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_plugin_reg_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         let _ = fs::create_dir_all(&temp_dir);
@@ -676,6 +679,7 @@ plugin_registries = [
 
     #[test]
     fn test_custom_config_dir_isolation() {
+        let _lock = TEST_MUTEX.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_custom_config_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();

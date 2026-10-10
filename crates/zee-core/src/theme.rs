@@ -91,6 +91,49 @@ impl Color {
             Color::Ansi(i) => format!("ansi({})", i),
         }
     }
+
+    pub fn to_ansi256(&self) -> u8 {
+        match self {
+            Color::Ansi(i) => *i,
+            Color::Rgb(r, g, b) => {
+                let r = *r;
+                let g = *g;
+                let b = *b;
+                let cube = [0, 95, 135, 175, 215, 255];
+                let mut best_dist = f64::MAX;
+                let mut best_idx = 16u8;
+
+                for (i, &cr) in cube.iter().enumerate() {
+                    for (j, &cg) in cube.iter().enumerate() {
+                        for (k, &cb) in cube.iter().enumerate() {
+                            let dr = (r as f64) - (cr as f64);
+                            let dg = (g as f64) - (cg as f64);
+                            let db = (b as f64) - (cb as f64);
+                            let dist = dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114;
+                            if dist < best_dist {
+                                best_dist = dist;
+                                best_idx = (16 + 36 * i + 6 * j + k) as u8;
+                            }
+                        }
+                    }
+                }
+
+                for g_idx in 0..24 {
+                    let gv = 8 + g_idx * 10;
+                    let dr = (r as f64) - (gv as f64);
+                    let dg = (g as f64) - (gv as f64);
+                    let db = (b as f64) - (gv as f64);
+                    let dist = dr * dr * 0.299 + dg * dg * 0.587 + db * db * 0.114;
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_idx = (232 + g_idx) as u8;
+                    }
+                }
+
+                best_idx
+            }
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for Color {
@@ -207,10 +250,10 @@ impl Theme {
                 current_line: None,
             },
             ui: UiColors {
-                menu_bar_bg: Color::Ansi(235),
-                menu_bar_fg: Color::Ansi(253),
-                menu_item_active_bg: Color::Ansi(24),
-                menu_item_active_fg: Color::Ansi(15),
+                menu_bar_bg: Color::Ansi(27),
+                menu_bar_fg: Color::Ansi(231),
+                menu_item_active_bg: Color::Ansi(21),
+                menu_item_active_fg: Color::Ansi(231),
                 tab_bar_bg: Color::Ansi(233),
                 tab_active_bg: Color::Ansi(239),
                 tab_active_fg: Color::Ansi(15),

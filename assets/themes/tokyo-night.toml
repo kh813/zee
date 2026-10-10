@@ -10,9 +10,9 @@ line_number = "#787c99"
 current_line = "#1e2030"
 
 [ui]
-menu_bar_bg = "#16161e"
-menu_bar_fg = "#c0caf5"
-menu_item_active_bg = "#7aa2f7"
+menu_bar_bg = "#7aa2f7"
+menu_bar_fg = "#15161e"
+menu_item_active_bg = "#bb9af7"
 menu_item_active_fg = "#15161e"
 tab_bar_bg = "#13131a"
 tab_active_bg = "#24283b"

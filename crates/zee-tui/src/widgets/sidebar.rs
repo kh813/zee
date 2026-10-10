@@ -389,6 +389,12 @@ impl Sidebar {
                 _ => {}
             }
         }
+
+        let is_apple_terminal = std::env::var("TERM_PROGRAM").map(|p| p == "Apple_Terminal").unwrap_or(false);
+        if is_apple_terminal {
+            return Color::AnsiValue(c.to_ansi256());
+        }
+
         match c {
             theme::Color::Rgb(r, g, b) => Color::Rgb { r, g, b },
             theme::Color::Ansi(i) => Color::AnsiValue(i),

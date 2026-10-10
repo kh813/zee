@@ -4969,20 +4969,21 @@ impl App {
                         let rx = ex + (visual_x - buffer.scroll_col) as u16;
                         let ry = ey + (line - buffer.scroll_row) as u16;
                         if ry < ey + eh {
-                            if self.config.vi_mode {
-                                let style = match buffer.vi_mode {
-                                    zee_core::ViMode::Normal => crossterm::cursor::SetCursorStyle::BlinkingBlock,
-                                    zee_core::ViMode::Insert => {
-                                        if zee_core::is_cjk_ime_active() {
-                                            crossterm::cursor::SetCursorStyle::BlinkingUnderScore
-                                        } else {
-                                            crossterm::cursor::SetCursorStyle::BlinkingBar
-                                        }
-                                    }
-                                    _ => crossterm::cursor::SetCursorStyle::BlinkingBlock,
-                                };
-                                execute!(stdout, style)?;
-                            }
+                            let is_insert_mode = if self.config.vi_mode {
+                                buffer.vi_mode == zee_core::ViMode::Insert
+                            } else {
+                                true
+                            };
+                            let style = if is_insert_mode {
+                                if zee_core::is_cjk_ime_active() {
+                                    crossterm::cursor::SetCursorStyle::BlinkingUnderScore
+                                } else {
+                                    crossterm::cursor::SetCursorStyle::BlinkingBar
+                                }
+                            } else {
+                                crossterm::cursor::SetCursorStyle::BlinkingBlock
+                            };
+                            execute!(stdout, style)?;
                             execute!(stdout, cursor::Show, cursor::MoveTo(rx, ry))?;
                         } else {
                             execute!(stdout, cursor::Hide)?;
@@ -5764,23 +5765,44 @@ impl App {
                             }
                         }
 
-                        if char_idx == buffer.cursor && focus == Focus::Editor {
-                            bg = cursor_bg;
-                            fg = editor_bg;
+                        let is_insert_mode = if self.config.vi_mode {
+                            buffer.vi_mode == zee_core::ViMode::Insert
+                        } else {
+                            true
+                        };
+                        let is_ime_active = zee_core::is_cjk_ime_active();
+                        let is_cursor_cell = char_idx == buffer.cursor && focus == Focus::Editor;
+
+                        let mut cell_underline = false;
+                        if is_cursor_cell {
+                            if !is_insert_mode {
+                                bg = cursor_bg;
+                                fg = editor_bg;
+                            } else if is_ime_active {
+                                cell_underline = true;
+                            }
                         }
 
                         if c == '\t' {
-                            renderer.set_cell(ex + visual_x, ry, Cell { ch: ' ', bg, fg, width: char_w as u8, ..Default::default() });
+                            renderer.set_cell(ex + visual_x, ry, Cell { ch: ' ', bg, fg, width: char_w as u8, underline: cell_underline, ..Default::default() });
                         } else if c != '\n' && c != '\r' {
-                            renderer.set_cell(rx, ry, Cell { ch: c, bg, fg, width: char_w as u8, ..Default::default() });
+                            renderer.set_cell(rx, ry, Cell { ch: c, bg, fg, width: char_w as u8, underline: cell_underline, ..Default::default() });
                         } else {
                             // End of logical line, might show cursor/selection
-                            if char_idx == buffer.cursor && focus == Focus::Editor {
-                                renderer.set_cell(rx, ry, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, width: 1, ..Default::default() });
+                            if is_cursor_cell {
+                                if !is_insert_mode {
+                                    renderer.set_cell(rx, ry, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, width: 1, ..Default::default() });
+                                } else if is_ime_active {
+                                    renderer.set_cell(rx, ry, Cell { ch: '_', bg: line_bg, fg: crossterm::style::Color::Rgb { r: 255, g: 167, b: 38 }, width: 1, underline: true, ..Default::default() });
+                                } else if bg != line_bg {
+                                    renderer.set_cell(rx, ry, Cell { ch: ' ', bg, fg, width: 1, ..Default::default() });
+                                } else if is_current_line {
+                                    renderer.set_cell(rx, ry, Cell { ch: ' ', bg: line_bg, fg: editor_fg, width: 1, ..Default::default() });
+                                }
                             } else if bg != line_bg {
                                 renderer.set_cell(rx, ry, Cell { ch: ' ', bg, fg, width: 1, ..Default::default() });
                             } else if is_current_line {
-                                renderer.set_cell(rx, ry, Cell { ch: ' ', bg: line_bg, fg, width: 1, ..Default::default() });
+                                renderer.set_cell(rx, ry, Cell { ch: ' ', bg: line_bg, fg: editor_fg, width: 1, ..Default::default() });
                             }
                         }
                         visual_x += char_w;
@@ -5792,7 +5814,16 @@ impl App {
                          let last_char_idx = line_start_char + line_slice.len_chars();
                          let ends_with_newline = line_slice.len_chars() > 0 && (line_slice.char(line_slice.len_chars()-1) == '\n' || line_slice.char(line_slice.len_chars()-1) == '\r');
                          if !ends_with_newline && buffer.cursor == last_char_idx && visual_x < ew {
-                             renderer.set_cell(ex + visual_x, ry, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, ..Default::default() });
+                             let is_insert_mode = if self.config.vi_mode {
+                                 buffer.vi_mode == zee_core::ViMode::Insert
+                             } else {
+                                 true
+                             };
+                             if !is_insert_mode {
+                                 renderer.set_cell(ex + visual_x, ry, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, ..Default::default() });
+                             } else if zee_core::is_cjk_ime_active() {
+                                 renderer.set_cell(ex + visual_x, ry, Cell { ch: '_', bg: line_bg, fg: crossterm::style::Color::Rgb { r: 255, g: 167, b: 38 }, underline: true, ..Default::default() });
+                             }
                              visual_x += 1;
                          }
                     }
@@ -5912,29 +5943,50 @@ impl App {
                             }
                         }
 
-                        if char_idx == buffer.cursor && focus == Focus::Editor {
-                            bg = cursor_bg;
-                            fg = editor_bg;
+                        let is_insert_mode = if self.config.vi_mode {
+                            buffer.vi_mode == zee_core::ViMode::Insert
+                        } else {
+                            true
+                        };
+                        let is_ime_active = zee_core::is_cjk_ime_active();
+                        let is_cursor_cell = char_idx == buffer.cursor && focus == Focus::Editor;
+
+                        let mut cell_underline = false;
+                        if is_cursor_cell {
+                            if !is_insert_mode {
+                                bg = cursor_bg;
+                                fg = editor_bg;
+                            } else if is_ime_active {
+                                cell_underline = true;
+                            }
                         }
 
                         if c == '\t' {
                             for dx in 0..char_w {
                                 let vx = visual_x + dx;
                                 if vx >= buffer.scroll_col as u16 && vx < buffer.scroll_col as u16 + ew {
-                                    renderer.set_cell(ex + (vx - buffer.scroll_col as u16), ry, Cell { ch: ' ', bg, fg, width: 1, ..Default::default() });
+                                    renderer.set_cell(ex + (vx - buffer.scroll_col as u16), ry, Cell { ch: ' ', bg, fg, width: 1, underline: cell_underline, ..Default::default() });
                                 }
                             }
                         } else if c != '\n' && c != '\r' {
                             let rx = ex + (visual_x.saturating_sub(buffer.scroll_col as u16));
                             let ry = ey + dy;
-                            renderer.set_cell(rx, ry, Cell { ch: c, bg, fg, width: char_w as u8, ..Default::default() });
+                            renderer.set_cell(rx, ry, Cell { ch: c, bg, fg, width: char_w as u8, underline: cell_underline, ..Default::default() });
                         } else {
-                            if char_idx == buffer.cursor && focus == Focus::Editor {
-                                renderer.set_cell(rx, ry, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, ..Default::default() });
+                            if is_cursor_cell {
+                                if !is_insert_mode {
+                                    renderer.set_cell(rx, ry, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, ..Default::default() });
+                                } else if is_ime_active {
+                                    renderer.set_cell(rx, ry, Cell { ch: '_', bg: line_bg, fg: crossterm::style::Color::Rgb { r: 255, g: 167, b: 38 }, underline: true, ..Default::default() });
+                                } else if bg != line_bg {
+                                    renderer.set_cell(rx, ry, Cell { ch: ' ', bg, fg, ..Default::default() });
+                                } else if is_current_line {
+                                    renderer.set_cell(rx, ry, Cell { ch: ' ', bg: line_bg, fg: editor_fg, ..Default::default() });
+                                }
                             } else if bg != line_bg {
                                 renderer.set_cell(rx, ry, Cell { ch: ' ', bg, fg, ..Default::default() });
                             } else if is_current_line {
-                                renderer.set_cell(rx, ry, Cell { ch: ' ', bg: line_bg, fg, ..Default::default() });
+                                renderer.set_cell(rx, ry, Cell { ch: ' ', bg: line_bg, fg: editor_fg, ..Default::default() });
                             }
                         }
                     }
@@ -5947,7 +5999,16 @@ impl App {
                      let ends_with_newline = line.len_chars() > 0 && (line.char(line.len_chars()-1) == '\n' || line.char(line.len_chars()-1) == '\r');
                      if !ends_with_newline && buffer.cursor == last_char_idx
                          && visual_x >= buffer.scroll_col as u16 && visual_x < buffer.scroll_col as u16 + ew {
-                             renderer.set_cell(ex + (visual_x - buffer.scroll_col as u16), ey + dy, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, ..Default::default() });
+                             let is_insert_mode = if self.config.vi_mode {
+                                 buffer.vi_mode == zee_core::ViMode::Insert
+                             } else {
+                                 true
+                             };
+                             if !is_insert_mode {
+                                 renderer.set_cell(ex + (visual_x - buffer.scroll_col as u16), ey + dy, Cell { ch: ' ', bg: cursor_bg, fg: editor_bg, ..Default::default() });
+                             } else if zee_core::is_cjk_ime_active() {
+                                 renderer.set_cell(ex + (visual_x - buffer.scroll_col as u16), ey + dy, Cell { ch: '_', bg: line_bg, fg: crossterm::style::Color::Rgb { r: 255, g: 167, b: 38 }, underline: true, ..Default::default() });
+                             }
                              visual_x += 1;
                          }
                 }
@@ -7670,6 +7731,38 @@ mod tests {
             }
         }
         std::env::remove_var("TERM_PROGRAM");
+    }
+
+    #[test]
+    fn test_vi_mode_cursor_rendering_modes() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        let theme = zee_core::theme::Theme::find_by_name("Tokyo Night").expect("Tokyo Night theme not found");
+        app.theme = theme;
+        app.config.vi_mode = true;
+        app.buffers[app.active_buffer].insert(0, "Hello World\n");
+        app.buffers[app.active_buffer].cursor = 0;
+        app.focus = Focus::Editor;
+
+        let cursor_color = app.to_ct_color(app.theme.editor.cursor);
+        let editor_bg = app.to_ct_color(app.theme.editor.background);
+        assert_ne!(cursor_color, editor_bg);
+
+        // 1. Normal Mode: cursor should be block inverted (bg == cursor_color, fg == editor_bg)
+        app.buffers[app.active_buffer].vi_mode = zee_core::ViMode::Normal;
+        app.renderer.clear();
+        app.render_editor();
+        let (ex, ey, _, _) = app.layout.editor_bounds();
+        let normal_cell = app.renderer.get_cell(ex, ey);
+        assert_eq!(normal_cell.bg, cursor_color, "Normal mode should invert background as block");
+        assert_eq!(normal_cell.fg, editor_bg, "Normal mode should invert foreground");
+
+        // 2. Insert Mode: cursor cell should NOT be block inverted (bg != cursor_color)
+        app.buffers[app.active_buffer].vi_mode = zee_core::ViMode::Insert;
+        app.renderer.clear();
+        app.render_editor();
+        let insert_cell = app.renderer.get_cell(ex, ey);
+        assert_ne!(insert_cell.bg, cursor_color, "Insert mode should keep regular line background and not invert as block");
+        assert_ne!(insert_cell.fg, editor_bg, "Insert mode should keep regular text foreground");
     }
 }
 

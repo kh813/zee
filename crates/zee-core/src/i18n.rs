@@ -238,6 +238,8 @@ impl I18n {
         m.insert("dialog.update.failed".to_string(), "Update failed: {error}".to_string());
         m.insert("dialog.update.btn_update".to_string(), "Update Now".to_string());
         m.insert("dialog.update.btn_open_url".to_string(), "Open Release Page".to_string());
+        m.insert("dialog.update.no_direct_package".to_string(), "Direct update package is unavailable for this platform. Please visit the releases page.".to_string());
+        m.insert("dialog.update.success_cli".to_string(), "Update installed! Please restart zee.".to_string());
 
         m.insert("panel.find".to_string(), "Find:".to_string());
         m.insert("panel.replace".to_string(), "Replace:".to_string());
@@ -490,6 +492,8 @@ impl I18n {
         m.insert("dialog.update.failed".to_string(), "アップデートに失敗しました: {error}".to_string());
         m.insert("dialog.update.btn_update".to_string(), "今すぐアップデート".to_string());
         m.insert("dialog.update.btn_open_url".to_string(), "リリースを開く".to_string());
+        m.insert("dialog.update.no_direct_package".to_string(), "この環境向けの自動更新パッケージがありません。リリースページを確認してください。".to_string());
+        m.insert("dialog.update.success_cli".to_string(), "アップデートが完了しました！ zee を再起動してください。".to_string());
 
         m.insert("panel.find".to_string(), "検索:".to_string());
         m.insert("panel.replace".to_string(), "置換:".to_string());

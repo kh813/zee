@@ -12,15 +12,30 @@ pub const GITHUB_REPO: &str = "kh813/zee";
 pub fn open_url(url: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
-        Command::new("open").arg(url).spawn()?;
+        Command::new("open")
+            .arg(url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
     }
     #[cfg(target_os = "linux")]
     {
-        Command::new("xdg-open").arg(url).spawn()?;
+        Command::new("xdg-open")
+            .arg(url)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
     }
     #[cfg(target_os = "windows")]
     {
-        Command::new("cmd").args(["/c", "start", "", url]).spawn()?;
+        Command::new("cmd")
+            .args(["/c", "start", "", url])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
     }
     Ok(())
 }
@@ -499,6 +514,9 @@ open -n "$APP"
         .arg(&new_app_path)
         .arg(&staging_dir)
         .arg(pid.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .context("Failed to spawn macOS update helper process")?;
 
@@ -566,6 +584,29 @@ fn apply_unix_binary(archive_bytes: &[u8], current_exe: &Path, target_bin_name: 
     fs::set_permissions(&new_bin_path, fs::Permissions::from_mode(0o755))
         .context("Failed to set executable permissions on updated binary")?;
 
+    if !is_gui {
+        // CLI in-place replacement:
+        // On Unix, unlinking the running executable and replacing it with the new binary
+        // is atomic and does not terminate the active running process.
+        // It avoids helper scripts, timeouts, and abrupt kill -9 signals that would
+        // corrupt the terminal state or close the editor unexpectedly.
+        let temp_target = current_exe.with_extension("tmp_new_update");
+        let _ = fs::copy(&new_bin_path, &temp_target);
+        let _ = fs::set_permissions(&temp_target, fs::Permissions::from_mode(0o755));
+
+        // Unlink the current executable so ETXTBSY is never encountered on Linux
+        let _ = fs::remove_file(current_exe);
+        if let Err(e) = fs::rename(&temp_target, current_exe) {
+            // Fallback to copy if rename fails across mount boundaries
+            fs::copy(&new_bin_path, current_exe)
+                .context(format!("Failed to install new binary: {}", e))?;
+            let _ = fs::set_permissions(current_exe, fs::Permissions::from_mode(0o755));
+        }
+        let _ = fs::remove_file(&temp_target);
+        let _ = fs::remove_dir_all(&staging_dir);
+        return Ok(());
+    }
+
     let pid = std::process::id();
     let relaunch_cmd = if is_gui { "open -n \"$EXE\" 2>/dev/null || \"$EXE\" &" } else { "" };
 
@@ -604,6 +645,9 @@ rm -rf "$STAGING"
         .arg(&new_bin_path)
         .arg(&staging_dir)
         .arg(pid.to_string())
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .context("Failed to spawn update helper script")?;
 
@@ -875,6 +919,18 @@ mod tests {
         let modern_lin_cli = find_matching_asset_for_platform(&release_assets_v0_2_0, AppType::Cli, "linux", "x86_64");
         assert!(modern_lin_cli.is_some());
         assert_eq!(modern_lin_cli.unwrap().name, "zee-cli-v0.2.0-linux-x64.zip");
+
+        // Dual format release assets set (both zip and tar.gz for Linux CLI)
+        let release_assets_dual = vec![
+            ReleaseAsset { name: "SHA256SUMS.txt".to_string(), browser_download_url: "https://...".into(), size: 281 },
+            ReleaseAsset { name: "zee-cli-v0.2.6-linux-x64.zip".to_string(), browser_download_url: "https://...".into(), size: 10000 },
+            ReleaseAsset { name: "zee-cli-v0.2.6-linux-x64.tar.gz".to_string(), browser_download_url: "https://...".into(), size: 10000 },
+            ReleaseAsset { name: "zee-v0.2.6-macos-arm64.zip".to_string(), browser_download_url: "https://...".into(), size: 12000 },
+            ReleaseAsset { name: "zee-v0.2.6-windows-x64.zip".to_string(), browser_download_url: "https://...".into(), size: 13000 },
+        ];
+        let lin_cli_dual = find_matching_asset_for_platform(&release_assets_dual, AppType::Cli, "linux", "x86_64");
+        assert!(lin_cli_dual.is_some());
+        assert!(lin_cli_dual.unwrap().name.starts_with("zee-cli-v0.2.6-linux-x64"));
     }
 
     #[test]

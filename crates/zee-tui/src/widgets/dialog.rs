@@ -1738,6 +1738,7 @@ pub struct UpdateDialog {
     pub i18n_downloading: String,
     pub i18n_success: String,
     pub i18n_failed: String,
+    pub i18n_no_direct_package: String,
 }
 
 impl UpdateDialog {
@@ -1765,8 +1766,31 @@ impl UpdateDialog {
             i18n_up_to_date: i18n.get("dialog.update.up_to_date").to_string(),
             i18n_available: i18n.get("dialog.update.available").to_string(),
             i18n_downloading: i18n.get("dialog.update.downloading").to_string(),
-            i18n_success: i18n.get("dialog.update.success").to_string(),
+            i18n_success: {
+                let s = i18n.get("dialog.update.success_cli");
+                if s == "dialog.update.success_cli" {
+                    i18n.get("dialog.update.success").to_string()
+                } else {
+                    s.to_string()
+                }
+            },
             i18n_failed: i18n.get("dialog.update.failed").to_string(),
+            i18n_no_direct_package: i18n.get("dialog.update.no_direct_package").to_string(),
+        }
+    }
+
+    pub fn get_buttons<'a>(&'a self, state: &'a UpdateState) -> Vec<&'a str> {
+        match state {
+            UpdateState::Checking | UpdateState::Downloading => vec![],
+            UpdateState::UpToDate { .. } | UpdateState::Success => vec![&self.i18n_ok],
+            UpdateState::Available { asset_url, .. } => {
+                if asset_url.is_some() {
+                    vec![&self.i18n_update_now, &self.i18n_cancel, &self.i18n_open_url]
+                } else {
+                    vec![&self.i18n_open_url, &self.i18n_cancel]
+                }
+            }
+            UpdateState::Failed { .. } => vec![&self.i18n_ok, &self.i18n_open_url],
         }
     }
 
@@ -1820,7 +1844,7 @@ impl UpdateDialog {
         }
     }
 
-    fn trigger_update(&self, asset_url: Option<String>, html_url: String) {
+    fn trigger_update(&self, asset_url: Option<String>, _html_url: String) {
         if let Some(url) = asset_url {
             let mut state = self.state.lock().unwrap();
             *state = UpdateState::Downloading;
@@ -1830,8 +1854,6 @@ impl UpdateDialog {
                     .map_err(|e| e.to_string());
                 let _ = tx.send(UpdateMsg::ApplyDone(res));
             });
-        } else {
-            let _ = zee_core::selfupdate::open_url(&html_url);
         }
     }
 }
@@ -1863,8 +1885,11 @@ impl Dialog for UpdateDialog {
             UpdateState::UpToDate { version } => {
                 lines.push(self.i18n_up_to_date.replace("{version}", version));
             }
-            UpdateState::Available { latest_version, .. } => {
+            UpdateState::Available { latest_version, asset_url, .. } => {
                 lines.push(self.i18n_available.replace("{version}", latest_version));
+                if asset_url.is_none() {
+                    lines.push(self.i18n_no_direct_package.clone());
+                }
             }
             UpdateState::Downloading => {
                 lines.push(self.i18n_downloading.clone());
@@ -1892,12 +1917,7 @@ impl Dialog for UpdateDialog {
         }
 
         // Render buttons
-        let buttons: Vec<&str> = match &state {
-            UpdateState::Checking | UpdateState::Downloading => vec![],
-            UpdateState::UpToDate { .. } | UpdateState::Success => vec![&self.i18n_ok],
-            UpdateState::Available { .. } => vec![&self.i18n_update_now, &self.i18n_cancel, &self.i18n_open_url],
-            UpdateState::Failed { .. } => vec![&self.i18n_ok, &self.i18n_open_url],
-        };
+        let buttons = self.get_buttons(&state);
 
         if !buttons.is_empty() {
             let total_btn_len: usize = buttons.iter().map(|b| b.len() + 4).sum::<usize>() + (buttons.len().saturating_sub(1) * 2);
@@ -1935,12 +1955,8 @@ impl Dialog for UpdateDialog {
         self.poll_messages();
 
         let state = self.state.lock().unwrap().clone();
-        let num_buttons = match &state {
-            UpdateState::Checking | UpdateState::Downloading => 0,
-            UpdateState::UpToDate { .. } | UpdateState::Success => 1,
-            UpdateState::Available { .. } => 3,
-            UpdateState::Failed { .. } => 2,
-        };
+        let buttons = self.get_buttons(&state);
+        let num_buttons = buttons.len();
 
         match key.code {
             KeyCode::Esc => DialogResult::Cancel,
@@ -1962,22 +1978,31 @@ impl Dialog for UpdateDialog {
                 let sel = *self.selected_btn.lock().unwrap();
                 match &state {
                     UpdateState::Checking | UpdateState::Downloading => DialogResult::Pending,
-                    UpdateState::UpToDate { .. } => DialogResult::Ok(Action::Confirm),
-                    UpdateState::Success => DialogResult::Ok(Action::Confirm),
+                    UpdateState::UpToDate { .. } | UpdateState::Success => DialogResult::Ok(Action::Confirm),
                     UpdateState::Available { asset_url, html_url, .. } => {
-                        let asset_url = asset_url.clone();
                         let html_url = html_url.clone();
-                        match sel {
-                            0 => {
-                                self.trigger_update(asset_url, html_url);
-                                DialogResult::Pending
+                        if asset_url.is_some() {
+                            match sel {
+                                0 => {
+                                    self.trigger_update(asset_url.clone(), html_url);
+                                    DialogResult::Pending
+                                }
+                                1 => DialogResult::Cancel,
+                                2 => {
+                                    let _ = zee_core::selfupdate::open_url(&html_url);
+                                    DialogResult::Pending
+                                }
+                                _ => DialogResult::Pending,
                             }
-                            1 => DialogResult::Cancel,
-                            2 => {
-                                let _ = zee_core::selfupdate::open_url(&html_url);
-                                DialogResult::Pending
+                        } else {
+                            match sel {
+                                0 => {
+                                    let _ = zee_core::selfupdate::open_url(&html_url);
+                                    DialogResult::Pending
+                                }
+                                1 => DialogResult::Cancel,
+                                _ => DialogResult::Pending,
                             }
-                            _ => DialogResult::Pending,
                         }
                     }
                     UpdateState::Failed { html_url, .. } => {
@@ -2012,12 +2037,7 @@ impl Dialog for UpdateDialog {
         }
 
         let state = self.state.lock().unwrap().clone();
-        let buttons: Vec<&str> = match &state {
-            UpdateState::Checking | UpdateState::Downloading => vec![],
-            UpdateState::UpToDate { .. } | UpdateState::Success => vec![&self.i18n_ok],
-            UpdateState::Available { .. } => vec![&self.i18n_update_now, &self.i18n_cancel, &self.i18n_open_url],
-            UpdateState::Failed { .. } => vec![&self.i18n_ok, &self.i18n_open_url],
-        };
+        let buttons = self.get_buttons(&state);
 
         if buttons.is_empty() {
             return DialogResult::Pending;
@@ -4345,6 +4365,73 @@ mod tests {
             DialogResult::Cancel => {}
             _ => panic!("Expected DialogResult::Cancel on Esc"),
         }
+    }
+
+    #[test]
+    fn test_update_dialog_available_with_and_without_asset() {
+        let i18n = zee_core::I18n::load("en");
+        let mut dialog = UpdateDialog::new(&i18n, false);
+
+        // 1. With downloadable asset_url
+        let avail_with_asset = UpdateState::Available {
+            latest_version: "0.2.6".to_string(),
+            asset_url: Some("https://example.com/zee-cli-v0.2.6-linux-x64.zip".to_string()),
+            html_url: "https://example.com/releases/v0.2.6".to_string(),
+        };
+        *dialog.state.lock().unwrap() = avail_with_asset.clone();
+        let btns = dialog.get_buttons(&avail_with_asset);
+        assert_eq!(btns.len(), 3);
+        assert_eq!(btns[0], dialog.i18n_update_now);
+        assert_eq!(btns[1], dialog.i18n_cancel);
+        assert_eq!(btns[2], dialog.i18n_open_url);
+
+        // Test button navigation wrapping (Tab and Left)
+        *dialog.selected_btn.lock().unwrap() = 0;
+        let _ = dialog.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(*dialog.selected_btn.lock().unwrap(), 1);
+        let _ = dialog.handle_key(make_key(KeyCode::Left));
+        assert_eq!(*dialog.selected_btn.lock().unwrap(), 0);
+
+        // Cancel on index 1
+        *dialog.selected_btn.lock().unwrap() = 1;
+        match dialog.handle_key(make_key(KeyCode::Enter)) {
+            DialogResult::Cancel => {}
+            _ => panic!("Expected DialogResult::Cancel on Cancel button"),
+        }
+
+        // 2. Without downloadable asset_url (manual release page notice)
+        let avail_no_asset = UpdateState::Available {
+            latest_version: "0.2.6".to_string(),
+            asset_url: None,
+            html_url: "https://example.com/releases/v0.2.6".to_string(),
+        };
+        *dialog.state.lock().unwrap() = avail_no_asset.clone();
+        let btns_no_asset = dialog.get_buttons(&avail_no_asset);
+        assert_eq!(btns_no_asset.len(), 2);
+        assert_eq!(btns_no_asset[0], dialog.i18n_open_url);
+        assert_eq!(btns_no_asset[1], dialog.i18n_cancel);
+
+        // Index 0 does NOT trigger Downloading state
+        *dialog.selected_btn.lock().unwrap() = 0;
+        let res = dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(matches!(res, DialogResult::Pending));
+        let cur_state = dialog.state.lock().unwrap().clone();
+        assert!(matches!(cur_state, UpdateState::Available { asset_url: None, .. }));
+
+        // Index 1 cancels
+        *dialog.selected_btn.lock().unwrap() = 1;
+        let res = dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(matches!(res, DialogResult::Cancel));
+
+        // 3. Success state
+        let success_state = UpdateState::Success;
+        *dialog.state.lock().unwrap() = success_state.clone();
+        let btns_success = dialog.get_buttons(&success_state);
+        assert_eq!(btns_success.len(), 1);
+        assert_eq!(btns_success[0], dialog.i18n_ok);
+        *dialog.selected_btn.lock().unwrap() = 0;
+        let res = dialog.handle_key(make_key(KeyCode::Enter));
+        assert!(matches!(res, DialogResult::Ok(Action::Confirm)));
     }
 }
 

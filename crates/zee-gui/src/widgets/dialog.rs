@@ -280,6 +280,9 @@ impl Dialog {
                                 let cx = cx.clone();
                                 async move {
                                     smol::Timer::after(std::time::Duration::from_millis(500)).await;
+                                    if let Ok(current_exe) = std::env::current_exe() {
+                                        let _ = zee_core::selfupdate::relaunch_gui(&current_exe);
+                                    }
                                     cx.update(|cx| {
                                         cx.dispatch_action(&Quit {});
                                     });

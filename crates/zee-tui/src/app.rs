@@ -99,6 +99,7 @@ pub struct App {
     pub count: usize,
     pub pending_op_count: usize,
     pub adaptive_ime_active: bool,
+    pub needs_clear: bool,
 }
 
 impl App {
@@ -244,6 +245,7 @@ impl App {
             count: 0,
             pending_op_count: 0,
             adaptive_ime_active: false,
+            needs_clear: false,
         };
 
         app.update_active_outline();
@@ -259,6 +261,68 @@ impl App {
         }
 
         Ok(app)
+    }
+
+    pub fn restore_session(&mut self, session: zee_core::session::UpdateSession) {
+        if let Some(root) = session.root_folder {
+            self.sidebar.file_tree.root_path = root;
+            self.sidebar.refresh_files();
+        }
+        self.sidebar.visible = session.sidebar_visible;
+        self.config.sidebar = session.sidebar_visible;
+        self.sidebar.file_tree.restore_expanded_paths(&session.expanded_folders);
+
+        let mut restored_buffers = Vec::new();
+        for file_state in session.files {
+            let editor = if let Some(path) = &file_state.path {
+                if let Ok(mut ed) = Editor::from_file(path) {
+                    if let Some(unsaved) = &file_state.unsaved_content {
+                        ed.delete(0..ed.rope.len_chars());
+                        ed.insert(0, unsaved);
+                        ed.modified_since_save = file_state.is_modified;
+                    }
+                    Some(ed)
+                } else if let Some(unsaved) = &file_state.unsaved_content {
+                    let mut ed = Editor::new();
+                    ed.path = Some(path.clone());
+                    ed.insert(0, unsaved);
+                    ed.modified_since_save = file_state.is_modified;
+                    Some(ed)
+                } else {
+                    None
+                }
+            } else if let Some(unsaved) = &file_state.unsaved_content {
+                let mut ed = Editor::new();
+                ed.insert(0, unsaved);
+                ed.modified_since_save = file_state.is_modified;
+                Some(ed)
+            } else {
+                None
+            };
+
+            if let Some(mut ed) = editor {
+                if let Some(path) = &ed.path {
+                    let syntax = self.detect_syntax(path);
+                    ed.update_syntax(syntax);
+                }
+                ed.cursor = file_state.cursor.min(ed.rope.len_chars());
+                ed.scroll_row = file_state.scroll_row;
+                ed.vi_mode = if self.config.vi_mode {
+                    zee_core::ViMode::Normal
+                } else {
+                    zee_core::ViMode::Insert
+                };
+                restored_buffers.push(ed);
+            }
+        }
+
+        if !restored_buffers.is_empty() {
+            self.buffers = restored_buffers;
+            self.active_buffer = session.active_index.min(self.buffers.len().saturating_sub(1));
+            self.recompute_layout();
+            self.ensure_cursor_visible();
+            self.update_active_outline();
+        }
     }
 
     pub fn is_ime_active(&self) -> bool {
@@ -961,6 +1025,7 @@ impl App {
                 KeyCode::Char('b') => { self.perform_action(Action::ToggleSidebar); return; }
                 KeyCode::Char('h') => { self.perform_action(Action::About); return; }
                 KeyCode::Char('e') => { self.perform_action(Action::ToggleViMode); return; }
+                KeyCode::Char('l') => { self.needs_clear = true; return; }
                 KeyCode::Char(',') => { self.perform_action(Action::OpenSettings); return; }
                 KeyCode::Tab | KeyCode::PageDown | KeyCode::Char(']') => {
                     self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
@@ -3167,6 +3232,33 @@ impl App {
         }
     }
 
+    pub fn save_update_session(&self) -> Result<()> {
+        let mut files = Vec::new();
+        for buffer in &self.buffers {
+            let unsaved_content = if buffer.is_modified() || buffer.path.is_none() {
+                Some(buffer.rope.to_string())
+            } else {
+                None
+            };
+            files.push(zee_core::session::SessionEditorState {
+                path: buffer.path.clone(),
+                cursor: buffer.cursor,
+                scroll_row: buffer.scroll_row,
+                is_modified: buffer.is_modified(),
+                unsaved_content,
+            });
+        }
+        let session = zee_core::session::UpdateSession {
+            files,
+            active_index: self.active_buffer,
+            root_folder: Some(self.sidebar.file_tree.root_path.clone()),
+            expanded_folders: self.sidebar.file_tree.expanded_paths(),
+            sidebar_visible: self.sidebar.visible,
+            sidebar_tab: "files".to_string(),
+        };
+        session.save()
+    }
+
     fn handle_dialog_key(&mut self, key: KeyEvent) {
         if let Some(ref mut dialog) = self.current_dialog {
             let result = dialog.handle_key(key);
@@ -3178,6 +3270,16 @@ impl App {
         match result {
             DialogResult::Ok(action) => {
                 match action {
+                    dialog::Action::RestartAndUpdate => {
+                        let _ = self.save_update_session();
+                        let mut stdout = std::io::stdout();
+                        let _ = self.cleanup_terminal(&mut stdout);
+                        if let Err(e) = zee_core::selfupdate::restart_cli_process() {
+                            eprintln!("Failed to restart zee: {}", e);
+                            std::process::exit(1);
+                        }
+                        return;
+                    }
                     dialog::Action::ConfirmPath(path) => {
                         match self.pending_op {
                             PendingOp::Open => {
@@ -3628,6 +3730,9 @@ impl App {
             }
             _ => {}
         }
+        if self.current_dialog.is_none() {
+            self.needs_clear = true;
+        }
     }
 
     fn handle_panel_key(&mut self, key: KeyEvent) {
@@ -3888,6 +3993,7 @@ impl App {
         }
         self.active_menu = None;
         self.submenu_stack.clear();
+        self.needs_clear = true;
     }
 
     fn handle_menu_key(&mut self, key: KeyEvent) {
@@ -3965,6 +4071,7 @@ impl App {
                         }
                         self.active_menu = None;
                         self.submenu_stack.clear();
+                        self.needs_clear = true;
                     }
                     MenuItem::Submenu { .. } => {
                         self.submenu_stack.push((self.active_menu.unwrap(), self.selected_item));
@@ -4711,6 +4818,7 @@ impl App {
                                         }
                                         self.active_menu = None;
                                         self.submenu_stack.clear();
+                                        self.needs_clear = true;
                                     }
                                     MenuItem::Submenu { .. } => {
                                         self.submenu_stack.push((self.active_menu.unwrap(), self.selected_item));
@@ -4936,6 +5044,11 @@ impl App {
     }
 
     fn render(&mut self, stdout: &mut Stdout) -> Result<()> {
+        if self.needs_clear {
+            let _ = execute!(stdout, crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
+            self.renderer.invalidate();
+            self.needs_clear = false;
+        }
         self.renderer.clear();
         
         // Render regions
@@ -6888,8 +7001,11 @@ mod tests {
         assert_eq!(app.buffers[0].cursor, 0);
     }
 
+    static CONFIG_DIR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_ui_menu_and_view_toggles() {
+        let _config_lock = CONFIG_DIR_LOCK.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_ui_toggles_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -6961,6 +7077,7 @@ mod tests {
 
     #[test]
     fn test_settings_dialog_open_from_menu_and_keyboard_navigation() {
+        let _config_lock = CONFIG_DIR_LOCK.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_settings_nav_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -7009,6 +7126,7 @@ mod tests {
 
     #[test]
     fn test_settings_dialog_open_and_mouse_click_navigation() {
+        let _config_lock = CONFIG_DIR_LOCK.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_settings_mouse_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -7072,6 +7190,7 @@ mod tests {
 
     #[test]
     fn test_settings_dialog_dropdown_language_selection_in_app() {
+        let _config_lock = CONFIG_DIR_LOCK.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_settings_lang_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -7366,6 +7485,7 @@ mod tests {
 
     #[test]
     fn test_sidebar_context_menu_toggle_hidden_workflow() {
+        let _config_lock = CONFIG_DIR_LOCK.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_sb_toggle_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -7532,6 +7652,7 @@ mod tests {
 
     #[test]
     fn test_toggle_files_and_refresh_file_tree_action() {
+        let _config_lock = CONFIG_DIR_LOCK.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_toggle_files_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::create_dir_all(&temp_dir);
@@ -7781,9 +7902,12 @@ mod tests {
         assert_ne!(insert_cell.fg, editor_bg, "Insert mode should keep regular text foreground");
     }
 
+    static SSH_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_adaptive_ime_and_manual_toggle_ssh_session() {
-        std::env::set_var("SSH_CONNECTION", "127.0.0.1 50000 127.0.0.1 22");
+        let _guard = SSH_ENV_LOCK.lock().unwrap();
+        unsafe { std::env::set_var("SSH_CONNECTION", "127.0.0.1 50000 127.0.0.1 22"); }
         let mut app = App::new(vec![]).expect("Failed to init App");
         app.config.vi_mode = true;
         app.focus = Focus::Editor;
@@ -7820,11 +7944,12 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('っ'), KeyModifiers::NONE));
         assert!(app.is_ime_active(), "Typing full-width 'っ' in normal mode should sync IME to active");
 
-        std::env::remove_var("SSH_CONNECTION");
+        unsafe { std::env::remove_var("SSH_CONNECTION"); }
     }
 
     #[test]
     fn test_vi_mode_status_bar_and_cmdline_rendering() {
+        let _guard = SSH_ENV_LOCK.lock().unwrap();
         let mut app = App::new(vec![]).unwrap();
         app.width = 100;
         app.height = 30;
@@ -7862,6 +7987,64 @@ mod tests {
             .collect();
         assert!(cmdline_text.contains("-- INSERT [あ] --"), "Command line must contain '-- INSERT [あ] --', got: '{}'", cmdline_text);
         unsafe { std::env::remove_var("SSH_CONNECTION"); }
+    }
+
+    #[test]
+    fn test_update_session_save_and_restore_cli() {
+        let _config_lock = CONFIG_DIR_LOCK.lock().unwrap();
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_update_session_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+        zee_core::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
+        let mut app = App::new(vec![]).unwrap();
+        app.buffers[0].insert(0, "Unsaved buffer content\nLine 2");
+        app.buffers[0].cursor = 25;
+        app.buffers[0].scroll_row = 1;
+        
+        // Save update session
+        app.save_update_session().expect("Failed to save update session");
+
+        // Verify session was written to disk and can be loaded
+        let session = zee_core::session::UpdateSession::load_and_clear().expect("Failed to load session");
+        assert_eq!(session.files.len(), 1);
+
+        // Now simulate restoring into new App
+        let mut restored_app = App::new(vec![]).expect("Failed to create app");
+        restored_app.restore_session(session);
+        assert_eq!(restored_app.buffers.len(), 1);
+        assert_eq!(restored_app.buffers[0].rope.to_string(), "Unsaved buffer content\nLine 2");
+        assert_eq!(restored_app.buffers[0].cursor, 25);
+        assert_eq!(restored_app.buffers[0].scroll_row, 1);
+        assert!(restored_app.buffers[0].is_modified());
+
+        zee_core::Config::set_custom_config_dir(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_dialog_and_menu_close_sets_needs_clear() {
+        let mut app = App::new(vec![]).unwrap();
+        app.needs_clear = false;
+
+        // Open about dialog
+        app.perform_action(Action::About);
+        assert!(app.current_dialog.is_some());
+        
+        // Close with Esc
+        app.handle_dialog_result(crate::widgets::dialog::DialogResult::Cancel);
+        assert!(app.current_dialog.is_none());
+        assert!(app.needs_clear, "Closing dialog must set needs_clear to true to prevent ghost afterimages");
+
+        // Open menu
+        app.open_menu(0);
+        assert!(app.active_menu.is_some());
+        app.needs_clear = false;
+
+        // Close menu
+        app.close_menu();
+        assert!(app.active_menu.is_none());
+        assert!(app.needs_clear, "Closing menu must set needs_clear to true to prevent ghost afterimages");
     }
 }
 

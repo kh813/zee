@@ -36,6 +36,7 @@ pub enum Action {
     FileContextMenuAction { action: &'static str, path: PathBuf, #[allow(dead_code)] is_dir: bool },
     InputName(String),
     SaveSettings(Box<zee_core::Config>),
+    RestartAndUpdate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1978,7 +1979,8 @@ impl Dialog for UpdateDialog {
                 let sel = *self.selected_btn.lock().unwrap();
                 match &state {
                     UpdateState::Checking | UpdateState::Downloading => DialogResult::Pending,
-                    UpdateState::UpToDate { .. } | UpdateState::Success => DialogResult::Ok(Action::Confirm),
+                    UpdateState::UpToDate { .. } => DialogResult::Ok(Action::Confirm),
+                    UpdateState::Success => DialogResult::Ok(Action::RestartAndUpdate),
                     UpdateState::Available { asset_url, html_url, .. } => {
                         let html_url = html_url.clone();
                         if asset_url.is_some() {
@@ -4431,7 +4433,7 @@ mod tests {
         assert_eq!(btns_success[0], dialog.i18n_ok);
         *dialog.selected_btn.lock().unwrap() = 0;
         let res = dialog.handle_key(make_key(KeyCode::Enter));
-        assert!(matches!(res, DialogResult::Ok(Action::Confirm)));
+        assert!(matches!(res, DialogResult::Ok(Action::RestartAndUpdate)));
     }
 }
 

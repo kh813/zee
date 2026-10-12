@@ -794,6 +794,69 @@ fn tempfile_staging_dir(prefix: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// Relaunch the GUI application after an update.
+pub fn relaunch_gui(current_exe: &Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut app_bundle = None;
+        let mut cur = current_exe.parent();
+        while let Some(dir) = cur {
+            if dir.extension().and_then(|e| e.to_str()) == Some("app") {
+                app_bundle = Some(dir.to_path_buf());
+                break;
+            }
+            cur = dir.parent();
+        }
+
+        if let Some(app_path) = app_bundle {
+            Command::new("open")
+                .arg("-n")
+                .arg(app_path)
+                .spawn()
+                .context("Failed to relaunch macOS .app bundle")?;
+        } else {
+            Command::new(current_exe)
+                .spawn()
+                .context("Failed to relaunch macOS GUI executable")?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Command::new(current_exe)
+            .spawn()
+            .context("Failed to relaunch GUI executable")?;
+        Ok(())
+    }
+}
+
+/// Restart the CLI process in the current terminal, replacing it if on Unix or spawning on Windows.
+pub fn restart_cli_process() -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let current_exe = std::env::current_exe()
+            .context("Could not determine current executable")?;
+        let args: Vec<String> = std::env::args().collect();
+        let err = std::process::Command::new(&current_exe)
+            .args(&args[1..])
+            .exec();
+        Err(anyhow!("Failed to exec new process: {}", err))
+    }
+    #[cfg(windows)]
+    {
+        let current_exe = std::env::current_exe()
+            .context("Could not determine current executable")?;
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        std::process::Command::new(&current_exe)
+            .args(&args)
+            .spawn()
+            .context("Failed to spawn new process")?;
+        std::process::exit(0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

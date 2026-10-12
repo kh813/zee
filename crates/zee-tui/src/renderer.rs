@@ -125,6 +125,19 @@ impl Renderer {
         }
     }
 
+    pub fn invalidate(&mut self) {
+        for cell in self.prev_buffer.iter_mut() {
+            *cell = Cell {
+                ch: '\0',
+                fg: Color::Reset,
+                bg: Color::Reset,
+                bold: false,
+                underline: false,
+                width: 1,
+            };
+        }
+    }
+
     #[allow(dead_code)]
     pub fn get_cell(&self, x: u16, y: u16) -> Cell {
         if x < self.width && y < self.height {
@@ -172,7 +185,7 @@ impl Renderer {
                     }
 
                     if style != last_style {
-                        if last_style.attributes != style.attributes {
+                        if last_style.attributes != style.attributes || curr.bg == Color::Reset {
                             writer.queue(style::SetAttribute(style::Attribute::Reset))?;
                         }
                         writer.queue(style::SetStyle(style))?;
@@ -221,6 +234,18 @@ mod tests {
         let mut output = Vec::new();
         r.present(&mut output).unwrap();
         assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn test_renderer_invalidate() {
+        let mut r = Renderer::new(10, 2);
+        r.set_cell(2, 0, Cell { ch: 'X', bg: Color::AnsiValue(236), fg: Color::White, ..Default::default() });
+        let mut out1 = Vec::new();
+        r.present(&mut out1).unwrap();
+        assert!(!out1.is_empty());
+
+        r.invalidate();
+        assert_eq!(r.prev_buffer[0].ch, '\0');
     }
 }
 

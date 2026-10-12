@@ -6164,28 +6164,8 @@ impl App {
             .map(|h| h.def.meta.name.as_str())
             .unwrap_or_else(|| self.i18n.get("menu.view.syntax_plain"));
 
-        let (vi_mode_str, vi_badge_bg, vi_badge_fg) = if self.config.vi_mode {
-            match buffer.vi_mode {
-                zee_core::ViMode::Normal => (" NORMAL", crossterm::style::Color::DarkBlue, crossterm::style::Color::White),
-                zee_core::ViMode::Insert => {
-                    if self.is_ime_active() {
-                        (" INSERT [あ]", crossterm::style::Color::DarkRed, crossterm::style::Color::White)
-                    } else {
-                        (" INSERT", crossterm::style::Color::DarkGreen, crossterm::style::Color::White)
-                    }
-                }
-                zee_core::ViMode::Visual => (" VISUAL", crossterm::style::Color::DarkMagenta, crossterm::style::Color::White),
-                zee_core::ViMode::VisualLine => (" V-LINE", crossterm::style::Color::DarkMagenta, crossterm::style::Color::White),
-                zee_core::ViMode::VisualBlock => (" V-BLOCK", crossterm::style::Color::DarkMagenta, crossterm::style::Color::White),
-            }
-        } else {
-            ("", bg, fg)
-        };
-
         let right_text = format!("{}{} | {} | {} | {} | {} ", 
             search_info, selection_info, cursor_info, encoding, line_ending, syntax);
-        let vi_sep = if !vi_mode_str.is_empty() { "| " } else { "" };
-        let vi_badge_text = if !vi_mode_str.is_empty() { format!("{} ", vi_mode_str.trim_start()) } else { "".to_string() };
 
         // Render left
         let mut cur_x = x;
@@ -6199,22 +6179,15 @@ impl App {
 
         // Render right (right-aligned)
         let mut right_visual_width = 0;
-        for c in right_text.chars().chain(vi_sep.chars()).chain(vi_badge_text.chars()) {
+        for c in right_text.chars() {
             right_visual_width += c.width().unwrap_or(0) as u16;
         }
 
         let mut cur_rx = x + w.saturating_sub(right_visual_width);
-        for c in right_text.chars().chain(vi_sep.chars()) {
+        for c in right_text.chars() {
             let width = c.width().unwrap_or(0) as u16;
             if cur_rx >= x && cur_rx + width <= x + w {
                 self.renderer.set_cell(cur_rx, y, Cell { ch: c, bg, fg, width: width as u8, ..Default::default() });
-            }
-            cur_rx += width;
-        }
-        for c in vi_badge_text.chars() {
-            let width = c.width().unwrap_or(0) as u16;
-            if cur_rx >= x && cur_rx + width <= x + w {
-                self.renderer.set_cell(cur_rx, y, Cell { ch: c, bg: vi_badge_bg, fg: vi_badge_fg, width: width as u8, ..Default::default() });
             }
             cur_rx += width;
         }
@@ -7848,6 +7821,47 @@ mod tests {
         assert!(app.is_ime_active(), "Typing full-width 'っ' in normal mode should sync IME to active");
 
         std::env::remove_var("SSH_CONNECTION");
+    }
+
+    #[test]
+    fn test_vi_mode_status_bar_and_cmdline_rendering() {
+        let mut app = App::new(vec![]).unwrap();
+        app.width = 100;
+        app.height = 30;
+        app.renderer.resize(100, 30);
+        app.recompute_layout();
+
+        // Enable vi mode
+        app.config.vi_mode = true;
+        app.recompute_layout();
+
+        let (sx, sy, sw, _sh) = app.layout.status_bounds();
+        let (cx, cy, cw, ch) = app.layout.cmdline_bounds();
+        assert_eq!(ch, 1);
+        assert_eq!(cy, sy + 1);
+
+        // Put active buffer into Insert mode with IME active
+        unsafe { std::env::set_var("SSH_CONNECTION", "1"); }
+        app.adaptive_ime_active = true;
+        app.buffers[app.active_buffer].vi_mode = zee_core::ViMode::Insert;
+
+        app.render_status();
+        app.render_command_line();
+
+        // Status bar line (下から2行目) should NOT contain "INSERT"
+        let status_text: String = (0..sw)
+            .map(|x| app.renderer.get_cell(sx + x, sy).ch)
+            .collect();
+        assert!(!status_text.contains("INSERT"), "Status bar must not contain redundant INSERT badge: '{}'", status_text);
+
+        // Command line (一番下の行) MUST contain "-- INSERT [あ] --"
+        let cmdline_text: String = (0..cw)
+            .map(|x| app.renderer.get_cell(cx + x, cy))
+            .filter(|c| c.width > 0)
+            .map(|c| c.ch)
+            .collect();
+        assert!(cmdline_text.contains("-- INSERT [あ] --"), "Command line must contain '-- INSERT [あ] --', got: '{}'", cmdline_text);
+        unsafe { std::env::remove_var("SSH_CONNECTION"); }
     }
 }
 

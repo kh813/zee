@@ -10,6 +10,24 @@ pub const GITHUB_REPO: &str = "kh813/zee";
 
 /// Open a URL in default browser.
 pub fn open_url(url: &str) -> Result<()> {
+    // Prevent accidental browser launches during automated tests or for dummy example URLs
+    let is_test_runner = std::env::current_exe()
+        .map(|p| {
+            let s = p.to_string_lossy();
+            s.contains("/deps/") || s.contains("\\deps\\")
+        })
+        .unwrap_or(false);
+
+    if is_test_runner
+        || cfg!(test)
+        || std::env::var("ZEE_DISABLE_BROWSER").is_ok()
+        || url.contains("example.com")
+        || url.contains("example.org")
+        || url.contains("example.net")
+    {
+        return Ok(());
+    }
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")

@@ -247,5 +247,24 @@ mod tests {
         r.invalidate();
         assert_eq!(r.prev_buffer[0].ch, '\0');
     }
+
+    #[test]
+    fn test_renderer_color_reset_transition_emits_attribute_reset() {
+        let mut r = Renderer::new(10, 2);
+        // Frame 1: Dialog cell with dark background
+        r.set_cell(2, 0, Cell { ch: 'X', bg: Color::AnsiValue(236), fg: Color::White, width: 1, ..Default::default() });
+        let mut out1 = Vec::new();
+        r.present(&mut out1).unwrap();
+
+        // Frame 2: Dialog dismissed, cell reset to normal empty space with Color::Reset
+        r.set_cell(2, 0, Cell { ch: ' ', bg: Color::Reset, fg: Color::Reset, width: 1, ..Default::default() });
+        let mut out2 = Vec::new();
+        r.present(&mut out2).unwrap();
+
+        let out_str = String::from_utf8_lossy(&out2);
+        // Must contain ESC[0m or ESC[m (reset attributes) to prevent BCE background color ghosting
+        assert!(out_str.contains("\x1b[0m") || out_str.contains("\x1b[m"),
+            "Frame 2 output must contain attribute reset sequence when transitioning to Color::Reset, got: {:?}", out_str);
+    }
 }
 

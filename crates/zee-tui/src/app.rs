@@ -5043,9 +5043,9 @@ impl App {
         }
     }
 
-    fn render(&mut self, stdout: &mut Stdout) -> Result<()> {
+    pub fn render_to_writer<W: std::io::Write>(&mut self, writer: &mut W) -> Result<()> {
         if self.needs_clear {
-            let _ = execute!(stdout, crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
+            let _ = execute!(writer, crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
             self.renderer.invalidate();
             self.needs_clear = false;
         }
@@ -5081,7 +5081,7 @@ impl App {
             dialog.render(&mut self.renderer, &self.theme, x, y, dw, dh);
         }
 
-        self.renderer.present(stdout)?;
+        self.renderer.present(writer)?;
 
         // Move terminal cursor to the logical cursor position for IME
         if self.active_menu.is_none() {
@@ -5096,13 +5096,13 @@ impl App {
                         cur_x += w as u16;
                     }
                     if cur_x < cx + cw {
-                        execute!(stdout, crossterm::cursor::SetCursorStyle::BlinkingBlock)?;
-                        execute!(stdout, cursor::Show, cursor::MoveTo(cur_x, cy))?;
+                        execute!(writer, crossterm::cursor::SetCursorStyle::BlinkingBlock)?;
+                        execute!(writer, cursor::Show, cursor::MoveTo(cur_x, cy))?;
                     } else {
-                        execute!(stdout, cursor::Hide)?;
+                        execute!(writer, cursor::Hide)?;
                     }
                 } else {
-                    execute!(stdout, cursor::Hide)?;
+                    execute!(writer, cursor::Hide)?;
                 }
             } else if self.focus == Focus::Editor && self.current_dialog.is_none() {
                 let (ex, ey, ew, eh) = self.layout.editor_bounds();
@@ -5140,16 +5140,16 @@ impl App {
                             } else {
                                 crossterm::cursor::SetCursorStyle::BlinkingBlock
                             };
-                            execute!(stdout, style)?;
-                            execute!(stdout, cursor::Show, cursor::MoveTo(rx, ry))?;
+                            execute!(writer, style)?;
+                            execute!(writer, cursor::Show, cursor::MoveTo(rx, ry))?;
                         } else {
-                            execute!(stdout, cursor::Hide)?;
+                            execute!(writer, cursor::Hide)?;
                         }
                     } else {
-                        execute!(stdout, cursor::Hide)?;
+                        execute!(writer, cursor::Hide)?;
                     }
                 } else {
-                    execute!(stdout, cursor::Hide)?;
+                    execute!(writer, cursor::Hide)?;
                 }
             } else if self.focus == Focus::Panel && self.current_dialog.is_none() {
                 // Focus hardware cursor on find panel input
@@ -5176,27 +5176,31 @@ impl App {
                     _ => py,
                 };
                 if cursor_x > 0 {
-                    execute!(stdout, cursor::Show, cursor::MoveTo(cursor_x, cursor_y))?;
+                    execute!(writer, cursor::Show, cursor::MoveTo(cursor_x, cursor_y))?;
                 } else {
-                    execute!(stdout, cursor::Hide)?;
+                    execute!(writer, cursor::Hide)?;
                 }
             } else if self.focus == Focus::Dialog || self.current_dialog.is_some() {
                 if let Some(ref dialog) = self.current_dialog {
                     if let Some((dx, dy)) = dialog.cursor_pos() {
                         let (x, y, _dw, _dh) = self.layout.dialog_bounds(dialog.dimensions());
-                        execute!(stdout, cursor::Show, cursor::MoveTo(x + dx, y + dy))?;
+                        execute!(writer, cursor::Show, cursor::MoveTo(x + dx, y + dy))?;
                     } else {
-                        execute!(stdout, cursor::Hide)?;
+                        execute!(writer, cursor::Hide)?;
                     }
                 } else {
-                    execute!(stdout, cursor::Hide)?;
+                    execute!(writer, cursor::Hide)?;
                 }
             } else {
-                execute!(stdout, cursor::Hide)?;
+                execute!(writer, cursor::Hide)?;
             }
         }
-        stdout.flush()?;
+        writer.flush()?;
         Ok(())
+    }
+
+    fn render(&mut self, stdout: &mut Stdout) -> Result<()> {
+        self.render_to_writer(stdout)
     }
 
     fn render_menu(&mut self) {
@@ -8045,6 +8049,130 @@ mod tests {
         app.close_menu();
         assert!(app.active_menu.is_none());
         assert!(app.needs_clear, "Closing menu must set needs_clear to true to prevent ghost afterimages");
+    }
+
+    #[test]
+    fn test_render_clears_terminal_when_needs_clear_is_set() {
+        let mut app = App::new(vec![]).unwrap();
+        app.needs_clear = true;
+
+        let mut out = Vec::new();
+        app.render_to_writer(&mut out).unwrap();
+        assert!(!app.needs_clear, "render_to_writer must reset needs_clear to false");
+
+        let out_str = String::from_utf8_lossy(&out);
+        assert!(out_str.contains("\x1b[2J"), "Output must contain full-screen clear command when needs_clear is true");
+
+        // Subsequent render when needs_clear is false should NOT clear full screen
+        let mut out2 = Vec::new();
+        app.render_to_writer(&mut out2).unwrap();
+        let out_str2 = String::from_utf8_lossy(&out2);
+        assert!(!out_str2.contains("\x1b[2J"), "Subsequent render should not clear screen if needs_clear is false");
+    }
+
+    #[test]
+    fn test_dialog_dismiss_esc_then_quit_navigation() {
+        let mut app = App::new(vec![]).unwrap();
+        // Modify buffer so quit prompts for unsaved changes
+        app.buffers[0].insert(0, "Important unsaved draft");
+        assert!(app.buffers[0].is_modified());
+
+        // 1. Open an UpdateDialog
+        let update_dialog = crate::widgets::dialog::UpdateDialog::new(&app.i18n, false);
+        app.current_dialog = Some(Box::new(update_dialog));
+        app.focus = Focus::Dialog;
+
+        // 2. Dismiss with Esc
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.current_dialog.is_none(), "Esc must close update dialog");
+        assert_eq!(app.focus, Focus::Editor, "Focus must return to editor");
+        assert!(app.needs_clear, "Dismissing dialog must trigger needs_clear");
+
+        // 3. Trigger Exit via Ctrl+Q
+        app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL));
+        assert!(app.current_dialog.is_some(), "Unsaved changes dialog must open on Ctrl+Q");
+        assert_eq!(app.focus, Focus::Dialog);
+
+        // 4. Navigate between buttons: default is Save (0)
+        // Press Tab to move to Don't Save (1)
+        app.handle_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        
+        // 5. Press Enter to confirm Don't Save
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(!app.running, "Confirming Don't Save must quit app cleanly without hanging");
+    }
+
+    #[test]
+    fn test_update_session_multi_buffer_full_roundtrip() {
+        let _config_lock = CONFIG_DIR_LOCK.lock().unwrap();
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_multi_buf_update_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&temp_dir);
+        zee_core::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
+        let file1 = temp_dir.join("file1.rs");
+        let file2 = temp_dir.join("file2.md");
+        std::fs::write(&file1, "fn main() {}\n").unwrap();
+        std::fs::write(&file2, "# Title\nOriginal line\n").unwrap();
+
+        let mut app = App::new(vec![]).unwrap();
+        // Buffer 0: file1 (clean)
+        app.buffers[0] = Editor::from_file(&file1).unwrap();
+        app.buffers[0].cursor = 5;
+        app.buffers[0].scroll_row = 0;
+
+        // Buffer 1: file2 (dirty / modified)
+        let mut buf2 = Editor::from_file(&file2).unwrap();
+        buf2.insert(0, "Modified header\n");
+        buf2.cursor = 16;
+        buf2.scroll_row = 1;
+        app.buffers.push(buf2);
+
+        // Buffer 2: untitled (dirty scratchpad)
+        let mut buf3 = Editor::new();
+        buf3.insert(0, "Scratchpad content\nLine 2");
+        buf3.cursor = 19;
+        buf3.scroll_row = 1;
+        app.buffers.push(buf3);
+
+        app.active_buffer = 2; // Active is untitled buffer
+        app.sidebar.visible = true;
+        app.sidebar.file_tree.root_path = temp_dir.clone();
+
+        // Save session
+        app.save_update_session().expect("Failed to save multi-buffer session");
+
+        // Load session
+        let session = zee_core::session::UpdateSession::load_and_clear().expect("Should load session");
+        assert_eq!(session.files.len(), 3);
+        assert_eq!(session.active_index, 2);
+        assert!(session.sidebar_visible);
+
+        // Restore into new app
+        let mut restored = App::new(vec![]).expect("Failed to init app");
+        restored.restore_session(session);
+
+        assert_eq!(restored.buffers.len(), 3);
+        assert_eq!(restored.active_buffer, 2);
+        assert!(restored.sidebar.visible);
+
+        // Check buffer 0
+        assert_eq!(restored.buffers[0].path.as_ref(), Some(&file1));
+        assert_eq!(restored.buffers[0].cursor, 5);
+        assert!(!restored.buffers[0].is_modified());
+
+        // Check buffer 1
+        assert_eq!(restored.buffers[1].path.as_ref(), Some(&file2));
+        assert!(restored.buffers[1].is_modified());
+        assert!(restored.buffers[1].rope.to_string().starts_with("Modified header\n"));
+
+        // Check buffer 2
+        assert_eq!(restored.buffers[2].path, None);
+        assert!(restored.buffers[2].is_modified());
+        assert_eq!(restored.buffers[2].rope.to_string(), "Scratchpad content\nLine 2");
+
+        zee_core::Config::set_custom_config_dir(None);
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

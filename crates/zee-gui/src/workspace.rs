@@ -25,6 +25,7 @@ pub struct Workspace {
     pub vi_cmd_preedit: Option<String>,
     pub vi_message: Option<(String, bool)>,
     pub plugins_version: usize,
+    pub modal_open: bool,
 }
 
 impl Workspace {
@@ -75,6 +76,7 @@ impl Workspace {
             vi_cmd_preedit: None,
             vi_message: None,
             plugins_version: 0,
+            modal_open: false,
         }
     }
 

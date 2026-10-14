@@ -88,6 +88,7 @@ pub struct Dialog {
     gdrive_client_secret_input: String,
     gdrive_setup_active_input: usize, // 0 for client_id, 1 for client_secret
     gdrive_info_message: Option<String>,
+    gdrive_pending_reload: bool,
 }
 
 #[derive(Clone)]
@@ -161,6 +162,7 @@ impl Dialog {
             gdrive_client_secret_input: zee_core::gdrive::GDriveManager::get_client_secret().unwrap_or_default(),
             gdrive_setup_active_input: 0,
             gdrive_info_message: None,
+            gdrive_pending_reload: false,
         };
         this.refresh_files();
         if is_update {
@@ -439,9 +441,11 @@ impl Dialog {
 
     fn load_gdrive_files(&mut self, cx: &mut Context<Self>) {
         if self.gdrive_loading {
+            self.gdrive_pending_reload = true;
             return;
         }
         self.gdrive_loading = true;
+        self.gdrive_pending_reload = false;
         self.gdrive_error = None;
         cx.notify();
 
@@ -463,6 +467,8 @@ impl Dialog {
 
                 let _ = this.update(&mut cx.clone(), |this, cx| {
                     this.gdrive_loading = false;
+                    let should_reload = this.gdrive_pending_reload;
+                    this.gdrive_pending_reload = false;
                     match res {
                         Ok(items) => {
                             this.gdrive_items = items;
@@ -472,7 +478,11 @@ impl Dialog {
                             this.gdrive_error = Some(format!("{:#}", err));
                         }
                     }
-                    cx.notify();
+                    if should_reload {
+                        this.load_gdrive_files(cx);
+                    } else {
+                        cx.notify();
+                    }
                 });
             }
         }).detach();
@@ -959,8 +969,15 @@ impl Dialog {
                     } else {
                         self.close(cx);
                     }
-                } else if matches!(self.dialog_type, DialogType::GoogleDrive) && self.gdrive_show_setup {
-                    self.gdrive_show_setup = false;
+                } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
+                    if self.gdrive_show_setup {
+                        self.gdrive_show_setup = false;
+                    } else if !self.gdrive_search_query.is_empty() {
+                        self.gdrive_search_query.clear();
+                        self.load_gdrive_files(cx);
+                    } else {
+                        self.close(cx);
+                    }
                 } else if self.settings_dropdown.is_some() {
                     self.settings_dropdown = None;
                 } else {
@@ -1104,6 +1121,7 @@ impl Render for Dialog {
         let dialog_max_h = px(height);
 
         div()
+            .occlude()
             .absolute()
             .top_0()
             .left_0()
@@ -1113,7 +1131,8 @@ impl Render for Dialog {
             .items_center()
             .justify_center()
             .bg(rgba(0x00000080)) // Dim backdrop overlay
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                this.focus(window, cx);
                 cx.stop_propagation();
                 if this.settings_dropdown.is_some() {
                     this.settings_dropdown = None;
@@ -1131,6 +1150,7 @@ impl Render for Dialog {
             }))
             .child(
                 div()
+                    .occlude()
                     .w(dialog_width)
                     .max_h(dialog_max_h)
                     .bg(bg)
@@ -1145,7 +1165,8 @@ impl Render for Dialog {
                     .flex_col()
                     .track_focus(&self.focus_handle)
                     .on_key_down(cx.listener(Self::handle_keydown))
-                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                        this.focus(window, cx);
                         cx.stop_propagation();
                     }))
                     .on_mouse_down(MouseButton::Right, cx.listener(|_, _, _, cx| {
@@ -4793,26 +4814,92 @@ impl Dialog {
                                 .gap_2()
                                 .child(
                                     div()
-                                        .text_size(px(11.5))
-                                        .text_color(with_alpha(fg, 0.7))
-                                        .child(breadcrumb_text)
+                                        .flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .children(if self.gdrive_folder_stack.len() > 1 {
+                                            Some(
+                                                div()
+                                                    .px_2()
+                                                    .py_0p5()
+                                                    .rounded_md()
+                                                    .bg(button_bg)
+                                                    .text_size(px(11.0))
+                                                    .cursor_pointer()
+                                                    .hover(move |s| s.bg(button_hover))
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                                                        this.focus(window, cx);
+                                                        cx.stop_propagation();
+                                                        if this.gdrive_folder_stack.len() > 1 {
+                                                            this.gdrive_folder_stack.pop();
+                                                            this.gdrive_current_folder_id = this.gdrive_folder_stack.last().and_then(|(id, _)| id.clone());
+                                                            this.load_gdrive_files(cx);
+                                                        }
+                                                    }))
+                                                    .child("⬆ Back")
+                                            )
+                                        } else {
+                                            None
+                                        })
+                                        .child(
+                                            div()
+                                                .text_size(px(11.5))
+                                                .text_color(with_alpha(fg, 0.7))
+                                                .child(breadcrumb_text)
+                                        )
                                 )
                                 .child(
                                     div()
-                                        .w(px(200.0))
-                                        .h(px(26.0))
+                                        .w(px(220.0))
+                                        .h(px(28.0))
                                         .bg(input_bg)
                                         .border_1()
-                                        .border_color(border_color)
+                                        .border_color(if !self.gdrive_search_query.is_empty() { accent } else { border_color })
                                         .rounded_md()
                                         .px_2()
                                         .flex()
                                         .items_center()
-                                        .text_size(px(11.5))
-                                        .child(if self.gdrive_search_query.is_empty() {
-                                            div().text_color(with_alpha(fg, 0.4)).child(self.i18n.get("gdrive.search_placeholder").to_string())
+                                        .gap_1p5()
+                                        .cursor_text()
+                                        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                                            this.focus(window, cx);
+                                            cx.stop_propagation();
+                                        }))
+                                        .child(
+                                            div()
+                                                .text_size(px(11.0))
+                                                .text_color(with_alpha(fg, 0.5))
+                                                .child("🔍")
+                                        )
+                                        .child(
+                                            div()
+                                                .flex_grow()
+                                                .text_size(px(11.5))
+                                                .text_color(if self.gdrive_search_query.is_empty() { with_alpha(fg, 0.4) } else { fg })
+                                                .child(if self.gdrive_search_query.is_empty() {
+                                                    self.i18n.get("gdrive.search_placeholder").to_string()
+                                                } else {
+                                                    format!("{}|", self.gdrive_search_query)
+                                                })
+                                        )
+                                        .children(if !self.gdrive_search_query.is_empty() {
+                                            Some(
+                                                div()
+                                                    .px_1()
+                                                    .text_size(px(11.0))
+                                                    .text_color(with_alpha(fg, 0.6))
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.text_color(fg))
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                                                        this.gdrive_search_query.clear();
+                                                        this.load_gdrive_files(cx);
+                                                        this.focus(window, cx);
+                                                        cx.stop_propagation();
+                                                    }))
+                                                    .child("✕")
+                                            )
                                         } else {
-                                            div().child(self.gdrive_search_query.clone())
+                                            None
                                         })
                                 )
                         )
@@ -4828,6 +4915,10 @@ impl Dialog {
                                 .border_1()
                                 .border_color(border_color)
                                 .rounded_md()
+                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                                    this.focus(window, cx);
+                                    cx.stop_propagation();
+                                }))
                                 .children(if self.gdrive_loading {
                                     vec![
                                         div()
@@ -4868,7 +4959,9 @@ impl Dialog {
                                             .cursor_pointer()
                                             .bg(if is_selected { led_color_to_gpui(theme.editor.selection) } else { hsla(0.,0.,0.,0.).into() })
                                             .hover(|s| s.bg(with_alpha(fg, 0.08)))
-                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                                                this.focus(window, cx);
+                                                cx.stop_propagation();
                                                 this.gdrive_selected_idx = idx;
                                                 this.open_selected_gdrive_item(cx);
                                             }))
@@ -4968,7 +5061,10 @@ impl Dialog {
                                                 .text_size(px(12.0))
                                                 .cursor_pointer()
                                                 .hover(move |s| s.bg(button_hover))
-                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.close(cx);
+                                                }))
                                                 .child(self.i18n.get("dialog.cancel").to_string())
                                         )
                                         .child(
@@ -4985,7 +5081,10 @@ impl Dialog {
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .cursor_pointer()
                                                 .hover(|s| s.opacity(0.9))
-                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.open_selected_gdrive_item(cx)))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.open_selected_gdrive_item(cx);
+                                                }))
                                                 .child(self.i18n.get("gdrive.open").to_string())
                                         )
                                 )

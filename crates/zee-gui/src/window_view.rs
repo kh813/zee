@@ -223,13 +223,20 @@ impl WindowView {
         }
     }
 
+    fn dismiss_dialog(&mut self, cx: &mut Context<Self>) {
+        self.dialog = None;
+        self.workspace.update(cx, |w, _| {
+            w.modal_open = false;
+        });
+        cx.notify();
+    }
+
     fn show_dialog(&mut self, dialog_type: DialogType, window: Option<&mut Window>, cx: &mut Context<Self>) {
         let dialog = cx.new(|cx| Dialog::new(self.workspace.clone(), self.i18n.clone(), dialog_type, cx));
         cx.subscribe(&dialog, |this, _dialog, event, cx| {
             match event {
                 DialogEvent::Close => {
-                    this.dialog = None;
-                    cx.notify();
+                    this.dismiss_dialog(cx);
                     
                     // Defer focus restoration to avoid re-entrancy
                     cx.spawn(|_, cx: &mut AsyncApp| {
@@ -260,8 +267,7 @@ impl WindowView {
                         }
                         cx.notify();
                     });
-                    this.dialog = None;
-                    cx.notify();
+                    this.dismiss_dialog(cx);
                     
                     cx.spawn(move |_, cx: &mut AsyncApp| {
                         let cx = cx.clone();
@@ -300,8 +306,7 @@ impl WindowView {
                         }
                         cx.notify();
                     });
-                    this.dialog = None;
-                    cx.notify();
+                    this.dismiss_dialog(cx);
                     
                     cx.spawn(move |_, cx: &mut AsyncApp| {
                         let cx = cx.clone();
@@ -331,22 +336,19 @@ impl WindowView {
                     }).detach();
                 }
                 DialogEvent::ExportConfig => {
-                    this.dialog = None;
-                    cx.notify();
+                    this.dismiss_dialog(cx);
                     Self::trigger_export(false, this.i18n.clone(), cx);
                 }
                 DialogEvent::ExportAll => {
-                    this.dialog = None;
-                    cx.notify();
+                    this.dismiss_dialog(cx);
                     Self::trigger_export(true, this.i18n.clone(), cx);
                 }
                 DialogEvent::ImportBackup => {
-                    this.dialog = None;
-                    cx.notify();
+                    this.dismiss_dialog(cx);
                     Self::trigger_import(this.i18n.clone(), cx);
                 }
                 DialogEvent::CreateFile { parent_dir, filename } => {
-                    this.dialog = None;
+                    this.dismiss_dialog(cx);
                     let parent_dir = parent_dir.clone();
                     let filename = filename.clone();
                     this.workspace.update(cx, |w, cx| {
@@ -366,7 +368,7 @@ impl WindowView {
                     cx.notify();
                 }
                 DialogEvent::CreateFolder { parent_dir, folder_name } => {
-                    this.dialog = None;
+                    this.dismiss_dialog(cx);
                     let parent_dir = parent_dir.clone();
                     let folder_name = folder_name.clone();
                     this.workspace.update(cx, |w, cx| {
@@ -378,7 +380,7 @@ impl WindowView {
                     cx.notify();
                 }
                 DialogEvent::RenameItem { target_path, new_name } => {
-                    this.dialog = None;
+                    this.dismiss_dialog(cx);
                     let target_path = target_path.clone();
                     let new_name = new_name.clone();
                     this.workspace.update(cx, |w, cx| {
@@ -399,7 +401,7 @@ impl WindowView {
                     cx.notify();
                 }
                 DialogEvent::DeleteItem { target_path } => {
-                    this.dialog = None;
+                    this.dismiss_dialog(cx);
                     let target_path = target_path.clone();
                     this.workspace.update(cx, |w, cx| {
                         if let Ok(()) = w.file_tree.delete_item(&target_path) {
@@ -425,6 +427,9 @@ impl WindowView {
             }
         }).detach();
         self.dialog = Some(dialog.clone());
+        self.workspace.update(cx, |w, _| {
+            w.modal_open = true;
+        });
         if let Some(window) = window {
             dialog.update(cx, |d, cx| d.focus(window, cx));
         } else {
@@ -1486,6 +1491,7 @@ impl Render for WindowView {
 
         root.child(if let Some(ref dialog) = self.dialog {
             div()
+                .occlude()
                 .absolute()
                 .top_0()
                 .left_0()

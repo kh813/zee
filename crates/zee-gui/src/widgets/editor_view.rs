@@ -474,6 +474,9 @@ impl EditorView {
     }
 
     fn handle_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).modal_open {
+            return;
+        }
         let raw_key = &event.keystroke.key;
         let shift = event.keystroke.modifiers.shift;
         let control = event.keystroke.modifiers.control;
@@ -3062,6 +3065,9 @@ impl EditorView {
     }
 
     fn handle_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).modal_open {
+            return;
+        }
         if let Some(bounds) = self.last_bounds {
             let scrollbar_left = bounds.origin.x + bounds.size.width - px(14.0);
             if event.position.x >= scrollbar_left && event.position.x <= bounds.origin.x + bounds.size.width {
@@ -3137,6 +3143,9 @@ impl EditorView {
     }
 
     fn handle_mouse_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).modal_open {
+            return;
+        }
         if let Some(drag) = self.scrollbar_drag {
             let (track_top, track_height) = self.get_track_bounds(window);
             let workspace = self.workspace.read(cx);
@@ -3219,6 +3228,9 @@ impl EditorView {
     }
 
     fn handle_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).modal_open {
+            return;
+        }
         if self.scrollbar_drag.is_some() {
             self.scrollbar_drag = None;
             cx.notify();
@@ -3291,6 +3303,9 @@ impl EditorView {
     }
 
     fn handle_scroll(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).modal_open {
+            return;
+        }
         let line_height_px = px(self.workspace.read(cx).config.line_height);
         let char_width_px = px(self.workspace.read(cx).config.font_size * 0.6);
         let viewport_height = window.viewport_size().height;
@@ -3392,6 +3407,9 @@ impl EntityInputHandler for EditorView {
 
     fn accepts_text_input(&self, _window: &mut Window, cx: &mut Context<Self>) -> bool {
         let workspace = self.workspace.read(cx);
+        if workspace.modal_open {
+            return false;
+        }
         if !workspace.config.vi_mode {
             return true;
         }
@@ -3403,6 +3421,9 @@ impl EntityInputHandler for EditorView {
     }
 
     fn replace_text_in_range(&mut self, replacement_range: Option<std::ops::Range<usize>>, text: &str, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).modal_open {
+            return;
+        }
         if self.ignore_next_text_input {
             self.ignore_next_text_input = false;
             return;
@@ -3461,6 +3482,9 @@ impl EntityInputHandler for EditorView {
     }
 
     fn replace_and_mark_text_in_range(&mut self, range_to_replace: Option<std::ops::Range<usize>>, text: &str, _marked_range: Option<std::ops::Range<usize>>, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).modal_open {
+            return;
+        }
         if self.ignore_next_text_input {
             self.ignore_next_text_input = false;
             return;

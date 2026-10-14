@@ -3276,6 +3276,7 @@ pub struct GoogleDriveDialog {
     pub i18n_open: String,
     pub i18n_cancel: String,
     pub i18n_search_placeholder: String,
+    pub i18n_unsupported_file: String,
     pub i18n_json_loaded_success: String,
     pub i18n_json_load_failed: String,
 }
@@ -3306,6 +3307,7 @@ impl GoogleDriveDialog {
             i18n_open: i18n.get("gdrive.open").to_string(),
             i18n_cancel: i18n.get("gdrive.cancel").to_string(),
             i18n_search_placeholder: i18n.get("gdrive.search_placeholder").to_string(),
+            i18n_unsupported_file: i18n.get("gdrive.unsupported_file").to_string(),
             i18n_json_loaded_success: i18n.get("gdrive.json_loaded_success").to_string(),
             i18n_json_load_failed: i18n.get("gdrive.json_load_failed").to_string(),
         };
@@ -3469,7 +3471,7 @@ impl GoogleDriveDialog {
             self.folder_stack.push((Some(item.id), item.name));
             self.search_query.clear();
             self.fetch_files();
-        } else {
+        } else if item.is_openable() {
             self.is_loading = true;
             self.error_message = None;
             let tx = self.tx.clone();
@@ -3478,6 +3480,8 @@ impl GoogleDriveDialog {
                     .map_err(|e| e.to_string());
                 let _ = tx.send(GDriveMsg::DownloadDone(res));
             });
+        } else {
+            self.error_message = Some(self.i18n_unsupported_file.clone());
         }
     }
 }
@@ -3488,7 +3492,7 @@ impl Dialog for GoogleDriveDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        if self.show_setup || !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+        if self.show_setup {
             (78, 25)
         } else {
             (76, 22)
@@ -3505,7 +3509,7 @@ impl Dialog for GoogleDriveDialog {
 
         let is_auth = zee_core::gdrive::GDriveManager::is_authenticated();
 
-        if self.show_setup || !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+        if self.show_setup {
             // Setup & Step-by-Step Guide View in TUI
             let title = "Google Drive API Setup (Required)";
             let tx = x + (w.saturating_sub(title.len() as u16)) / 2;
@@ -3600,7 +3604,7 @@ impl Dialog for GoogleDriveDialog {
             return;
         }
 
-        if !is_auth {
+        if !is_auth && self.items.is_empty() {
             // Not connected view
             let msg = "Connect Google Drive to edit cloud files";
             let mx = x + (w.saturating_sub(msg.len() as u16)) / 2;
@@ -3706,8 +3710,14 @@ impl Dialog for GoogleDriveDialog {
                 let iy = list_top + row;
                 if let Some(item) = self.items.get(item_idx) {
                     let is_sel = item_idx == self.selected_idx;
+                    let is_openable = item.is_openable();
                     let sel_bg = to_ct_color(theme.editor.selection, theme);
-                    let (bg, fg) = if is_sel { (sel_bg, dialog_fg) } else { (dialog_bg, dialog_fg) };
+                    let muted_fg = to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme);
+                    let (bg, fg) = if is_sel {
+                        (sel_bg, if is_openable { dialog_fg } else { muted_fg })
+                    } else {
+                        (dialog_bg, if is_openable { dialog_fg } else { muted_fg })
+                    };
 
                     // Clear line
                     for dx in 2..w - 2 {
@@ -3762,9 +3772,13 @@ impl Dialog for GoogleDriveDialog {
         let buttons = [&self.i18n_open, &self.i18n_cancel, &self.i18n_sign_out];
         let by = y + h - 2;
         let mut bx = x + w - 35;
+        let cur_item_openable = self.items.get(self.selected_idx).map(|it| it.is_openable()).unwrap_or(false);
         for (idx, btn) in buttons.iter().enumerate() {
             let is_sel = idx == self.selected_btn;
-            let (bbg, bfg) = if is_sel {
+            let is_disabled = idx == 0 && !cur_item_openable;
+            let (bbg, bfg) = if is_disabled {
+                (dialog_bg, to_ct_color(theme.syntax.comment.unwrap_or(theme.editor.line_number), theme))
+            } else if is_sel {
                 (active_bg, active_fg)
             } else {
                 (to_ct_color(theme.ui.status_bar_bg, theme), to_ct_color(theme.ui.status_bar_fg, theme))
@@ -3784,7 +3798,7 @@ impl Dialog for GoogleDriveDialog {
             return DialogResult::Ok(Action::ConfirmPath(path));
         }
 
-        if self.show_setup || !zee_core::gdrive::GDriveManager::has_configured_credentials() {
+        if self.show_setup {
             if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V')) {
                 self.paste_from_clipboard();
                 return DialogResult::Pending;
@@ -3833,7 +3847,7 @@ impl Dialog for GoogleDriveDialog {
                 }
                 _ => DialogResult::Pending,
             }
-        } else if !zee_core::gdrive::GDriveManager::is_authenticated() {
+        } else if !zee_core::gdrive::GDriveManager::is_authenticated() && self.items.is_empty() {
             match key.code {
                 KeyCode::Esc => DialogResult::Cancel,
                 KeyCode::Enter => {
@@ -3854,10 +3868,12 @@ impl Dialog for GoogleDriveDialog {
                     DialogResult::Pending
                 }
                 KeyCode::Up => {
+                    self.error_message = None;
                     self.selected_idx = self.selected_idx.saturating_sub(1);
                     DialogResult::Pending
                 }
                 KeyCode::Down => {
+                    self.error_message = None;
                     if !self.items.is_empty() {
                         self.selected_idx = (self.selected_idx + 1).min(self.items.len() - 1);
                     }
@@ -3872,6 +3888,7 @@ impl Dialog for GoogleDriveDialog {
                     DialogResult::Pending
                 }
                 KeyCode::Backspace => {
+                    self.error_message = None;
                     if !self.search_query.is_empty() {
                         self.search_query.pop();
                         self.fetch_files();
@@ -3893,6 +3910,7 @@ impl Dialog for GoogleDriveDialog {
                     DialogResult::Pending
                 }
                 KeyCode::Char(c) if key.modifiers.is_empty() => {
+                    self.error_message = None;
                     self.search_query.push(c);
                     self.fetch_files();
                     DialogResult::Pending
@@ -3902,9 +3920,50 @@ impl Dialog for GoogleDriveDialog {
         }
     }
 
-    fn handle_mouse(&mut self, _mouse: MouseEvent, _x: u16, _y: u16, _w: u16, _h: u16) -> DialogResult<Action> {
+    fn handle_mouse(&mut self, mouse: MouseEvent, x: u16, y: u16, w: u16, h: u16) -> DialogResult<Action> {
         if let Some(path) = self.poll_messages() {
             return DialogResult::Ok(Action::ConfirmPath(path));
+        }
+        if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            let (mx, my) = (mouse.column, mouse.row);
+            let list_top = y + 5;
+            let list_height = (h.saturating_sub(9)).max(1);
+            if my >= list_top && my < list_top + list_height {
+                let clicked_row = (my - list_top) as usize;
+                let start_idx = if self.selected_idx >= list_height as usize {
+                    self.selected_idx - list_height as usize + 1
+                } else {
+                    0
+                };
+                let item_idx = start_idx + clicked_row;
+                if item_idx < self.items.len() {
+                    self.selected_idx = item_idx;
+                    self.selected_btn = 0;
+                    self.open_selected();
+                }
+            }
+            // Check bottom buttons row
+            let by = y + h - 2;
+            if my == by {
+                let buttons = [&self.i18n_open, &self.i18n_cancel, &self.i18n_sign_out];
+                let mut bx = x + w - 35;
+                for (idx, btn) in buttons.iter().enumerate() {
+                    let text = format!("[ {} ]", btn);
+                    let btn_len = text.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>();
+                    if mx >= bx && mx < bx + btn_len {
+                        self.selected_btn = idx;
+                        if idx == 0 {
+                            self.open_selected();
+                        } else if idx == 1 {
+                            return DialogResult::Cancel;
+                        } else if idx == 2 {
+                            self.sign_out();
+                        }
+                        break;
+                    }
+                    bx += btn_len + 2;
+                }
+            }
         }
         DialogResult::Pending
     }
@@ -4307,6 +4366,7 @@ mod tests {
     fn test_googledrive_dialog_setup_and_rendering() {
         let i18n = zee_core::I18n::load("ja");
         let mut dialog = GoogleDriveDialog::new(&i18n);
+        dialog.show_setup = true;
         let (dw, dh) = dialog.dimensions();
         assert_eq!((dw, dh), (78, 25));
 
@@ -4335,6 +4395,49 @@ mod tests {
             DialogResult::Cancel => {}
             _ => panic!("Expected DialogResult::Cancel on Esc"),
         }
+    }
+
+    #[test]
+    fn test_googledrive_dialog_unopenable_items_cannot_be_opened() {
+        let i18n = zee_core::I18n::load("ja");
+        let mut dialog = GoogleDriveDialog::new(&i18n);
+        dialog.show_setup = false;
+
+        let pdf_item = zee_core::gdrive::GDriveItem {
+            id: "pdf_1".into(),
+            name: "manual.pdf".into(),
+            mime_type: "application/pdf".into(),
+            is_folder: false,
+            size: Some(1024),
+            modified_time: None,
+        };
+        let txt_item = zee_core::gdrive::GDriveItem {
+            id: "txt_1".into(),
+            name: "readme.txt".into(),
+            mime_type: "text/plain".into(),
+            is_folder: false,
+            size: Some(256),
+            modified_time: None,
+        };
+        dialog.items = vec![pdf_item, txt_item];
+        dialog.selected_idx = 0; // Point to manual.pdf
+        dialog.is_loading = false;
+
+        // Attempting to open unopenable item (selected_btn == 0)
+        dialog.open_selected();
+        assert!(!dialog.is_loading, "Unopenable PDF item must not trigger download");
+        assert!(dialog.error_message.is_some(), "Unopenable item must show error message");
+
+        // Move to txt_item with Down key (should clear error_message)
+        dialog.handle_key(make_key(KeyCode::Down));
+        assert_eq!(dialog.selected_idx, 1);
+        assert!(dialog.error_message.is_none(), "Navigating away should clear error message");
+
+        // Render check with items
+        let (dw, dh) = dialog.dimensions();
+        let theme = zee_core::theme::Theme::load_all().into_iter().next().unwrap();
+        let mut renderer = Renderer::new(dw, dh);
+        dialog.render(&mut renderer, &theme, 0, 0, dw, dh);
     }
 
     #[test]

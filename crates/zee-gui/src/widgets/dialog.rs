@@ -766,7 +766,7 @@ impl Dialog {
             self.gdrive_folder_stack.push((Some(item.id.clone()), item.name));
             self.gdrive_search_query.clear();
             self.load_gdrive_files(cx);
-        } else {
+        } else if item.is_openable() {
             self.gdrive_loading = true;
             self.gdrive_error = None;
             cx.notify();
@@ -801,6 +801,9 @@ impl Dialog {
                     });
                 }
             }).detach();
+        } else {
+            self.gdrive_error = Some(self.i18n.get("gdrive.unsupported_file").to_string());
+            cx.notify();
         }
     }
 
@@ -875,6 +878,7 @@ impl Dialog {
                         self.gdrive_setup_active_input = 0;
                     } else {
                         self.gdrive_selected_idx = self.gdrive_selected_idx.saturating_sub(1);
+                        self.gdrive_error = None;
                     }
                 }
             }
@@ -888,6 +892,7 @@ impl Dialog {
                         self.gdrive_setup_active_input = 1;
                     } else if !self.gdrive_items.is_empty() {
                         self.gdrive_selected_idx = (self.gdrive_selected_idx + 1).min(self.gdrive_items.len() - 1);
+                        self.gdrive_error = None;
                     }
                 }
             }
@@ -4945,10 +4950,23 @@ impl Dialog {
                                     self.gdrive_items.iter().enumerate().map(|(idx, item)| {
                                         let is_selected = idx == self.gdrive_selected_idx;
                                         let is_folder = item.is_folder;
+                                        let is_openable = item.is_openable();
                                         let icon = if is_folder { "📁 " } else { "📄 " };
                                         let size_str = item.size.map(|s| self.format_size(s)).unwrap_or_else(|| if is_folder { "--".to_string() } else { "".to_string() });
 
-                                        div()
+                                        let row_text_color = if !is_openable {
+                                            with_alpha(fg, 0.38)
+                                        } else {
+                                            fg
+                                        };
+
+                                        let row_size_color = if !is_openable {
+                                            with_alpha(fg, 0.22)
+                                        } else {
+                                            with_alpha(fg, 0.5)
+                                        };
+
+                                        let mut row_el = div()
                                             .h(px(26.0))
                                             .flex()
                                             .items_center()
@@ -4956,9 +4974,7 @@ impl Dialog {
                                             .px_2()
                                             .text_size(px(12.0))
                                             .rounded_sm()
-                                            .cursor_pointer()
                                             .bg(if is_selected { led_color_to_gpui(theme.editor.selection) } else { hsla(0.,0.,0.,0.).into() })
-                                            .hover(|s| s.bg(with_alpha(fg, 0.08)))
                                             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                                                 this.focus(window, cx);
                                                 cx.stop_propagation();
@@ -4970,15 +4986,24 @@ impl Dialog {
                                                     .flex()
                                                     .items_center()
                                                     .gap_1p5()
+                                                    .text_color(row_text_color)
                                                     .child(icon)
                                                     .child(item.name.clone())
                                             )
                                             .child(
                                                 div()
-                                                    .text_color(with_alpha(fg, 0.5))
+                                                    .text_color(row_size_color)
                                                     .text_size(px(11.0))
                                                     .child(size_str)
-                                            )
+                                            );
+
+                                        if is_openable {
+                                            row_el = row_el.cursor_pointer().hover(|s| s.bg(with_alpha(fg, 0.08)));
+                                        } else {
+                                            row_el = row_el.hover(|s| s.bg(with_alpha(fg, 0.03)));
+                                        }
+
+                                        row_el
                                     }).collect()
                                 })
                         )
@@ -5067,26 +5092,42 @@ impl Dialog {
                                                 }))
                                                 .child(self.i18n.get("dialog.cancel").to_string())
                                         )
-                                        .child(
-                                            div()
-                                                .h(px(28.0))
-                                                .px_4()
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded_md()
-                                                .bg(accent)
-                                                .text_color(gpui::rgb(0xffffff))
-                                                .text_size(px(12.0))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .cursor_pointer()
-                                                .hover(|s| s.opacity(0.9))
-                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                                                    cx.stop_propagation();
-                                                    this.open_selected_gdrive_item(cx);
-                                                }))
-                                                .child(self.i18n.get("gdrive.open").to_string())
-                                        )
+                                        .child({
+                                            let cur_item_openable = self.gdrive_items.get(self.gdrive_selected_idx).map(|it| it.is_openable()).unwrap_or(false);
+                                            if cur_item_openable {
+                                                div()
+                                                    .h(px(28.0))
+                                                    .px_4()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded_md()
+                                                    .bg(accent)
+                                                    .text_color(gpui::rgb(0xffffff))
+                                                    .text_size(px(12.0))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .cursor_pointer()
+                                                    .hover(|s| s.opacity(0.9))
+                                                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                        cx.stop_propagation();
+                                                        this.open_selected_gdrive_item(cx);
+                                                    }))
+                                                    .child(self.i18n.get("gdrive.open").to_string())
+                                            } else {
+                                                div()
+                                                    .h(px(28.0))
+                                                    .px_4()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded_md()
+                                                    .bg(with_alpha(accent, 0.35))
+                                                    .text_color(with_alpha(gpui::rgb(0xffffff), 0.5))
+                                                    .text_size(px(12.0))
+                                                    .font_weight(FontWeight::MEDIUM)
+                                                    .child(self.i18n.get("gdrive.open").to_string())
+                                            }
+                                        })
                                 )
                         );
                 }

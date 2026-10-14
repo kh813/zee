@@ -56,6 +56,152 @@ pub struct GDriveItem {
     pub modified_time: Option<String>,
 }
 
+impl GDriveItem {
+    /// Returns true if this item can be opened by Zee (either a navigable folder or an openable plain text / source code file).
+    pub fn is_openable(&self) -> bool {
+        if self.is_folder {
+            return true;
+        }
+        self.is_text_file()
+    }
+
+    /// Returns true if this item is considered an openable plain text or source code file.
+    pub fn is_text_file(&self) -> bool {
+        if self.is_folder {
+            return false;
+        }
+
+        // 1. Check Google Drive native application MIME types.
+        // Google Docs, Sheets, Slides, Forms, Drawings, Shortcuts, etc. cannot be opened directly as text files.
+        if self.mime_type.starts_with("application/vnd.google-apps.") {
+            return false;
+        }
+
+        // 2. Reject known binary MIME types.
+        let mime_lower = self.mime_type.to_ascii_lowercase();
+        if (mime_lower.starts_with("image/") && mime_lower != "image/svg+xml")
+            || mime_lower.starts_with("audio/")
+            || mime_lower.starts_with("video/")
+            || mime_lower.starts_with("font/")
+            || mime_lower == "application/pdf"
+            || mime_lower == "application/zip"
+            || mime_lower == "application/x-zip-compressed"
+            || mime_lower == "application/x-tar"
+            || mime_lower == "application/gzip"
+            || mime_lower == "application/x-bzip2"
+            || mime_lower == "application/x-7z-compressed"
+            || mime_lower == "application/x-rar-compressed"
+            || mime_lower == "application/vnd.rar"
+            || mime_lower == "application/msword"
+            || mime_lower.starts_with("application/vnd.openxmlformats-officedocument.")
+            || mime_lower.starts_with("application/vnd.ms-")
+        {
+            return false;
+        }
+
+        // 3. Check filename and extension
+        let name_lower = self.name.to_ascii_lowercase();
+
+        if name_lower == ".ds_store" {
+            return false;
+        }
+
+        let path = std::path::Path::new(&name_lower);
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+
+        // Known binary extensions
+        const BINARY_EXTENSIONS: &[&str] = &[
+            // Executables & binaries
+            "exe", "dll", "so", "dylib", "bin", "app", "msi", "apk", "deb", "rpm", "wasm",
+            "o", "a", "lib", "class", "pyc", "pyo",
+            // Images
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tiff", "tif", "psd", "ai", "raw", "cr2", "nef",
+            // Audio & Video
+            "mp3", "wav", "ogg", "flac", "aac", "m4a", "wma", "opus", "aiff",
+            "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "3gp",
+            // Archives
+            "zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "7z", "rar", "iso", "dmg", "pkg", "zst",
+            // Office & PDFs
+            "pdf", "doc", "docx", "xls", "xlsx", "xlsm", "ppt", "pptx", "odt", "ods", "odp", "pages", "numbers", "key",
+            // Databases & fonts
+            "db", "sqlite", "sqlite3", "parquet", "mdb", "accdb",
+            "ttf", "otf", "woff", "woff2", "eot",
+        ];
+
+        if BINARY_EXTENSIONS.contains(&ext) {
+            return false;
+        }
+
+        // Common text / code extensions
+        const TEXT_EXTENSIONS: &[&str] = &[
+            // Text & documents
+            "txt", "text", "md", "markdown", "mdown", "mkdn", "rst", "adoc", "asciidoc", "log", "rtf", "tex", "bib", "org", "wiki",
+            // Web & styling
+            "html", "htm", "xhtml", "xml", "xsl", "xslt", "svg", "css", "scss", "sass", "less", "vue", "svelte", "astro",
+            // Programming languages
+            "py", "pyw", "ipynb",
+            "rs",
+            "js", "mjs", "cjs", "jsx", "ts", "mts", "cts", "tsx",
+            "c", "h", "cpp", "hpp", "cc", "hh", "cxx", "hxx", "c++", "h++",
+            "go", "mod", "sum",
+            "java", "kt", "kts", "groovy", "scala", "sc", "clj", "cljs",
+            "rb", "erb", "rake", "gemspec",
+            "php", "phtml",
+            "sh", "bash", "zsh", "fish", "ksh", "csh", "tcsh", "bat", "cmd", "ps1", "psm1",
+            "swift", "m", "mm",
+            "cs", "fs", "fsx",
+            "lua", "pl", "pm", "t", "r", "rmd", "jl",
+            "zig", "nim", "v", "d", "dart", "elm", "erl", "hrl", "ex", "exs", "hs", "lhs", "ml", "mli",
+            "proto", "thrift", "graphql", "gql",
+            "asm", "s",
+            // Config & Data
+            "json", "json5", "jsonc", "jsonl", "ndjson", "yaml", "yml", "toml", "ini", "cfg", "conf", "config",
+            "env", "properties", "sql", "csv", "tsv", "diff", "patch", "lock", "bazel", "bzl", "cmake",
+        ];
+
+        if TEXT_EXTENSIONS.contains(&ext) {
+            return true;
+        }
+
+        // Common extensionless or special text filenames
+        const SPECIAL_FILENAMES: &[&str] = &[
+            "dockerfile", "makefile", "gnumakefile", "justfile", "rakefile", "gemfile", "procfile", "vagrantfile",
+            "license", "licence", "readme", "changelog", "authors", "contributing", "notice", "copying",
+        ];
+
+        if SPECIAL_FILENAMES.contains(&name_lower.as_str()) {
+            return true;
+        }
+
+        // Dotfiles (like .gitignore, .env, .bashrc, .editorconfig)
+        if name_lower.starts_with('.') && !name_lower.contains('/') && !name_lower.contains('\\') {
+            return true;
+        }
+
+        // MIME-based text check (e.g. "text/*", "application/json", "application/xml", etc.)
+        if mime_lower.starts_with("text/")
+            || mime_lower == "image/svg+xml"
+            || mime_lower == "application/json"
+            || mime_lower == "application/ld+json"
+            || mime_lower == "application/javascript"
+            || mime_lower == "application/x-javascript"
+            || mime_lower == "application/typescript"
+            || mime_lower == "application/xml"
+            || mime_lower == "application/x-yaml"
+            || mime_lower == "application/yaml"
+            || mime_lower == "application/toml"
+            || mime_lower == "application/x-sh"
+            || mime_lower == "application/x-shellscript"
+            || mime_lower == "application/sql"
+            || mime_lower == "application/graphql"
+        {
+            return true;
+        }
+
+        false
+    }
+}
+
 /// Metadata stored locally for files cached from Google Drive.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedFileMeta {
@@ -855,5 +1001,111 @@ mod tests {
         let not_json = "this is not json";
         assert!(GDriveManager::parse_oauth_credentials_json(not_json).is_err());
     }
+
+    #[test]
+    fn test_gdrive_item_is_openable() {
+        let folder = GDriveItem {
+            id: "f1".into(),
+            name: "My Folder".into(),
+            mime_type: "application/vnd.google-apps.folder".into(),
+            is_folder: true,
+            size: None,
+            modified_time: None,
+        };
+        assert!(folder.is_openable());
+        assert!(!folder.is_text_file());
+
+        let text_file = GDriveItem {
+            id: "t1".into(),
+            name: "notes.txt".into(),
+            mime_type: "text/plain".into(),
+            is_folder: false,
+            size: Some(123),
+            modified_time: None,
+        };
+        assert!(text_file.is_openable());
+        assert!(text_file.is_text_file());
+
+        let md_file = GDriveItem {
+            id: "m1".into(),
+            name: "README.md".into(),
+            mime_type: "application/octet-stream".into(),
+            is_folder: false,
+            size: Some(456),
+            modified_time: None,
+        };
+        assert!(md_file.is_openable());
+
+        let py_file = GDriveItem {
+            id: "p1".into(),
+            name: "main.py".into(),
+            mime_type: "application/octet-stream".into(),
+            is_folder: false,
+            size: Some(789),
+            modified_time: None,
+        };
+        assert!(py_file.is_openable());
+
+        let special_file = GDriveItem {
+            id: "s1".into(),
+            name: "Dockerfile".into(),
+            mime_type: "application/octet-stream".into(),
+            is_folder: false,
+            size: Some(100),
+            modified_time: None,
+        };
+        assert!(special_file.is_openable());
+
+        let dot_file = GDriveItem {
+            id: "d1".into(),
+            name: ".gitignore".into(),
+            mime_type: "application/octet-stream".into(),
+            is_folder: false,
+            size: Some(50),
+            modified_time: None,
+        };
+        assert!(dot_file.is_openable());
+
+        let pdf = GDriveItem {
+            id: "b1".into(),
+            name: "document.pdf".into(),
+            mime_type: "application/pdf".into(),
+            is_folder: false,
+            size: Some(1024),
+            modified_time: None,
+        };
+        assert!(!pdf.is_openable());
+
+        let png = GDriveItem {
+            id: "b2".into(),
+            name: "photo.png".into(),
+            mime_type: "image/png".into(),
+            is_folder: false,
+            size: Some(2048),
+            modified_time: None,
+        };
+        assert!(!png.is_openable());
+
+        let zip = GDriveItem {
+            id: "b3".into(),
+            name: "archive.zip".into(),
+            mime_type: "application/zip".into(),
+            is_folder: false,
+            size: Some(4096),
+            modified_time: None,
+        };
+        assert!(!zip.is_openable());
+
+        let gsheet = GDriveItem {
+            id: "g1".into(),
+            name: "Budget 2026".into(),
+            mime_type: "application/vnd.google-apps.spreadsheet".into(),
+            is_folder: false,
+            size: None,
+            modified_time: None,
+        };
+        assert!(!gsheet.is_openable());
+    }
 }
+
 

@@ -407,6 +407,7 @@ impl I18n {
         m.insert("gdrive.sync_error".to_string(), "Google Drive Sync Failed".to_string());
         m.insert("gdrive.open".to_string(), "Open".to_string());
         m.insert("gdrive.cancel".to_string(), "Cancel".to_string());
+        m.insert("gdrive.unsupported_file".to_string(), "Selected file format is not supported (only text and source code files can be opened)".to_string());
         m.insert("gdrive.search_placeholder".to_string(), "Search Google Drive...".to_string());
         m.insert("gdrive.setup_title".to_string(), "Google Drive API Setup (Required)".to_string());
         m.insert("gdrive.setup_desc".to_string(), "To connect Zee directly to your Google Drive, please configure your client credentials in Google Cloud Console:".to_string());
@@ -669,6 +670,7 @@ impl I18n {
         m.insert("gdrive.sync_error".to_string(), "Google ドライブ同期失敗".to_string());
         m.insert("gdrive.open".to_string(), "開く".to_string());
         m.insert("gdrive.cancel".to_string(), "キャンセル".to_string());
+        m.insert("gdrive.unsupported_file".to_string(), "選択したファイルは開けません（テキストおよびソースコード形式のみ対応しています）".to_string());
         m.insert("gdrive.search_placeholder".to_string(), "Google ドライブ内を検索...".to_string());
         m.insert("gdrive.setup_title".to_string(), "Google Drive API 設定 (初回のみ)".to_string());
         m.insert("gdrive.setup_desc".to_string(), "zeeからGoogleドライブへ安全に直接アクセスするために、Google Cloud Consoleで認証設定を行ってください:".to_string());

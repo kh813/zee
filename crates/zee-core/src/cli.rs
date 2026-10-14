@@ -47,6 +47,11 @@ pub fn parse_file_targets(args: &[String]) -> Vec<FileTarget> {
         // If path exists on disk as-is, keep it intact (could contain unusual chars)
         let path_obj = PathBuf::from(arg);
         if path_obj.exists() {
+            // Ignore macOS .app bundles accidentally passed as arguments
+            if path_obj.extension().and_then(|e| e.to_str()) == Some("app") {
+                i += 1;
+                continue;
+            }
             targets.push(FileTarget {
                 path: path_obj,
                 line: pending_line.take(),
@@ -140,5 +145,14 @@ mod tests {
         assert_eq!(targets.len(), 1);
         assert_eq!(targets[0].path, PathBuf::from("main.rs"));
         assert_eq!(targets[0].line, Some(10));
+
+        // macOS .app bundle path should be ignored even if passed
+        let app_dir = std::env::temp_dir().join("FakeApp.app");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        let args = vec![app_dir.to_str().unwrap().to_string(), "valid.rs".to_string()];
+        let targets = parse_file_targets(&args);
+        let _ = std::fs::remove_dir_all(&app_dir);
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].path, PathBuf::from("valid.rs"));
     }
 }

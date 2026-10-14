@@ -63,6 +63,10 @@ impl UpdateSession {
         serde_json::from_str(&content).ok()
     }
 
+    pub fn exists() -> bool {
+        Self::session_file_path().map(|p| p.exists()).unwrap_or(false)
+    }
+
     pub fn clear() {
         if let Some(path) = Self::session_file_path() {
             let _ = fs::remove_file(path);
@@ -129,5 +133,27 @@ mod tests {
         let serialized = serde_json::to_string(&session).unwrap();
         let deserialized: UpdateSession = serde_json::from_str(&serialized).unwrap();
         assert_eq!(session, deserialized);
+    }
+
+    #[test]
+    fn test_update_session_exists_lifecycle() {
+        // Ensure starting clean
+        UpdateSession::clear();
+        assert!(!UpdateSession::exists());
+
+        let session = UpdateSession {
+            files: vec![],
+            active_index: 0,
+            root_folder: None,
+            expanded_folders: vec![],
+            sidebar_visible: false,
+            sidebar_tab: "files".to_string(),
+        };
+        session.save().expect("Save session should succeed");
+        assert!(UpdateSession::exists());
+
+        let loaded = UpdateSession::load_and_clear();
+        assert!(loaded.is_some());
+        assert!(!UpdateSession::exists());
     }
 }

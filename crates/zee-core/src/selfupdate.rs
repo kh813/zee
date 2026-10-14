@@ -845,6 +845,7 @@ pub fn relaunch_gui(current_exe: &Path) -> Result<()> {
         if let Some(app_path) = app_bundle {
             Command::new("open")
                 .arg("-n")
+                .arg("-a")
                 .arg(app_path)
                 .spawn()
                 .context("Failed to relaunch macOS .app bundle")?;

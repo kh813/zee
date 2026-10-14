@@ -348,7 +348,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         open_file_targets(cli_targets, config.clone(), i18n.clone(), app);
     } else if let Some(session) = zee_core::session::UpdateSession::load_and_clear() {
         restore_session_window(session, config.clone(), i18n.clone(), app);
-    } else {
+    } else if app.windows().is_empty() {
         new_window(config.clone(), i18n.clone(), app);
     }
 
@@ -368,11 +368,38 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
                             Some(std::path::PathBuf::from(u))
                         }
                     })
+                    .filter(|p| {
+                        // Never treat macOS .app bundles as files or folders to edit
+                        p.extension().and_then(|e| e.to_str()) != Some("app")
+                    })
                     .collect();
                 
                 if !paths.is_empty() {
                     cx.update(|cx| {
-                        open_paths(paths, config, i18n, cx);
+                        if let Some(window) = cx.active_window().or_else(|| cx.windows().first().copied()) {
+                            let _ = cx.update_window(window, |any_view, window, cx| {
+                                if let Ok(view_handle) = any_view.downcast::<WindowView>() {
+                                    view_handle.update(cx, |view, cx| {
+                                        view.workspace.update(cx, |w, _| {
+                                            for path in &paths {
+                                                if path.is_file() {
+                                                    if let Ok(editor) = zee_core::buffer::Editor::from_file(path) {
+                                                        w.add_editor(editor);
+                                                    }
+                                                } else if path.is_dir() {
+                                                    w.set_root_path(path.clone());
+                                                }
+                                            }
+                                            w.update_outline();
+                                        });
+                                        window.activate_window();
+                                        cx.notify();
+                                    });
+                                }
+                            });
+                        } else {
+                            open_paths(paths, config, i18n, cx);
+                        }
                     });
                 }
             }

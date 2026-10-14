@@ -826,6 +826,7 @@ impl Editor {
             self.ensure_selection();
         } else {
             self.selection = None;
+            self.selection_anchor = None;
         }
 
         if self.cursor > 0 {
@@ -834,6 +835,9 @@ impl Editor {
 
         if extend_selection {
             self.update_selection();
+        } else {
+            self.selection = None;
+            self.selection_anchor = None;
         }
     }
 
@@ -842,6 +846,7 @@ impl Editor {
             self.ensure_selection();
         } else {
             self.selection = None;
+            self.selection_anchor = None;
         }
 
         if self.cursor < self.rope.len_chars() {
@@ -850,6 +855,9 @@ impl Editor {
 
         if extend_selection {
             self.update_selection();
+        } else {
+            self.selection = None;
+            self.selection_anchor = None;
         }
     }
 
@@ -858,6 +866,7 @@ impl Editor {
             self.ensure_selection();
         } else {
             self.selection = None;
+            self.selection_anchor = None;
         }
 
         let (line, col) = self.char_to_line_col(self.cursor);
@@ -867,6 +876,9 @@ impl Editor {
 
         if extend_selection {
             self.update_selection();
+        } else {
+            self.selection = None;
+            self.selection_anchor = None;
         }
     }
 
@@ -875,6 +887,7 @@ impl Editor {
             self.ensure_selection();
         } else {
             self.selection = None;
+            self.selection_anchor = None;
         }
 
         let (line, col) = self.char_to_line_col(self.cursor);
@@ -887,6 +900,9 @@ impl Editor {
 
         if extend_selection {
             self.update_selection();
+        } else {
+            self.selection = None;
+            self.selection_anchor = None;
         }
     }
 
@@ -895,6 +911,7 @@ impl Editor {
             self.ensure_selection();
         } else {
             self.selection = None;
+            self.selection_anchor = None;
         }
 
         let (line, col) = self.char_to_line_col(self.cursor);
@@ -924,6 +941,7 @@ impl Editor {
             self.update_selection();
         } else {
             self.selection = None;
+            self.selection_anchor = None;
         }
     }
 
@@ -932,6 +950,7 @@ impl Editor {
             self.ensure_selection();
         } else {
             self.selection = None;
+            self.selection_anchor = None;
         }
 
         let (line, col) = self.char_to_line_col(self.cursor);
@@ -964,6 +983,7 @@ impl Editor {
             self.update_selection();
         } else {
             self.selection = None;
+            self.selection_anchor = None;
         }
     }
 
@@ -1251,10 +1271,8 @@ impl Editor {
     }
 
     pub fn ensure_selection(&mut self) {
-        if self.selection_anchor.is_none() {
+        if self.selection.is_none() || self.selection_anchor.is_none() {
             self.selection_anchor = Some(self.cursor);
-        }
-        if self.selection.is_none() {
             self.selection = Some(self.cursor..self.cursor);
         }
     }

@@ -162,6 +162,8 @@ pub use buffer::{normalize_vi_char, normalize_vi_key, resolve_key_stroke};
 
 pub mod vi_cmd;
 pub use vi_cmd::{ExCommand, ExRange, parse_ex_command};
+pub use ropey::Rope;
+pub use ropey;
 
 pub mod ime;
 pub use ime::{is_cjk_ime_active, is_cjk_char, is_ssh_session};

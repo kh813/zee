@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use crossterm::{
     cursor,
-    event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind},
     execute,
     style::Color,
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
@@ -923,7 +923,11 @@ impl App {
 
             if event::poll(std::time::Duration::from_millis(50))? {
                 match event::read()? {
-                    Event::Key(key) => self.handle_key(key),
+                    Event::Key(key) => {
+                        if key.kind != KeyEventKind::Release {
+                            self.handle_key(key);
+                        }
+                    }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
                     Event::Resize(w, h) => {
                         self.width = w;
@@ -2332,6 +2336,11 @@ impl App {
                 match code {
                     KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down |
                     KeyCode::Home | KeyCode::End | KeyCode::PageUp | KeyCode::PageDown => {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                            if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                buffer.vi_mode = zee_core::ViMode::Visual;
+                            }
+                        }
                         self.handle_editor_key(key);
                     }
                     _ => {}
@@ -4098,68 +4107,14 @@ impl App {
         let (_ex, _ey, ew, _eh) = self.layout.editor_bounds();
         let tab_size = self.config.tab_size;
         let buffer = &mut self.buffers[self.active_buffer];
-        let (line, col) = buffer.char_to_line_col(buffer.cursor);
-        let wraps = buffer.wrap_line(line, ew as usize, tab_size);
-        
-        let mut v_idx = 0;
-        for (i, range) in wraps.iter().enumerate() {
-            if col >= range.start && (col < range.end || (col == range.end && i == wraps.len() - 1)) {
-                v_idx = i;
-                break;
-            }
-        }
-
-        let current_vcol = buffer.get_visual_col(line, col, &wraps[v_idx], tab_size);
-
-        if v_idx > 0 {
-            let target_range = &wraps[v_idx - 1];
-            buffer.cursor = buffer.get_char_at_vcol(line, target_range.clone(), current_vcol, tab_size);
-        } else if line > 0 {
-            let prev_line = line - 1;
-            let prev_wraps = buffer.wrap_line(prev_line, ew as usize, tab_size);
-            let target_range = prev_wraps.last().unwrap();
-            buffer.cursor = buffer.get_char_at_vcol(prev_line, target_range.clone(), current_vcol, tab_size);
-        }
-
-        if extend_selection {
-            buffer.update_selection();
-        } else {
-            buffer.selection = None;
-        }
+        buffer.move_cursor_vup(ew as usize, tab_size, extend_selection);
     }
 
     fn move_cursor_vdown(&mut self, extend_selection: bool) {
         let (_ex, _ey, ew, _eh) = self.layout.editor_bounds();
         let tab_size = self.config.tab_size;
         let buffer = &mut self.buffers[self.active_buffer];
-        let (line, col) = buffer.char_to_line_col(buffer.cursor);
-        let wraps = buffer.wrap_line(line, ew as usize, tab_size);
-        
-        let mut v_idx = 0;
-        for (i, range) in wraps.iter().enumerate() {
-            if col >= range.start && (col < range.end || (col == range.end && i == wraps.len() - 1)) {
-                v_idx = i;
-                break;
-            }
-        }
-
-        let current_vcol = buffer.get_visual_col(line, col, &wraps[v_idx], tab_size);
-
-        if v_idx < wraps.len() - 1 {
-            let target_range = &wraps[v_idx + 1];
-            buffer.cursor = buffer.get_char_at_vcol(line, target_range.clone(), current_vcol, tab_size);
-        } else if line < buffer.line_count() - 1 {
-            let next_line = line + 1;
-            let next_wraps = buffer.wrap_line(next_line, ew as usize, tab_size);
-            let target_range = &next_wraps[0];
-            buffer.cursor = buffer.get_char_at_vcol(next_line, target_range.clone(), current_vcol, tab_size);
-        }
-
-        if extend_selection {
-            buffer.update_selection();
-        } else {
-            buffer.selection = None;
-        }
+        buffer.move_cursor_vdown(ew as usize, tab_size, extend_selection);
     }
 
     pub fn open_path(&mut self, path: &std::path::Path) -> bool {
@@ -8308,6 +8263,61 @@ mod tests {
                 assert_eq!(right_ch, '│', "Dialog '{}' row {} right border overwritten by '{}'", d.title(), dy, right_ch);
             }
         }
+    }
+
+    #[test]
+    fn test_shift_arrow_selection_tui() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.buffers[0].rope = zee_core::Rope::from_str("Hello World\nSecond line\nThird line");
+        app.buffers[0].cursor = 0;
+        app.config.vi_mode = false;
+
+        // 1. Shift+Down with word_wrap = true (default)
+        app.config.word_wrap = true;
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        assert!(app.buffers[0].selection.is_some(), "Selection should be active after Shift+Down");
+        let sel = app.buffers[0].selection.clone().unwrap();
+        assert_eq!(sel.start, 0);
+        assert!(sel.end > 0, "Selection should extend downward");
+
+        // Further Shift+Down extends selection
+        let first_end = sel.end;
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        let sel2 = app.buffers[0].selection.clone().unwrap();
+        assert_eq!(sel2.start, 0);
+        assert!(sel2.end > first_end, "Selection should extend further downward");
+
+        // Shift+Up shrinks selection back
+        app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::SHIFT));
+        let sel3 = app.buffers[0].selection.clone().unwrap();
+        assert_eq!(sel3.end, first_end);
+
+        // Arrow Down without Shift clears selection
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        assert_eq!(app.buffers[0].selection, None);
+        assert_eq!(app.buffers[0].selection_anchor, None);
+
+        // 2. Shift+Right and Shift+Left
+        app.buffers[0].cursor = 0;
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+        assert_eq!(app.buffers[0].selection, Some(0..1));
+        app.handle_key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT));
+        assert_eq!(app.buffers[0].selection, Some(0..2));
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT));
+        assert_eq!(app.buffers[0].selection, Some(0..1));
+
+        // Arrow Left without Shift clears selection
+        app.handle_key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        assert_eq!(app.buffers[0].selection, None);
+        assert_eq!(app.buffers[0].selection_anchor, None);
+
+        // 3. Vi Normal mode Shift+Down transitions to Visual mode and selects
+        app.config.vi_mode = true;
+        app.buffers[0].vi_mode = zee_core::ViMode::Normal;
+        app.buffers[0].cursor = 0;
+        app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::SHIFT));
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Visual);
+        assert!(app.buffers[0].selection.is_some(), "Selection should be active in Visual mode");
     }
 }
 

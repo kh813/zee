@@ -280,7 +280,7 @@ impl GDriveManager {
                 Ok((s, _)) => break s,
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     if start_time.elapsed() >= timeout {
-                        return Err(anyhow::anyhow!("Authentication timed out (60s). Please check your browser or credentials."));
+                        return Err(anyhow::anyhow!("Authentication timed out (60s). If Google blocked access, please ensure your email is registered under 'Test users' in OAuth Consent Screen."));
                     }
                     std::thread::sleep(Duration::from_millis(100));
                 }

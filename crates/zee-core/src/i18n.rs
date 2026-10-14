@@ -416,7 +416,8 @@ impl I18n {
         m.insert("gdrive.step3_a".to_string(), "   • Click 'Configure Consent Screen' (or 'Get Started').".to_string());
         m.insert("gdrive.step3_b".to_string(), "   • Select User Type: 'External' (for standard Gmail accounts) or 'Internal' (for Workspace).".to_string());
         m.insert("gdrive.step3_c".to_string(), "   • Enter App Name ('zee') and your contact email, then save.".to_string());
-        m.insert("gdrive.step3_d".to_string(), "   • Under 'Test Users', add your own Google email address.".to_string());
+        m.insert("gdrive.step3_d".to_string(), "   • Under 'Test Users', MUST add your own Google email address (required to bypass Google verification block).".to_string());
+        m.insert("gdrive.test_user_notice".to_string(), "⚠ Important: Because zee is not public-verified by Google, you MUST add your Google email to 'Test users' in the OAuth Consent Screen, otherwise Google blocks access with 'Access blocked: zee has not completed Google's verification process'.".to_string());
         m.insert("gdrive.step4".to_string(), "4. Go to 'Credentials' -> 'Create Credentials' -> 'OAuth client ID':".to_string());
         m.insert("gdrive.step4_a".to_string(), "   • Select Application type: 'Desktop app' (Name: 'zee Desktop').".to_string());
         m.insert("gdrive.step4_b".to_string(), "   • Click 'Create' and copy the Client ID (and Client Secret).".to_string());
@@ -675,7 +676,8 @@ impl I18n {
         m.insert("gdrive.step3_a".to_string(), "   • 「同意画面を構成」（または未構成の場合は「開始」）をクリックします。".to_string());
         m.insert("gdrive.step3_b".to_string(), "   • ユーザータイプ（対象）で「外部」（一般のGmail）または「内部」（Workspace組織内）を選択します。".to_string());
         m.insert("gdrive.step3_c".to_string(), "   • アプリ情報（アプリ名: zee 等）と連絡先メールアドレスを入力して保存します。".to_string());
-        m.insert("gdrive.step3_d".to_string(), "   • 「テストユーザー」に対象となるご自身のGoogleアカウント（メールアドレス）を追加します。".to_string());
+        m.insert("gdrive.step3_d".to_string(), "   • 「テストユーザー」に対象となるご自身のGoogleアカウント（メールアドレス）を必ず追加します。".to_string());
+        m.insert("gdrive.test_user_notice".to_string(), "※【重要】Google審査前のアプリのため、OAuth同意画面で「テストユーザー」にご自身のGoogleアカウント（Gmail）を必ず追加してください。追加されていないと「アクセスをブロック: zee は Google の審査プロセスを完了していません」と表示され認証できません。".to_string());
         m.insert("gdrive.step4".to_string(), "4. 「認証情報」→「認証情報を作成」→「OAuth クライアント ID」の作成:".to_string());
         m.insert("gdrive.step4_a".to_string(), "   • アプリケーションの種類を「デスクトップ アプリ」にして「作成」をクリックします。".to_string());
         m.insert("gdrive.step4_b".to_string(), "   • 発行された クライアント ID（およびシークレット）をコピーします。".to_string());

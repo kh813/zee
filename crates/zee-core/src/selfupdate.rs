@@ -814,6 +814,8 @@ fn tempfile_staging_dir(prefix: &str) -> Result<PathBuf> {
 
 /// Relaunch the GUI application after an update.
 pub fn relaunch_gui(current_exe: &Path) -> Result<()> {
+    let resolved = resolve_current_executable().unwrap_or_else(|_| current_exe.to_path_buf());
+    let current_exe = resolved.as_path();
     #[cfg(target_os = "macos")]
     {
         let mut app_bundle = None;
@@ -849,23 +851,52 @@ pub fn relaunch_gui(current_exe: &Path) -> Result<()> {
     }
 }
 
+/// Resolve the current executable path, handling cases where the running binary was unlinked/replaced on Linux
+/// (where /proc/self/exe has " (deleted)" appended).
+pub fn resolve_current_executable() -> Result<PathBuf> {
+    let mut exe = std::env::current_exe().context("Could not determine current executable")?;
+    let exe_str = exe.to_string_lossy().to_string();
+    if exe_str.ends_with(" (deleted)") {
+        let trimmed = exe_str.trim_end_matches(" (deleted)");
+        let trimmed_path = PathBuf::from(trimmed);
+        if trimmed_path.exists() {
+            return Ok(trimmed_path);
+        }
+        exe = trimmed_path;
+    }
+    if !exe.exists() {
+        if let Some(arg0) = std::env::args().next() {
+            let p = PathBuf::from(&arg0);
+            if p.exists() {
+                return Ok(p);
+            }
+            if let Some(path_var) = std::env::var_os("PATH") {
+                for dir in std::env::split_paths(&path_var) {
+                    let candidate = dir.join(&arg0);
+                    if candidate.exists() {
+                        return Ok(candidate);
+                    }
+                }
+            }
+        }
+    }
+    Ok(exe)
+}
+
 /// Restart the CLI process in the current terminal, replacing it if on Unix or spawning on Windows.
 pub fn restart_cli_process() -> Result<()> {
+    let current_exe = resolve_current_executable()?;
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        let current_exe = std::env::current_exe()
-            .context("Could not determine current executable")?;
         let args: Vec<String> = std::env::args().collect();
         let err = std::process::Command::new(&current_exe)
             .args(&args[1..])
             .exec();
-        Err(anyhow!("Failed to exec new process: {}", err))
+        Err(anyhow!("Failed to exec new process {:?}: {}", current_exe, err))
     }
     #[cfg(windows)]
     {
-        let current_exe = std::env::current_exe()
-            .context("Could not determine current executable")?;
         let args: Vec<String> = std::env::args().skip(1).collect();
         std::process::Command::new(&current_exe)
             .args(&args)
@@ -1166,5 +1197,14 @@ mod tests {
             3,
             "Release workflow must have exactly 3 build targets (macOS GUI, Linux CLI, Windows GUI)."
         );
+    }
+
+    #[test]
+    fn test_resolve_current_executable_resolution() {
+        let res = resolve_current_executable();
+        assert!(res.is_ok(), "resolve_current_executable should succeed in test environment");
+        let exe = res.unwrap();
+        assert!(!exe.to_string_lossy().ends_with(" (deleted)"), "Resolved executable should never end with ' (deleted)'");
+        assert!(exe.exists(), "Resolved executable path should exist on disk: {:?}", exe);
     }
 }

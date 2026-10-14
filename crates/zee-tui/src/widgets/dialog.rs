@@ -1534,12 +1534,12 @@ impl Dialog for MessageDialog {
         let start_y = y + 2;
         for (i, line) in lines.iter().enumerate() {
             let line_w: u16 = line.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
-            let lx = x + (w.saturating_sub(line_w)) / 2;
+            let lx = (x + (w.saturating_sub(line_w)) / 2).max(x + 2);
             let ly = start_y + i as u16;
             let mut cur_lx = lx;
             for c in line.chars() {
                 let cw = c.width().unwrap_or(0) as u16;
-                if cur_lx + cw < x + w - 1 {
+                if cur_lx + cw <= x + w - 3 {
                     renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
                 }
                 cur_lx += cw;
@@ -1637,7 +1637,7 @@ impl Dialog for AboutDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        (50, 10)
+        (60, 10)
     }
 
     fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
@@ -1656,12 +1656,12 @@ impl Dialog for AboutDialog {
 
         for (i, line) in content.iter().enumerate() {
             let line_w: u16 = line.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
-            let lx = x + (w.saturating_sub(line_w)) / 2;
+            let lx = (x + (w.saturating_sub(line_w)) / 2).max(x + 2);
             let ly = y + 2 + i as u16;
             let mut cur_lx = lx;
             for c in line.chars() {
                 let cw = c.width().unwrap_or(0) as u16;
-                if cur_lx + cw < x + w {
+                if cur_lx + cw <= x + w - 3 {
                     renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
                 }
                 cur_lx += cw;
@@ -1740,6 +1740,7 @@ pub struct UpdateDialog {
     pub i18n_success: String,
     pub i18n_failed: String,
     pub i18n_no_direct_package: String,
+    pub i18n_restart: String,
 }
 
 impl UpdateDialog {
@@ -1777,13 +1778,22 @@ impl UpdateDialog {
             },
             i18n_failed: i18n.get("dialog.update.failed").to_string(),
             i18n_no_direct_package: i18n.get("dialog.update.no_direct_package").to_string(),
+            i18n_restart: {
+                let s = i18n.get("dialog.update.btn_restart");
+                if s == "dialog.update.btn_restart" {
+                    "Restart".to_string()
+                } else {
+                    s.to_string()
+                }
+            },
         }
     }
 
     pub fn get_buttons<'a>(&'a self, state: &'a UpdateState) -> Vec<&'a str> {
         match state {
             UpdateState::Checking | UpdateState::Downloading => vec![],
-            UpdateState::UpToDate { .. } | UpdateState::Success => vec![&self.i18n_ok],
+            UpdateState::UpToDate { .. } => vec![&self.i18n_ok],
+            UpdateState::Success => vec![&self.i18n_restart],
             UpdateState::Available { asset_url, .. } => {
                 if asset_url.is_some() {
                     vec![&self.i18n_update_now, &self.i18n_cancel, &self.i18n_open_url]
@@ -1865,7 +1875,7 @@ impl Dialog for UpdateDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        (56, 11)
+        (70, 11)
     }
 
     fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
@@ -1876,41 +1886,71 @@ impl Dialog for UpdateDialog {
         let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
         let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
 
-        let mut lines = Vec::new();
+        let mut raw_lines = Vec::new();
 
         let state = self.state.lock().unwrap().clone();
         match &state {
             UpdateState::Checking => {
-                lines.push(self.i18n_checking.clone());
+                raw_lines.push(self.i18n_checking.clone());
             }
             UpdateState::UpToDate { version } => {
-                lines.push(self.i18n_up_to_date.replace("{version}", version));
+                raw_lines.push(self.i18n_up_to_date.replace("{version}", version));
             }
             UpdateState::Available { latest_version, asset_url, .. } => {
-                lines.push(self.i18n_available.replace("{version}", latest_version));
+                raw_lines.push(self.i18n_available.replace("{version}", latest_version));
                 if asset_url.is_none() {
-                    lines.push(self.i18n_no_direct_package.clone());
+                    raw_lines.push(self.i18n_no_direct_package.clone());
                 }
             }
             UpdateState::Downloading => {
-                lines.push(self.i18n_downloading.clone());
+                raw_lines.push(self.i18n_downloading.clone());
             }
             UpdateState::Success => {
-                lines.push(self.i18n_success.clone());
+                raw_lines.push(self.i18n_success.clone());
             }
             UpdateState::Failed { error, .. } => {
-                lines.push(self.i18n_failed.replace("{error}", error));
+                raw_lines.push(self.i18n_failed.replace("{error}", error));
             }
         }
 
-        for (i, line) in lines.iter().enumerate() {
+        let mut display_lines = Vec::new();
+        let max_content_w = (w.saturating_sub(6)) as usize;
+        for raw_line in raw_lines {
+            let line_w: usize = raw_line.chars().map(|c| c.width().unwrap_or(0)).sum();
+            if line_w <= max_content_w {
+                display_lines.push(raw_line);
+            } else {
+                let mut cur_line = String::new();
+                let mut cur_w = 0;
+                for word in raw_line.split(' ') {
+                    let word_w: usize = word.chars().map(|c| c.width().unwrap_or(0)).sum();
+                    if cur_w == 0 {
+                        cur_line.push_str(word);
+                        cur_w += word_w;
+                    } else if cur_w + 1 + word_w <= max_content_w {
+                        cur_line.push(' ');
+                        cur_line.push_str(word);
+                        cur_w += 1 + word_w;
+                    } else {
+                        display_lines.push(cur_line);
+                        cur_line = word.to_string();
+                        cur_w = word_w;
+                    }
+                }
+                if !cur_line.is_empty() {
+                    display_lines.push(cur_line);
+                }
+            }
+        }
+
+        for (i, line) in display_lines.iter().enumerate() {
             let line_w: u16 = line.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
-            let lx = x + (w.saturating_sub(line_w)) / 2;
-            let ly = y + 3 + i as u16;
+            let lx = (x + (w.saturating_sub(line_w)) / 2).max(x + 2);
+            let ly = y + 2 + i as u16;
             let mut cur_lx = lx;
             for c in line.chars() {
                 let cw = c.width().unwrap_or(0) as u16;
-                if cur_lx + cw < x + w {
+                if cur_lx + cw <= x + w - 3 {
                     renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
                 }
                 cur_lx += cw;
@@ -2094,7 +2134,7 @@ impl Dialog for ReopenConfirmationDialog {
         let spacer = 2u16;
         let btns_w: u16 = buttons.iter().map(|s| s.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>() + 4).sum::<u16>() + spacer;
         let content_w = title_w.max(msg_w).max(btns_w);
-        let w = ((content_w + 12).max(58)).min(74);
+        let w = ((content_w + 14).max(64)).min(76);
         (w, 8)
     }
 
@@ -2105,12 +2145,12 @@ impl Dialog for ReopenConfirmationDialog {
         let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
 
         let msg_w: u16 = self.i18n_message.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
-        let lx = x + (w.saturating_sub(msg_w)) / 2;
+        let lx = (x + (w.saturating_sub(msg_w)) / 2).max(x + 2);
         let ly = y + 2;
         let mut cur_lx = lx;
         for c in self.i18n_message.chars() {
             let cw = c.width().unwrap_or(0) as u16;
-            if cur_lx + cw < x + w - 1 {
+            if cur_lx + cw <= x + w - 3 {
                 renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
             }
             cur_lx += cw;
@@ -2200,7 +2240,7 @@ impl Dialog for GoToLineDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        (30, 6)
+        (40, 6)
     }
 
     fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
@@ -2216,12 +2256,14 @@ impl Dialog for GoToLineDialog {
         let ly = y + 2;
         for c in label.chars() {
             let cw = c.width().unwrap_or(0) as u16;
-            renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
-            cur_lx += cw;
+            if cur_lx + cw <= x + w - 3 {
+                renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
+                cur_lx += cw;
+            }
         }
 
         let input_x = cur_lx;
-        let input_w = (x + w - 2).saturating_sub(input_x);
+        let input_w = (x + w - 3).saturating_sub(input_x);
         for dx in 0..input_w {
             renderer.set_cell(input_x + dx, ly, Cell { ch: ' ', bg: input_bg, ..Default::default() });
         }
@@ -2309,7 +2351,7 @@ impl Dialog for FileContextMenuDialog {
 
     fn dimensions(&self) -> (u16, u16) {
         let max_len = self.options.iter().map(|(_, l)| l.chars().map(|c| c.width().unwrap_or(0) as u16).sum::<u16>()).max().unwrap_or(16);
-        let w = (max_len + 8).max(24);
+        let w = (max_len + 10).max(30);
         let h = self.options.len() as u16 + 4;
         (w, h)
     }
@@ -2336,7 +2378,7 @@ impl Dialog for FileContextMenuDialog {
             let mut cur_x = x + 3;
             for c in label.chars() {
                 let cw = c.width().unwrap_or(0) as u16;
-                if cur_x + cw < x + w - 1 {
+                if cur_x + cw <= x + w - 3 {
                     renderer.set_cell(cur_x, row_y, Cell { ch: c, bg, fg, width: cw as u8, ..Default::default() });
                 }
                 cur_x += cw;
@@ -2425,7 +2467,7 @@ impl Dialog for InputDialog {
         let title_w: u16 = self.title.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
         let prompt_w: u16 = self.prompt.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
         let input_w: u16 = self.input_text.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
-        let w = ((prompt_w + input_w + 14).max(title_w + 12).max(52)).min(74);
+        let w = ((prompt_w + input_w + 16).max(title_w + 14).max(60)).min(76);
         (w, 6)
     }
 
@@ -2442,12 +2484,14 @@ impl Dialog for InputDialog {
         let ly = y + 2;
         for c in label.chars() {
             let cw = c.width().unwrap_or(0) as u16;
-            renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
-            cur_lx += cw;
+            if cur_lx + cw <= x + w - 3 {
+                renderer.set_cell(cur_lx, ly, Cell { ch: c, bg: dialog_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
+                cur_lx += cw;
+            }
         }
 
         let input_x = cur_lx;
-        let input_w = (x + w - 2).saturating_sub(input_x);
+        let input_w = (x + w - 3).saturating_sub(input_x);
         for dx in 0..input_w {
             renderer.set_cell(input_x + dx, ly, Cell { ch: ' ', bg: input_bg, ..Default::default() });
         }
@@ -2719,7 +2763,7 @@ impl Dialog for SettingsDialog {
     }
 
     fn dimensions(&self) -> (u16, u16) {
-        (56, 15)
+        (66, 15)
     }
 
     fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
@@ -2778,16 +2822,20 @@ impl Dialog for SettingsDialog {
             let mut cur_x = x + 3;
             for c in label.chars() {
                 let cw = c.width().unwrap_or(0) as u16;
-                renderer.set_cell(cur_x, row_y, Cell { ch: c, bg: row_bg, fg: row_fg, bold: is_sel, width: cw as u8, ..Default::default() });
-                cur_x += cw;
+                if cur_x + cw < x + 28 {
+                    renderer.set_cell(cur_x, row_y, Cell { ch: c, bg: row_bg, fg: row_fg, bold: is_sel, width: cw as u8, ..Default::default() });
+                    cur_x += cw;
+                }
             }
 
             // Draw value
-            let mut val_x = x + 26;
+            let mut val_x = x + 29;
             for c in val.chars() {
                 let cw = c.width().unwrap_or(0) as u16;
-                renderer.set_cell(val_x, row_y, Cell { ch: c, bg: row_bg, fg: row_fg, bold: is_sel, width: cw as u8, ..Default::default() });
-                val_x += cw;
+                if val_x + cw <= x + w - 3 {
+                    renderer.set_cell(val_x, row_y, Cell { ch: c, bg: row_bg, fg: row_fg, bold: is_sel, width: cw as u8, ..Default::default() });
+                    val_x += cw;
+                }
             }
         }
 
@@ -2797,7 +2845,7 @@ impl Dialog for SettingsDialog {
 
         // Button 1: Save
         let save_str = format!(" [ {} ] ", self.i18n_save);
-        let save_x = x + 8;
+        let save_x = x + 10;
         let save_sel = is_btn_row && self.selected_btn == 0;
         let mut bx = save_x;
         for c in save_str.chars() {
@@ -2815,7 +2863,7 @@ impl Dialog for SettingsDialog {
 
         // Button 2: Cancel
         let cancel_str = format!(" [ {} ] ", self.i18n_cancel);
-        let cancel_x = x + 32;
+        let cancel_x = x + 38;
         let cancel_sel = is_btn_row && self.selected_btn == 1;
         let mut cx_btn = cancel_x;
         for c in cancel_str.chars() {
@@ -4430,7 +4478,7 @@ mod tests {
         *dialog.state.lock().unwrap() = success_state.clone();
         let btns_success = dialog.get_buttons(&success_state);
         assert_eq!(btns_success.len(), 1);
-        assert_eq!(btns_success[0], dialog.i18n_ok);
+        assert_eq!(btns_success[0], dialog.i18n_restart);
         *dialog.selected_btn.lock().unwrap() = 0;
         let res = dialog.handle_key(make_key(KeyCode::Enter));
         assert!(matches!(res, DialogResult::Ok(Action::RestartAndUpdate)));

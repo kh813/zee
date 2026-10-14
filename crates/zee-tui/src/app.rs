@@ -5245,29 +5245,30 @@ impl App {
     }
 
     fn calculate_dropdown_width(menu: &Menu) -> u16 {
-        let max_width = menu.items.iter().map(|item| match item {
+        let max_content = menu.items.iter().map(|item| match item {
             MenuItem::Action { label, shortcut, .. } => {
                 let lw: usize = label.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)).sum();
-                let sw: usize = shortcut.as_ref().map(|s| s.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)).sum::<usize>() + 2).unwrap_or(0);
+                let sw: usize = shortcut.as_ref().map(|s| s.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)).sum::<usize>() + 3).unwrap_or(0);
                 lw + sw
             }
             MenuItem::Toggle { label, .. } => {
                 let lw: usize = label.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)).sum();
-                lw + 4
+                lw + 5
             }
             MenuItem::Submenu { label, .. } => {
                 let lw: usize = label.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0)).sum();
-                lw + 4
+                lw + 5
             }
-            MenuItem::Separator => 5,
-        }).max().unwrap_or(10) as u16;
-        max_width + 3 + 2 // max_width + padding (3) + borders (2)
+            MenuItem::Separator => 10,
+        }).max().unwrap_or(12) as u16;
+        let inner_w = max_content.max(18) + 3;
+        inner_w + 2 // box_w = inner_w + 2 (borders)
     }
 
     fn render_dropdown(&mut self, mut x: u16, mut y: u16, menu: &Menu, depth: usize) {
         let items = &menu.items;
         let box_w = Self::calculate_dropdown_width(menu);
-        let max_width = box_w.saturating_sub(5); // box_w - padding(3) - borders(2)
+        let inner_w = box_w.saturating_sub(2);
         let total_h = items.len() as u16 + 2;
 
         // Clamp dropdown within screen bounds
@@ -5299,23 +5300,23 @@ impl App {
         }
         let sc_fg = self.to_ct_color(self.theme.editor.line_number);
 
-        let box_w = max_width + 2;
         let top_y = y;
         let bot_y = y + 1 + items.len() as u16;
+        let right_x = x + inner_w + 1;
 
         // Render top border
         self.renderer.set_cell(x, top_y, Cell { ch: '┌', fg: border_fg, bg, ..Default::default() });
-        for dx in 1..=max_width {
+        for dx in 1..=inner_w {
             self.renderer.set_cell(x + dx, top_y, Cell { ch: '─', fg: border_fg, bg, ..Default::default() });
         }
-        self.renderer.set_cell(x + max_width + 1, top_y, Cell { ch: '┐', fg: border_fg, bg, ..Default::default() });
+        self.renderer.set_cell(right_x, top_y, Cell { ch: '┐', fg: border_fg, bg, ..Default::default() });
 
         // Render bottom border
         self.renderer.set_cell(x, bot_y, Cell { ch: '└', fg: border_fg, bg, ..Default::default() });
-        for dx in 1..=max_width {
+        for dx in 1..=inner_w {
             self.renderer.set_cell(x + dx, bot_y, Cell { ch: '─', fg: border_fg, bg, ..Default::default() });
         }
-        self.renderer.set_cell(x + max_width + 1, bot_y, Cell { ch: '┘', fg: border_fg, bg, ..Default::default() });
+        self.renderer.set_cell(right_x, bot_y, Cell { ch: '┘', fg: border_fg, bg, ..Default::default() });
 
         let is_current_level = depth == self.submenu_stack.len();
         let selected_at_this_level = if depth < self.submenu_stack.len() {
@@ -5337,7 +5338,7 @@ impl App {
             match item {
                 MenuItem::Separator => {
                     self.renderer.set_cell(x, iy, Cell { ch: '├', fg: border_fg, bg, ..Default::default() });
-                    for dx in 1..=max_width {
+                    for dx in 1..=inner_w {
                         self.renderer.set_cell(x + dx, iy, Cell {
                             ch: '─',
                             bg,
@@ -5345,41 +5346,55 @@ impl App {
                             ..Default::default()
                         });
                     }
-                    self.renderer.set_cell(x + max_width + 1, iy, Cell { ch: '┤', fg: border_fg, bg, ..Default::default() });
+                    self.renderer.set_cell(right_x, iy, Cell { ch: '┤', fg: border_fg, bg, ..Default::default() });
                 }
                 MenuItem::Action { label, shortcut, .. } => {
                     // Left and right borders
                     self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
-                    self.renderer.set_cell(x + max_width + 1, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
 
                     // Background fill
-                    for dx in 1..=max_width {
+                    for dx in 1..=inner_w {
                         self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
                     }
 
+                    let sw: u16 = shortcut.as_ref().map(|s| {
+                        s.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16).sum()
+                    }).unwrap_or(0);
+
+                    let max_label_x = if sw > 0 {
+                        right_x.saturating_sub(sw + 2)
+                    } else {
+                        right_x.saturating_sub(2)
+                    };
+
                     let mut cur_ix = x + 2;
                     for c in label.chars() {
-                        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-                        self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
-                        cur_ix += cw as u16;
+                        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16;
+                        if cur_ix + cw <= max_label_x {
+                            self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
+                            cur_ix += cw;
+                        }
                     }
+
                     if let Some(s) = shortcut {
-                        let sw: u16 = s.chars().map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16).sum();
-                        let mut sx = x + max_width - sw;
-                        for c in s.chars() {
-                            let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-                            self.renderer.set_cell(sx, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: if is_selected { active_fg } else { sc_fg }, ..Default::default() });
-                            sx += cw as u16;
+                        if sw > 0 {
+                            let mut sx = right_x.saturating_sub(sw + 1);
+                            for c in s.chars() {
+                                let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16;
+                                self.renderer.set_cell(sx, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: if is_selected { active_fg } else { sc_fg }, ..Default::default() });
+                                sx += cw;
+                            }
                         }
                     }
                 }
                 MenuItem::Toggle { label, checked, is_radio, .. } => {
                     // Left and right borders
                     self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
-                    self.renderer.set_cell(x + max_width + 1, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
 
                     // Background fill
-                    for dx in 1..=max_width {
+                    for dx in 1..=inner_w {
                         self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
                     }
 
@@ -5388,30 +5403,37 @@ impl App {
                     } else {
                         if *checked { "[✓] " } else { "[ ] " }
                     };
+                    let max_label_x = right_x.saturating_sub(2);
                     let mut cur_ix = x + 2;
                     for c in prefix.chars().chain(label.chars()) {
-                        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-                        self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
-                        cur_ix += cw as u16;
+                        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16;
+                        if cur_ix + cw <= max_label_x {
+                            self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
+                            cur_ix += cw;
+                        }
                     }
                 }
                 MenuItem::Submenu { label, menu: sub } => {
                     // Left and right borders
                     self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
-                    self.renderer.set_cell(x + max_width + 1, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
 
                     // Background fill
-                    for dx in 1..=max_width {
+                    for dx in 1..=inner_w {
                         self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
                     }
 
+                    self.renderer.set_cell(right_x.saturating_sub(2), iy, Cell { ch: '▶', bg: item_bg, fg: item_fg, ..Default::default() });
+
+                    let max_label_x = right_x.saturating_sub(4);
                     let mut cur_ix = x + 2;
                     for c in label.chars() {
-                        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-                        self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
-                        cur_ix += cw as u16;
+                        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) as u16;
+                        if cur_ix + cw <= max_label_x {
+                            self.renderer.set_cell(cur_ix, iy, Cell { ch: c, width: cw as u8, bg: item_bg, fg: item_fg, bold: is_selected, ..Default::default() });
+                            cur_ix += cw;
+                        }
                     }
-                    self.renderer.set_cell(x + max_width, iy, Cell { ch: '▶', bg: item_bg, fg: item_fg, ..Default::default() });
 
                     if selected_at_this_level == Some(i) && depth < self.submenu_stack.len() {
                         let sub_clone = sub.clone();
@@ -8173,6 +8195,119 @@ mod tests {
 
         zee_core::Config::set_custom_config_dir(None);
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_dropdown_border_and_margin_integrity() {
+        let mut app = App::new(vec![]).unwrap();
+        app.width = 120;
+        app.height = 60;
+        app.renderer.resize(120, 60);
+        app.recompute_layout();
+
+        // Test every top-level menu dropdown in default English UI
+        for menu in app.menus.clone() {
+            app.renderer.clear();
+            app.dropdown_rects.clear();
+            let start_x = 5;
+            app.render_dropdown(start_x, 1, &menu, 0);
+
+            // Verify depth 0 rects from dropdown_rects
+            let rects: Vec<(u16, u16, u16, u16, usize, usize)> = app.dropdown_rects
+                .iter()
+                .filter(|(_, _, _, _, depth, _)| *depth == 0)
+                .cloned()
+                .collect();
+            assert_eq!(rects.len(), menu.items.len());
+
+            let (box_x, first_y, box_w, _, _, _) = rects[0];
+            let right_x = box_x + box_w - 1;
+            let top_y = first_y - 1;
+            let bot_y = rects.last().unwrap().1 + 1;
+
+            // 1. Top border
+            assert_eq!(app.renderer.get_cell(box_x, top_y).ch, '┌');
+            assert_eq!(app.renderer.get_cell(right_x, top_y).ch, '┐');
+
+            // 2. Each menu item row
+            for &(item_x, row_y, item_w, _, _, item_idx) in &rects {
+                let item = &menu.items[item_idx];
+                let item_right = item_x + item_w - 1;
+
+                match item {
+                    MenuItem::Separator => {
+                        assert_eq!(app.renderer.get_cell(item_x, row_y).ch, '├');
+                        assert_eq!(app.renderer.get_cell(item_right, row_y).ch, '┤');
+                    }
+                    _ => {
+                        let left_cell = app.renderer.get_cell(item_x, row_y);
+                        let right_cell = app.renderer.get_cell(item_right, row_y);
+                        let margin_cell = app.renderer.get_cell(item_right - 1, row_y);
+
+                        assert_eq!(
+                            left_cell.ch,
+                            '│',
+                            "Menu '{}' item {} row {} left border must be '│', got '{}'",
+                            menu.label, item_idx, row_y, left_cell.ch
+                        );
+                        assert_eq!(
+                            right_cell.ch,
+                            '│',
+                            "Menu '{}' item {} row {} right border must be '│', got '{}'",
+                            menu.label, item_idx, row_y, right_cell.ch
+                        );
+                        assert_eq!(
+                            margin_cell.ch,
+                            ' ',
+                            "Menu '{}' item {} row {} must have at least one blank space before border ('menu item |'), got '{}'",
+                            menu.label, item_idx, row_y, margin_cell.ch
+                        );
+                    }
+                }
+            }
+
+            // 3. Bottom border
+            assert_eq!(app.renderer.get_cell(box_x, bot_y).ch, '└');
+            assert_eq!(app.renderer.get_cell(right_x, bot_y).ch, '┘');
+        }
+    }
+
+    #[test]
+    fn test_dialog_border_and_margin_integrity() {
+        let app = App::new(vec![]).unwrap();
+        let theme = app.theme.clone();
+
+        // List of dialogs to verify
+        let dialogs: Vec<Box<dyn crate::widgets::dialog::Dialog>> = vec![
+            Box::new(crate::widgets::dialog::AboutDialog::new(&app.i18n)),
+            Box::new(crate::widgets::dialog::UpdateDialog::new(&app.i18n, false)),
+            Box::new(crate::widgets::dialog::SettingsDialog::new(app.config.clone(), &app.themes, &app.i18n)),
+            Box::new(crate::widgets::dialog::GoToLineDialog::new(&app.i18n)),
+            Box::new(crate::widgets::dialog::InputDialog::new("Rename File".to_string(), "New name".to_string(), "test.rs".to_string())),
+            Box::new(crate::widgets::dialog::ReopenConfirmationDialog::new(&app.i18n)),
+            Box::new(crate::widgets::dialog::MessageDialog::new("Warning".to_string(), "Line 1\nVery long warning message that should fit nicely".to_string(), vec![("OK".to_string(), crate::widgets::dialog::Action::Confirm)])),
+        ];
+
+        for d in dialogs {
+            let (w, h) = d.dimensions();
+            let mut renderer = crate::renderer::Renderer::new(120, 40);
+            let (x, y) = (10, 5);
+            d.render(&mut renderer, &theme, x, y, w, h);
+
+            // Verify corners
+            assert_eq!(renderer.get_cell(x, y).ch, '┌', "Dialog '{}' top-left corner", d.title());
+            assert_eq!(renderer.get_cell(x + w - 1, y).ch, '┐', "Dialog '{}' top-right corner", d.title());
+            assert_eq!(renderer.get_cell(x, y + h - 1).ch, '└', "Dialog '{}' bot-left corner", d.title());
+            assert_eq!(renderer.get_cell(x + w - 1, y + h - 1).ch, '┘', "Dialog '{}' bot-right corner", d.title());
+
+            // Verify all side borders are strictly '│' and not overwritten by text
+            for dy in 1..h - 1 {
+                let left_ch = renderer.get_cell(x, y + dy).ch;
+                let right_ch = renderer.get_cell(x + w - 1, y + dy).ch;
+                assert_eq!(left_ch, '│', "Dialog '{}' row {} left border overwritten by '{}'", d.title(), dy, left_ch);
+                assert_eq!(right_ch, '│', "Dialog '{}' row {} right border overwritten by '{}'", d.title(), dy, right_ch);
+            }
+        }
     }
 }
 

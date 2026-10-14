@@ -190,8 +190,7 @@ impl App {
         layout.recompute(&menus, &buffers, active_buffer, config.line_numbers, config.sidebar, &config.sidebar_position, config.vi_mode);
 
         let root_dir = root_dir.unwrap_or_else(zee_core::file_tree::user_root_dir);
-        let mut sidebar = crate::widgets::sidebar::Sidebar::new(root_dir, config.sidebar);
-        sidebar.file_tree.set_show_hidden(config.show_hidden);
+        let sidebar = crate::widgets::sidebar::Sidebar::new(root_dir, config.sidebar, config.show_hidden);
 
         let mut app = App {
             focus: Focus::Editor,
@@ -265,8 +264,7 @@ impl App {
 
     pub fn restore_session(&mut self, session: zee_core::session::UpdateSession) {
         if let Some(root) = session.root_folder {
-            self.sidebar.file_tree.root_path = root;
-            self.sidebar.refresh_files();
+            self.sidebar.set_root(root);
         }
         self.sidebar.visible = session.sidebar_visible;
         self.config.sidebar = session.sidebar_visible;
@@ -4253,7 +4251,7 @@ impl App {
             Action::Open => {
                 self.focus = Focus::Dialog;
                 self.pending_op = PendingOp::Open;
-                self.current_dialog = Some(Box::new(dialog::OpenDialog::new(&self.i18n)));
+                self.current_dialog = Some(Box::new(dialog::OpenDialog::new(Some(&self.sidebar.file_tree.root_path), &self.i18n)));
             }
             Action::OpenGoogleDrive => {
                 self.focus = Focus::Dialog;
@@ -4645,7 +4643,7 @@ impl App {
             Action::ImportConfig => {
                 self.focus = Focus::Dialog;
                 self.pending_op = PendingOp::ImportConfig;
-                self.current_dialog = Some(Box::new(dialog::OpenDialog::new(&self.i18n)));
+                self.current_dialog = Some(Box::new(dialog::OpenDialog::new(Some(&self.sidebar.file_tree.root_path), &self.i18n)));
             }
             _ => {} // TODO: other actions
         }
@@ -7607,8 +7605,16 @@ mod tests {
     #[test]
     fn test_open_folder_action_workflow() {
         let mut app = App::new(vec![]).expect("Failed to init App");
+        assert_eq!(app.sidebar.file_tree.root_path, zee_core::file_tree::user_root_dir());
+
         let temp_dir = std::env::temp_dir().join(format!("zee_test_open_folder_{}", std::process::id()));
+        let temp_file = temp_dir.join("test.txt");
         let _ = std::fs::create_dir_all(&temp_dir);
+        let _ = std::fs::write(&temp_file, "hello");
+
+        // Verify that opening a file also keeps sidebar root at user_root_dir
+        let file_app = App::new(vec![temp_file.clone()]).expect("Failed to init App with file");
+        assert_eq!(file_app.sidebar.file_tree.root_path, zee_core::file_tree::user_root_dir());
 
         // 1. Trigger OpenFolder action
         app.perform_action(Action::OpenFolder);

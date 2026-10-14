@@ -63,8 +63,8 @@ pub fn format_file_size(bytes: usize) -> String {
 }
 
 impl Sidebar {
-    pub fn new(root_path: PathBuf, visible: bool) -> Self {
-        let file_tree = FileTree::new(root_path, false);
+    pub fn new(root_path: PathBuf, visible: bool, show_hidden: bool) -> Self {
+        let file_tree = FileTree::new(root_path, show_hidden);
         let mut plugin_manager = zee_core::plugin::PluginManager::new();
         let dev_plugin_dir = PathBuf::from("plugins/zee-plugin-text");
         if dev_plugin_dir.exists() {
@@ -845,7 +845,7 @@ mod tests {
     fn test_sidebar_click_and_toggle_hidden() {
         let temp_dir = std::env::temp_dir().join(format!("zee_test_sb_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
-        let mut sidebar = Sidebar::new(temp_dir.clone(), true);
+        let mut sidebar = Sidebar::new(temp_dir.clone(), true, false);
 
         // Click on Files tab (rel_y = 0, content_x = 2)
         let action = sidebar.handle_click(2, 0, false, 26, 20);
@@ -868,7 +868,7 @@ mod tests {
     fn test_sidebar_properties_toggle() {
         let temp_dir = std::env::temp_dir().join(format!("zee_test_sb_prop_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
-        let mut sidebar = Sidebar::new(temp_dir.clone(), true);
+        let mut sidebar = Sidebar::new(temp_dir.clone(), true, false);
 
         assert!(sidebar.show_properties);
 

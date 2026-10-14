@@ -773,8 +773,9 @@ pub struct OpenDialog {
 }
 
 impl OpenDialog {
-    pub fn new(i18n: &zee_core::I18n) -> Self {
-        let mut browser = FileBrowser::new(std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+    pub fn new(initial_path: Option<&PathBuf>, i18n: &zee_core::I18n) -> Self {
+        let root = initial_path.cloned().unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        let mut browser = FileBrowser::new(root);
         browser.localize(i18n);
         Self {
             browser,
@@ -4230,7 +4231,7 @@ mod tests {
     #[test]
     fn test_open_dialog_workflow_and_rendering() {
         let i18n = zee_core::I18n::load("ja");
-        let mut dialog = OpenDialog::new(&i18n);
+        let mut dialog = OpenDialog::new(None, &i18n);
         let (dw, dh) = dialog.dimensions();
         assert_eq!((dw, dh), (80, 22));
         assert_eq!(dialog.title(), i18n.get("dialog.open_file"));

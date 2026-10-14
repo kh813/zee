@@ -1093,7 +1093,7 @@ impl Dialog {
                         div()
                             .text_size(px(12.0))
                             .text_color(with_alpha(led_color_to_gpui(theme.editor.foreground), 0.6))
-                            .child("Lightweight & fast text editor — MIT License")
+                            .child("Lightweight & fast text editor — Apache-2.0 License")
                     )
                     .child(
                         div()

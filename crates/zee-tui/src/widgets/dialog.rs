@@ -1647,11 +1647,11 @@ impl Dialog for AboutDialog {
         let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
 
         let content = [
-            format!("zee v{}", env!("CARGO_PKG_VERSION")),
+            "zee".to_string(),
             format!("{}: v{}", self.i18n_version, env!("CARGO_PKG_VERSION")),
-            "A lightweight, modern TUI editor.".to_string(),
+            "A lightweight, modern CLI editor.".to_string(),
             "".to_string(),
-            format!("{}: MIT", self.i18n_license),
+            format!("{}: Apache-2.0", self.i18n_license),
         ];
 
         for (i, line) in content.iter().enumerate() {
@@ -4482,6 +4482,47 @@ mod tests {
         *dialog.selected_btn.lock().unwrap() = 0;
         let res = dialog.handle_key(make_key(KeyCode::Enter));
         assert!(matches!(res, DialogResult::Ok(Action::RestartAndUpdate)));
+    }
+
+    #[test]
+    fn test_about_dialog_content_and_license() {
+        let i18n = zee_core::I18n::load("en");
+        let d = AboutDialog::new(&i18n);
+        let (w, h) = d.dimensions();
+        let mut renderer = crate::renderer::Renderer::new(w + 10, h + 10);
+        let theme = zee_core::theme::Theme::default();
+        d.render(&mut renderer, &theme, 2, 2, w, h);
+
+        let mut rendered_lines = Vec::new();
+        for y in 2..2 + h {
+            let mut line = String::new();
+            for x in 2..2 + w {
+                line.push(renderer.get_cell(x, y).ch);
+            }
+            rendered_lines.push(line);
+        }
+        let full_text = rendered_lines.join("\n");
+
+        assert!(
+            full_text.contains("Apache-2.0"),
+            "About dialog must display Apache-2.0 license. Rendered:\n{}",
+            full_text
+        );
+        assert!(
+            !full_text.contains("MIT"),
+            "About dialog must NOT display MIT license. Rendered:\n{}",
+            full_text
+        );
+        assert!(
+            full_text.contains("CLI editor"),
+            "About dialog must display 'CLI editor' instead of 'TUI editor'. Rendered:\n{}",
+            full_text
+        );
+        assert!(
+            !full_text.contains("TUI editor"),
+            "About dialog must NOT display 'TUI editor'. Rendered:\n{}",
+            full_text
+        );
     }
 }
 

@@ -387,7 +387,7 @@ impl GDriveManager {
             .query("orderBy", "folder,name")
             .query("pageSize", "100")
             .call()
-            .context("Failed to list files from Google Drive")?;
+            .map_err(|e| parse_ureq_error(e, "Failed to list files from Google Drive"))?;
 
         let json: serde_json::Value = resp.into_json()?;
         let files_arr = json["files"].as_array().context("Invalid files list response")?;
@@ -436,13 +436,13 @@ impl GDriveManager {
                 .set("Authorization", &format!("Bearer {}", access_token))
                 .query("mimeType", "text/plain")
                 .call()
-                .context("Failed to export Google Document as text")?
+                .map_err(|e| parse_ureq_error(e, "Failed to export Google Document as text"))?
         } else {
             let url = format!("{}/files/{}?alt=media", GOOGLE_DRIVE_API_BASE, file_id);
             ureq::get(&url)
                 .set("Authorization", &format!("Bearer {}", access_token))
                 .call()
-                .context("Failed to download file content from Google Drive")?
+                .map_err(|e| parse_ureq_error(e, "Failed to download file content from Google Drive"))?
         };
 
         let mut bytes = Vec::new();
@@ -486,7 +486,7 @@ impl GDriveManager {
             .set("Authorization", &format!("Bearer {}", access_token))
             .set("Content-Type", "application/octet-stream")
             .send_bytes(data)
-            .context("Failed to upload updated file content to Google Drive")?;
+            .map_err(|e| parse_ureq_error(e, "Failed to upload updated file content to Google Drive"))?;
 
         Ok(())
     }
@@ -642,6 +642,30 @@ fn urlencoding_decode(s: &str) -> String {
         i += 1;
     }
     res
+}
+
+/// Parse ureq HTTP/network errors into user-friendly diagnostic messages.
+fn parse_ureq_error(err: ureq::Error, action_context: &str) -> anyhow::Error {
+    match err {
+        ureq::Error::Status(code, resp) => {
+            let body = resp.into_string().unwrap_or_default();
+            let msg = if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                json["error"]["message"].as_str().map(|s| s.to_string()).unwrap_or_else(|| body.clone())
+            } else {
+                body.clone()
+            };
+            if msg.contains("has not been used in project") || msg.contains("is disabled") {
+                anyhow::anyhow!("Google Drive API が有効化されていません。GCPの「APIとサービス」→「ライブラリ」から「Google Drive API」を「有効にする」にしてください。(Google Drive API is disabled in GCP. Please enable 'Google Drive API' in APIs & Services -> Library.)")
+            } else if code == 403 && (msg.contains("insufficient") || msg.contains("permission")) {
+                anyhow::anyhow!("Google ドライブへのアクセス権限が不足しています。一度ログアウトし、ブラウザ認証時にGoogleドライブへのアクセス許可にチェックを入れてください。(Insufficient permissions. Please sign out and ensure Google Drive permissions are granted.)")
+            } else {
+                anyhow::anyhow!("{}: HTTP {} - {}", action_context, code, msg)
+            }
+        }
+        ureq::Error::Transport(e) => {
+            anyhow::anyhow!("{}: network error ({})", action_context, e)
+        }
+    }
 }
 
 #[cfg(test)]

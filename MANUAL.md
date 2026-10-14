@@ -274,12 +274,37 @@ line_height = 20.0
 Zee allows you to browse, edit, and save Google Drive files seamlessly:  
 *Google ドライブ上のファイルを直接開いて編集・保存できます:*
 
-1. Open `File > Open from Google Drive…` (`Google ドライブから開く…`).
-2. **API Configuration / 認証設定**:
-   - Click `Load from JSON file 📂` (`JSONファイルから読み込む 📂`) to directly import your Google Cloud Console OAuth credentials JSON.
-   - Alternatively, copy and paste Client ID and Secret directly using `Ctrl+V` / `⌘V` or the `Paste 📋` button.
-3. Complete authentication in your default web browser.
-4. Browse files, search in folders, and open documents directly into Zee tabs.
+1. Open `File > Open from Google Drive…` (`Google ドライブから開く…`) or press `⌘G` / `Ctrl+G`.
+2. **Initial Setup in Google Cloud Console / 初回設定手順 (Google Cloud Console)**:
+   - **Step 1: Create Project / プロジェクト作成**:  
+     Go to [Google Cloud Console](https://console.cloud.google.com/) and create a project (e.g. `zee-GoogleDrive`).  
+     *Google Cloud Console を開き、新規プロジェクトを作成します。*
+   - **Step 2: Enable Google Drive API / Google Drive APIの有効化【必須】**:  
+     Go to `APIs & Services > Library` ([Direct Link](https://console.cloud.google.com/apis/library/drive.googleapis.com)), search for **Google Drive API**, and click **Enable (有効にする)**.  
+     *※これを有効化しないと、認証後に「No files found (Failed to list files)」エラーになります。必ず有効化してください。*
+   - **Step 3: OAuth Consent Screen & Test Users / OAuth同意画面とテストユーザー追加【最重要】**:  
+     Go to `APIs & Services > OAuth consent screen` ([Direct Link](https://console.cloud.google.com/apis/credentials/consent)).  
+     - Select User Type: **External (外部)** and click Create.  
+     - Enter App Name (`zee`) and your email address in user support & developer contact, then save.  
+     - **Add Test User / テストユーザーの追加**: Under **Test users (テストユーザー)**, click **`+ ADD USERS` (`+ ユーザーを追加`)**, enter your own Google account email (Gmail), and click **Save (保存)**.  
+       *※テストユーザーに追加しないと、ブラウザで「アクセスをブロック: zee は Google の審査プロセスを完了していません」と表示され認証が拒否されます。*
+   - **Step 4: Create Credentials / 認証情報の作成**:  
+     Go to `APIs & Services > Credentials` ([Direct Link](https://console.cloud.google.com/apis/credentials)) -> `Create Credentials (認証情報を作成)` -> **OAuth client ID (OAuth クライアント ID)**.  
+     - Application type: **Desktop app (デスクトップ アプリ)**.  
+     - Name: `zee Desktop` -> Click **Create (作成)**.  
+     - Download the credentials JSON (`client_secret_...json`) using the download icon.
+   - **Step 5: Connect in Zee / Zeeでの接続**:  
+     In Zee's Google Drive dialog, click **`Load from JSON file 📂` (`JSONファイルから読み込む 📂`)** and select your downloaded JSON file (or paste Client ID / Client Secret manually).  
+     Click **`Save & Connect` (`保存して接続する`)**.
+3. **Browser Authorization / ブラウザでの初回認証**:  
+   - A browser tab opens. Sign in with the Google Account registered in Step 3.  
+   - If Google shows a warning screen *"Google hasn't verified this app" (Google ではこのアプリを確認していません)*:  
+     Click **Advanced (詳細)** at the bottom left -> Click **Go to zee (unsafe) / zee（安全ではないページ）に移動** -> Click **Continue (続行)** to grant permissions.  
+   - The browser will display `✓ Connected to Google Drive`. Return to Zee.
+4. **Browsing & Editing / ファイルの閲覧と編集**:  
+   - Your Google Drive folders and files will appear immediately.  
+   - Double-click or select and press Enter to open files into Zee editor tabs.  
+   - Saving changes (`⌘S` / `Ctrl+S`) directly syncs back to Google Drive!
 
 ---
 

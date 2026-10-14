@@ -469,7 +469,7 @@ impl Dialog {
                             this.gdrive_selected_idx = 0;
                         }
                         Err(err) => {
-                            this.gdrive_error = Some(err.to_string());
+                            this.gdrive_error = Some(format!("{:#}", err));
                         }
                     }
                     cx.notify();
@@ -4368,11 +4368,54 @@ impl Dialog {
                                                                     this.gdrive_info_message = Some(this.i18n.get("gdrive.url_copied").to_string());
                                                                     cx.notify();
                                                                 }))
-                                                                .child(self.i18n.get("gdrive.copy_url_btn").to_string())
-                                                        )
-                                                )
-                                        )
-                                )
+                                                        .child(self.i18n.get("gdrive.copy_url_btn").to_string())
+                                                    )
+                                            )
+                                            // 3. Google Drive API in Library
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1p5()
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(11.5))
+                                                            .text_color(accent)
+                                                            .cursor_pointer()
+                                                            .hover(|s| s.opacity(0.8))
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                let _ = zee_core::selfupdate::open_url("https://console.cloud.google.com/apis/library/drive.googleapis.com");
+                                                            }))
+                                                            .on_mouse_down(MouseButton::Right, cx.listener(|this, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                cx.write_to_clipboard(ClipboardItem::new_string("https://console.cloud.google.com/apis/library/drive.googleapis.com".to_string()));
+                                                                this.gdrive_info_message = Some(this.i18n.get("gdrive.url_copied").to_string());
+                                                                cx.notify();
+                                                            }))
+                                                            .child(self.i18n.get("gdrive.open_gcp_api_btn").to_string())
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_size(px(10.5))
+                                                            .text_color(with_alpha(fg, 0.7))
+                                                            .bg(with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.12))
+                                                            .px_1p5()
+                                                            .py_0p5()
+                                                            .rounded_sm()
+                                                            .cursor_pointer()
+                                                            .hover(|s| s.opacity(0.8))
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                                cx.stop_propagation();
+                                                                cx.write_to_clipboard(ClipboardItem::new_string("https://console.cloud.google.com/apis/library/drive.googleapis.com".to_string()));
+                                                                this.gdrive_info_message = Some(this.i18n.get("gdrive.url_copied").to_string());
+                                                                cx.notify();
+                                                            }))
+                                                            .child(self.i18n.get("gdrive.copy_url_btn").to_string())
+                                                    )
+                                            )
+                                    )
+                            )
                                 // Notice Box for Test Users
                                 .child(
                                     div()
@@ -4848,9 +4891,53 @@ impl Dialog {
                         )
                         .children(self.gdrive_error.as_ref().map(|err| {
                             div()
-                                .text_size(px(11.5))
-                                .text_color(gpui::rgb(0xff5555))
-                                .child(err.clone())
+                                .flex()
+                                .flex_col()
+                                .gap_1p5()
+                                .p_2p5()
+                                .rounded_md()
+                                .bg(with_alpha(gpui::rgb(0xff5555), 0.08))
+                                .border_1()
+                                .border_color(with_alpha(gpui::rgb(0xff5555), 0.25))
+                                .child(
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(gpui::rgb(0xff5555))
+                                        .child(format!("⚠ {}", err))
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_3()
+                                        .pt_1()
+                                        .child(
+                                            div()
+                                                .text_size(px(11.0))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(accent)
+                                                .cursor_pointer()
+                                                .hover(|s| s.opacity(0.8))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    this.load_gdrive_files(cx);
+                                                }))
+                                                .child(self.i18n.get("gdrive.retry_btn").to_string())
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.0))
+                                                .font_weight(FontWeight::MEDIUM)
+                                                .text_color(accent)
+                                                .cursor_pointer()
+                                                .hover(|s| s.opacity(0.8))
+                                                .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
+                                                    cx.stop_propagation();
+                                                    let _ = zee_core::selfupdate::open_url("https://console.cloud.google.com/apis/library/drive.googleapis.com");
+                                                }))
+                                                .child(self.i18n.get("gdrive.open_gcp_api_btn").to_string())
+                                        )
+                                )
                         }))
                         // Footer buttons
                         .child(

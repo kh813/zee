@@ -203,11 +203,25 @@ pub fn find_matching_asset_for_platform<'a>(
         }
     };
 
+    // 1. Search for matching .zip asset (unified archive format)
     for asset in assets {
         let name = asset.name.to_lowercase();
-        let is_archive = name.ends_with(".zip") || name.ends_with(".tar.gz");
+        if !name.ends_with(".zip") || !matches_app_type(&name) || !matches_arch(&name) {
+            continue;
+        }
 
-        if !matches_app_type(&name) || !is_archive || !matches_arch(&name) {
+        if (os == "macos" && name.contains("macos"))
+            || (os == "linux" && name.contains("linux"))
+            || (os == "windows" && name.contains("windows"))
+        {
+            return Some(asset);
+        }
+    }
+
+    // 2. Fallback to .tar.gz for legacy releases
+    for asset in assets {
+        let name = asset.name.to_lowercase();
+        if !name.ends_with(".tar.gz") || !matches_app_type(&name) || !matches_arch(&name) {
             continue;
         }
 
@@ -1042,7 +1056,7 @@ mod tests {
         ];
         let lin_cli_dual = find_matching_asset_for_platform(&release_assets_dual, AppType::Cli, "linux", "x86_64");
         assert!(lin_cli_dual.is_some());
-        assert!(lin_cli_dual.unwrap().name.starts_with("zee-cli-v0.2.6-linux-x64"));
+        assert_eq!(lin_cli_dual.unwrap().name, "zee-cli-v0.2.6-linux-x64.zip");
     }
 
     #[test]
@@ -1159,6 +1173,14 @@ mod tests {
         assert!(
             !content.contains("is_linux_desktop"),
             "CRITICAL REGRESSION: .github/workflows/release.yml must NOT contain 'is_linux_desktop' flags."
+        );
+        assert!(
+            !content.contains(".tar.gz"),
+            "CRITICAL REGRESSION: .github/workflows/release.yml must NOT contain '.tar.gz'. Standard releases are strictly unified to .zip archives only."
+        );
+        assert!(
+            !content.contains("tar -"),
+            "CRITICAL REGRESSION: .github/workflows/release.yml must NOT contain tar commands. Standard releases must use zip only."
         );
 
         // 2. Parse matrix.include target names

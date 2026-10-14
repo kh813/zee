@@ -25,14 +25,19 @@ Because `cargo test --workspace` executes tests across multiple threads concurre
 
 ---
 
-## 3. Strict Release Targets (通常リリース時の同梱バイナリ制限)
+## 3. Strict Release Targets & Archive Format (通常リリース時の同梱バイナリ制限とZIP統一)
 
 Standard releases (`.github/workflows/release.yml`, triggered by git tag `v*`) must adhere strictly to the following 3 patterns only:
-1. **Linux**: CLI only (`zee-cli-v*-linux-x64.zip` / `.tar.gz`)
+1. **Linux**: CLI only (`zee-cli-v*-linux-x64.zip`)
    - Contains **only a single binary `zee`** (stripped using `strip` to optimize file size).
    - Must **not** include GUI elements or dual binaries (`zeeg`, desktop zip).
 2. **macOS**: Apple Silicon GUI only (`zee-v*-macos-arm64.zip` containing `Zee.app`).
 3. **Windows**: x64 GUI only (`zee-v*-windows-x64.zip` containing `zee.exe`).
+
+### Unified Archive Format (.zip Only)
+- **All release packages across all platforms MUST be `.zip` archives only.**
+- **Never produce or upload `.tar.gz` packages** for standard releases. Linux CLI releases must be packaged exclusively as `.zip`.
+- Automated regression test `test_release_workflow_matrix_standard_build_only` continuously verifies `.github/workflows/release.yml` and will fail if `.tar.gz` or `tar -` is present.
 
 *Note*: Full-build / extended targets (Linux GUI `zeeg`, macOS CLI, ARM64 builds) are strictly reserved for manual trigger via `.github/workflows/extended-release.yml` and must never be published in regular tag releases.
 

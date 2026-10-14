@@ -128,7 +128,6 @@ jobs:
           cp README.md MANUAL.md LICENSE* "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
           cd dist
           zip -r "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}"
-          tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
           cd ..
 
       # --- Windows: GUI only (zee.exe) ---
@@ -152,7 +151,6 @@ jobs:
         with:
           name: artifacts-${{ matrix.name }}
           path: |
-            dist/*.tar.gz
             dist/*.zip
 
   publish-release:

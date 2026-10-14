@@ -9,6 +9,26 @@ use gpui::*;
 
 /// Launch and run the Zee hardware-accelerated desktop GUI application.
 pub fn run_gui() {
+    let _lock = match zee_core::single_instance::SingleInstanceLock::try_acquire("zee-gui") {
+        Some(lock) => lock,
+        None => {
+            // An instance is already running!
+            // On macOS, activate the running application and pass any target files
+            #[cfg(target_os = "macos")]
+            {
+                let raw_args: Vec<String> = std::env::args().skip(1).collect();
+                let cli_targets = zee_core::cli::parse_file_targets(&raw_args);
+                let mut cmd = std::process::Command::new("open");
+                cmd.arg("-a").arg("Zee");
+                for target in cli_targets {
+                    cmd.arg(&target.path);
+                }
+                let _ = cmd.spawn();
+            }
+            return;
+        }
+    };
+
     let (tx, rx) = futures::channel::mpsc::unbounded::<Vec<String>>();
     let app = gpui_platform::application();
     

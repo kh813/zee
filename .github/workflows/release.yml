@@ -89,6 +89,8 @@ jobs:
               <true/>
               <key>NSSupportsAutomaticGraphicsSwitching</key>
               <true/>
+              <key>LSMultipleInstancesProhibited</key>
+              <true/>
               <key>CFBundleDocumentTypes</key>
               <array>
                   <dict>

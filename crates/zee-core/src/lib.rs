@@ -14,6 +14,7 @@ pub mod cli;
 pub mod recent;
 pub mod template;
 pub mod gdrive;
+pub mod single_instance;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {

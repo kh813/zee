@@ -103,6 +103,8 @@ macos-gui:
 	@echo '    <true/>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>NSSupportsAutomaticGraphicsSwitching</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <true/>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    <key>LSMultipleInstancesProhibited</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    <true/>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>CFBundleDocumentTypes</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <array>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '        <dict>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist

@@ -26,14 +26,31 @@ pub const AVAILABLE_LANGUAGES: &[LanguageInfo] = &[
 
 #[cfg(target_os = "macos")]
 fn get_macos_locale() -> Option<String> {
-    if let Ok(output) = std::process::Command::new("defaults")
-        .args(["read", "-g", "AppleLocale"])
-        .output()
-    {
-        if output.status.success() {
-            let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !s.is_empty() {
-                return Some(s);
+    for cmd in &["/usr/bin/defaults", "defaults"] {
+        if let Ok(output) = std::process::Command::new(cmd)
+            .args(["read", "-g", "AppleLocale"])
+            .output()
+        {
+            if output.status.success() {
+                let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+
+        if let Ok(output) = std::process::Command::new(cmd)
+            .args(["read", "-g", "AppleLanguages"])
+            .output()
+        {
+            if output.status.success() {
+                let s = String::from_utf8_lossy(&output.stdout);
+                for line in s.lines() {
+                    let trimmed = line.trim().trim_matches(|c| c == '(' || c == ')' || c == '"' || c == ',' || c == ' ');
+                    if !trimmed.is_empty() && trimmed != "(" && trimmed != ")" {
+                        return Some(trimmed.to_string());
+                    }
+                }
             }
         }
     }
@@ -418,6 +435,10 @@ impl I18n {
         m.insert("gdrive.json_load_failed".to_string(), "Failed to load OAuth JSON".to_string());
         m.insert("gdrive.paste_hint".to_string(), "Tip: You can paste (Ctrl+V / Cmd+V) the credentials JSON or keys directly.".to_string());
         m.insert("gdrive.update_settings".to_string(), "Update Settings ⚙".to_string());
+        m.insert("gdrive.copy_url_btn".to_string(), "Copy URL 📋".to_string());
+        m.insert("gdrive.copy_btn".to_string(), "Copy 📋".to_string());
+        m.insert("gdrive.url_copied".to_string(), "URL copied to clipboard!".to_string());
+        m.insert("gdrive.key_copied".to_string(), "Copied to clipboard!".to_string());
         m
     }
 
@@ -673,6 +694,10 @@ impl I18n {
         m.insert("gdrive.json_load_failed".to_string(), "JSONの読み込みに失敗しました".to_string());
         m.insert("gdrive.paste_hint".to_string(), "ヒント: Ctrl+V / Cmd+V で認証情報JSONまたは各キーを直接貼り付けできます。".to_string());
         m.insert("gdrive.update_settings".to_string(), "設定を更新 ⚙".to_string());
+        m.insert("gdrive.copy_url_btn".to_string(), "URLをコピー 📋".to_string());
+        m.insert("gdrive.copy_btn".to_string(), "コピー 📋".to_string());
+        m.insert("gdrive.url_copied".to_string(), "URLをクリップボードにコピーしました！".to_string());
+        m.insert("gdrive.key_copied".to_string(), "クリップボードにコピーしました！".to_string());
         m
     }
 

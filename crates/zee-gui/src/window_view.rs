@@ -627,6 +627,9 @@ impl WindowView {
     }
 
     fn handle_undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
+        }
         self.workspace.update(cx, |w, cx| {
             if let Some(editor) = w.active_editor_mut() {
                 editor.undo();
@@ -636,6 +639,9 @@ impl WindowView {
     }
 
     fn handle_redo(&mut self, _: &Redo, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
+        }
         self.workspace.update(cx, |w, cx| {
             if let Some(editor) = w.active_editor_mut() {
                 editor.redo();
@@ -645,6 +651,13 @@ impl WindowView {
     }
 
     fn handle_cut(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.dialog {
+            dialog.update(cx, |d, cx| {
+                d.handle_cut(cx);
+            });
+            return;
+        }
+
         let mut text_to_copy = None;
         self.workspace.update(cx, |w, cx| {
             let vi_mode = w.config.vi_mode;
@@ -666,6 +679,13 @@ impl WindowView {
     }
 
     fn handle_copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.dialog {
+            dialog.update(cx, |d, cx| {
+                d.handle_copy(cx);
+            });
+            return;
+        }
+
         let workspace = self.workspace.read(cx);
         if let Some(editor) = workspace.active_editor() {
             if editor.vi_mode == zee_core::ViMode::VisualBlock {
@@ -707,6 +727,13 @@ impl WindowView {
     }
 
     fn handle_select_all(&mut self, _: &SelectAll, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(dialog) = &self.dialog {
+            dialog.update(cx, |d, cx| {
+                d.handle_select_all(cx);
+            });
+            return;
+        }
+
         self.workspace.update(cx, |w, cx| {
             if let Some(editor) = w.active_editor_mut() {
                 editor.select_all();

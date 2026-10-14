@@ -1274,5 +1274,50 @@ mod tests {
         editor.move_cursor_end(false);
         assert_eq!(editor.cursor, 19);
     }
+
+    #[test]
+    fn test_gdrive_dialog_setup_order_and_copy_keys() {
+        let ja = zee_core::I18n::load("ja");
+        let en = zee_core::I18n::load("en");
+
+        // Verify that open GCP console and consent screen buttons exist and have distinct labels
+        assert_eq!(ja.get("gdrive.open_gcp_btn"), "Google Cloud Console を開く ↗");
+        assert_eq!(ja.get("gdrive.open_gcp_consent_btn"), "OAuth 同意画面を開く ↗");
+        assert_eq!(en.get("gdrive.open_gcp_btn"), "Open Google Cloud Console ↗");
+        assert_eq!(en.get("gdrive.open_gcp_consent_btn"), "Open OAuth Consent Screen ↗");
+
+        // Verify copy buttons and feedback messages exist
+        assert_eq!(ja.get("gdrive.copy_url_btn"), "URLをコピー 📋");
+        assert_eq!(ja.get("gdrive.copy_btn"), "コピー 📋");
+        assert_eq!(ja.get("gdrive.url_copied"), "URLをクリップボードにコピーしました！");
+        assert_eq!(ja.get("gdrive.key_copied"), "クリップボードにコピーしました！");
+
+        assert_eq!(en.get("gdrive.copy_url_btn"), "Copy URL 📋");
+        assert_eq!(en.get("gdrive.copy_btn"), "Copy 📋");
+        assert_eq!(en.get("gdrive.url_copied"), "URL copied to clipboard!");
+        assert_eq!(en.get("gdrive.key_copied"), "Copied to clipboard!");
+    }
+
+    #[test]
+    fn test_release_workflow_and_makefile_have_cfbundle_localizations() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir.parent().unwrap().parent().unwrap();
+
+        let release_yml = std::fs::read_to_string(root.join(".github/workflows/release.yml")).unwrap();
+        assert!(
+            release_yml.contains("<key>CFBundleLocalizations</key>"),
+            "release.yml must declare CFBundleLocalizations in Info.plist"
+        );
+        assert!(release_yml.contains("<string>ja</string>"));
+        assert!(release_yml.contains("<string>en</string>"));
+
+        let makefile = std::fs::read_to_string(root.join("Makefile")).unwrap();
+        assert!(
+            makefile.contains("CFBundleLocalizations"),
+            "Makefile must declare CFBundleLocalizations in Info.plist"
+        );
+        assert!(makefile.contains("<string>ja</string>"));
+        assert!(makefile.contains("<string>en</string>"));
+    }
 }
 

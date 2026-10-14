@@ -106,6 +106,20 @@ jobs:
               </array>
               <key>LSMinimumSystemVersion</key>
               <string>10.15.7</string>
+              <key>CFBundleLocalizations</key>
+              <array>
+                  <string>en</string>
+                  <string>ja</string>
+                  <string>zh-CN</string>
+                  <string>zh-TW</string>
+                  <string>ko</string>
+                  <string>es</string>
+                  <string>fr</string>
+                  <string>de</string>
+                  <string>it</string>
+                  <string>pt</string>
+                  <string>ru</string>
+              </array>
           </dict>
           </plist>
           EOF

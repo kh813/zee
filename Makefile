@@ -120,6 +120,20 @@ macos-gui:
 	@echo '    </array>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>LSMinimumSystemVersion</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <string>10.15.7</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    <key>CFBundleLocalizations</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    <array>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>en</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>ja</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>zh-CN</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>zh-TW</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>ko</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>es</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>fr</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>de</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>it</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>pt</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '        <string>ru</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    </array>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '</dict>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '</plist>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@touch $(DIST_DIR)/Zee.app

@@ -535,7 +535,7 @@ codesign --force --deep --sign - "$APP" 2>/dev/null || true
 rm -rf "$STAGING"
 
 # Automatically relaunch the updated application!
-open -n "$APP"
+open -a "$APP"
 "#;
 
     let child = Command::new("/bin/sh")

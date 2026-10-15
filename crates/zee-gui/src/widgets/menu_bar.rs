@@ -1,7 +1,7 @@
 use gpui::*;
 use crate::workspace::Workspace;
 use zee_core::i18n::I18n;
-use crate::widgets::{led_color_to_gpui, ui_font_family, with_alpha};
+use crate::widgets::{ui_font_family, with_alpha};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,15 +76,59 @@ impl MenuBar {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct OsMenuColors {
+    pub bar_bg: gpui::Rgba,
+    pub bar_fg: gpui::Rgba,
+    pub bar_border: gpui::Rgba,
+    pub hover_bg: gpui::Rgba,
+    pub active_bg: gpui::Rgba,
+    pub dropdown_bg: gpui::Rgba,
+    pub dropdown_fg: gpui::Rgba,
+    pub dropdown_border: gpui::Rgba,
+    pub muted_fg: gpui::Rgba,
+}
+
+pub fn get_os_menu_colors(window: &gpui::Window) -> OsMenuColors {
+    let is_dark = matches!(
+        window.appearance(),
+        gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+    );
+    if is_dark {
+        OsMenuColors {
+            bar_bg: gpui::rgb(0x1f1f1f),
+            bar_fg: gpui::rgb(0xf0f0f0),
+            bar_border: with_alpha(gpui::rgb(0xffffff), 0.12),
+            hover_bg: with_alpha(gpui::rgb(0xffffff), 0.08),
+            active_bg: with_alpha(gpui::rgb(0xffffff), 0.16),
+            dropdown_bg: gpui::rgb(0x252526),
+            dropdown_fg: gpui::rgb(0xf0f0f0),
+            dropdown_border: with_alpha(gpui::rgb(0xffffff), 0.16),
+            muted_fg: with_alpha(gpui::rgb(0xffffff), 0.55),
+        }
+    } else {
+        OsMenuColors {
+            bar_bg: gpui::rgb(0xf3f3f3),
+            bar_fg: gpui::rgb(0x1e1e1e),
+            bar_border: with_alpha(gpui::rgb(0x000000), 0.12),
+            hover_bg: with_alpha(gpui::rgb(0x000000), 0.07),
+            active_bg: with_alpha(gpui::rgb(0x000000), 0.14),
+            dropdown_bg: gpui::rgb(0xffffff),
+            dropdown_fg: gpui::rgb(0x1e1e1e),
+            dropdown_border: with_alpha(gpui::rgb(0x000000), 0.15),
+            muted_fg: with_alpha(gpui::rgb(0x000000), 0.55),
+        }
+    }
+}
+
 impl Render for MenuBar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace = self.workspace.read(cx);
-        let theme = &workspace.theme;
-        let bg = led_color_to_gpui(theme.ui.menu_bar_bg);
-        let fg = led_color_to_gpui(theme.ui.menu_bar_fg);
-        let border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
-        let hover_bg = with_alpha(fg, 0.12);
-        let active_bg = with_alpha(fg, 0.22);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = get_os_menu_colors(window);
+        let bg = colors.bar_bg;
+        let fg = colors.bar_fg;
+        let border = colors.bar_border;
+        let hover_bg = colors.hover_bg;
+        let active_bg = colors.active_bg;
 
         let menu_titles = [
             (0, self.i18n.get("menu.file").to_string()),

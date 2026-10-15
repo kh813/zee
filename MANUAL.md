@@ -263,6 +263,11 @@ line_height = 20.0
 - **Custom Themes / カスタムテーマ**:  
   Place `.toml` theme files in `~/.config/zee/themes/`. Themes appear instantly in the Settings dropdown.  
   *`~/.config/zee/themes/` に `.toml` テーマを配置すると、設定画面に自動反映されます。*
+- **Theme Behavior (GUI vs CLI) / GUI版とCLI版でのテーマ適用**:  
+  - **GUI version**: The editor area, tabs, and panels reflect the chosen theme, while the top menu bar always conforms to the **native OS standard design** (Windows/Linux dynamically matches system Light/Dark appearance; macOS uses native NSMenuBar).  
+    *GUI版ではエディタ本体やタブ・パネルにテーマが適用され、メニューバーはOS標準デザイン（Windows/LinuxではOSのライト／ダーク設定に自動連動、macOSはネイティブメニュー）に統一されます。*
+  - **CLI (TUI) version**: The entire terminal display including the menu bar is drawn using the theme's custom palette (`[ui] menu_bar_bg`).  
+    *CLI版ではターミナル全体がエディタテーマで統一され、メニューバーも選択したテーマの色で描画されます。*
 - **Custom Syntax Highlighting / カスタムシンタックス**:  
   Place `.toml` syntax definition files in `~/.config/zee/syntaxes/`. Supports regex patterns, keyword lists, and comments.  
   *`~/.config/zee/syntaxes/` に定義ファイルを配置することで、独自言語のハイライトを追加できます。*

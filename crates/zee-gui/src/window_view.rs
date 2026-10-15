@@ -1503,7 +1503,7 @@ impl Render for WindowView {
             .child(self.render_layout(cx));
 
         #[cfg(not(target_os = "macos"))]
-        let root = root.child(self.render_menu_dropdown(cx));
+        let root = root.child(self.render_menu_dropdown(window, cx));
 
         root.child(if let Some(ref dialog) = self.dialog {
             div()
@@ -1566,22 +1566,18 @@ impl WindowView {
 
 #[cfg(not(target_os = "macos"))]
 impl WindowView {
-    fn render_menu_dropdown(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_menu_dropdown(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let menu_bar = self.menu_bar.read(cx);
         let open_menu = menu_bar.open_menu;
         let open_submenu = menu_bar.open_submenu;
 
         if let Some(idx) = open_menu {
-            let (bg, fg, border, hover_bg, muted_fg) = {
-                let workspace = self.workspace.read(cx);
-                let theme = &workspace.theme;
-                let bg = led_color_to_gpui(theme.ui.menu_bar_bg);
-                let fg = led_color_to_gpui(theme.ui.menu_bar_fg);
-                let border = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
-                let hover_bg = with_alpha(fg, 0.15);
-                let muted_fg = with_alpha(fg, 0.55);
-                (bg, fg, border, hover_bg, muted_fg)
-            };
+            let colors = crate::widgets::menu_bar::get_os_menu_colors(window);
+            let bg = colors.dropdown_bg;
+            let fg = colors.dropdown_fg;
+            let border = colors.dropdown_border;
+            let hover_bg = colors.hover_bg;
+            let muted_fg = colors.muted_fg;
 
             let left_pos = match idx {
                 0 => px(8.0),

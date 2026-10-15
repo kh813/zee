@@ -659,11 +659,16 @@ gpui is the GPU-accelerated UI framework developed by Zed Industries for the Zed
 | **Windows** | In-window menu bar (inside the window, top row) | Custom gpui View rendered as the topmost row of the window, identical in layout and behavior to the TUI menu bar. |
 | **Linux** | In-window menu bar (same as Windows) | Same custom gpui View as Windows. No assumption is made about a desktop environment providing a global menu bar. |
 
-**Why this split?**
+**Why this split and design distinction?**
 
-On macOS, applications are expected to use the OS menu bar. Rendering a duplicate in-window menu bar would look non-native and violate macOS HIG. On Windows and Linux, there is no reliable OS-level menu bar, so the menu must live inside the window — matching the TUI experience.
+- **GUI Editor (`zee-gui`)**:
+  - The menu bar follows the **OS standard native design**.
+  - On macOS, it uses the native system `NSMenuBar`.
+  - On Windows and Linux, the in-window menu bar and its dropdown menus faithfully replicate the native OS appearance (Light mode: neutral `#f3f3f3` with `#1e1e1e` text; Dark mode: neutral `#1f1f1f` with `#f0f0f0` text), dynamically adapting to `window.appearance()`. It is decoupled from editor syntax color schemes to prevent non-native tinting (such as unintentional blue menu bars).
+- **CLI/TUI Editor (`zee`)**:
+  - Operates as a cohesive terminal application where the menu bar is drawn in text mode matching the selected editor theme's palette (`[ui] menu_bar_bg` and `menu_bar_fg`).
 
-This is exactly the approach taken by Zed itself: `app.rs` calls `set_menus()` which on macOS populates `NSMenuBar`, and on other platforms the menu bar is an in-window View.
+This architecture ensures that GUI windows always look and feel like native desktop software matching the user's OS theme, while CLI sessions enjoy rich terminal themes.
 
 #### macOS: Native Menu Bar via `gpui::App::set_menus()`
 

@@ -221,6 +221,15 @@ impl Theme {
         let target = name.trim().to_lowercase();
         let target_slug = target.replace([' ', '_'], "-");
 
+        if target == "dark" {
+            if let Some(t) = all.iter().find(|t| {
+                let n = t.meta.name.to_lowercase();
+                n == "tokyo night" || n == "tokyo-night"
+            }) {
+                return Some(t.clone());
+            }
+        }
+
         all.into_iter().find(|t| {
             let t_name = t.meta.name.to_lowercase();
             let t_slug = t_name.replace([' ', '_'], "-");
@@ -250,10 +259,10 @@ impl Theme {
                 current_line: None,
             },
             ui: UiColors {
-                menu_bar_bg: Color::Ansi(27),
-                menu_bar_fg: Color::Ansi(231),
-                menu_item_active_bg: Color::Ansi(21),
-                menu_item_active_fg: Color::Ansi(231),
+                menu_bar_bg: Color::Ansi(235),
+                menu_bar_fg: Color::Ansi(253),
+                menu_item_active_bg: Color::Ansi(24),
+                menu_item_active_fg: Color::Ansi(15),
                 tab_bar_bg: Color::Ansi(233),
                 tab_active_bg: Color::Ansi(239),
                 tab_active_fg: Color::Ansi(15),

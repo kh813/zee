@@ -62,10 +62,16 @@ impl Workspace {
         let mut initial_editor = Editor::new();
         initial_editor.vi_mode = if config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
 
+        let theme = if config.theme == "terminal-default" || config.theme.is_empty() {
+            Theme::default()
+        } else {
+            Theme::find_by_name(&config.theme).unwrap_or_default()
+        };
+
         Self {
             editors: vec![initial_editor],
             active_editor_index: 0,
-            theme: Theme::default(),
+            theme,
             config,
             sidebar_visible,
             sidebar_tab: SidebarTab::Files,
@@ -1112,6 +1118,55 @@ mod tests {
                 theme.meta.name
             );
         }
+    }
+
+    #[test]
+    fn test_theme_menu_bar_colors_and_appearance_resolution() {
+        use zee_core::theme::{Color, Theme};
+        use zee_core::config::Config;
+        use gpui::WindowAppearance;
+
+        // 1. Verify Light theme has Windows standard neutral colors
+        let light = Theme::find_by_name("light").expect("Light theme must exist");
+        assert_eq!(light.ui.menu_bar_bg, Color::Rgb(230, 230, 230), "Light theme menu_bar_bg must be neutral #e6e6e6");
+        assert_eq!(light.ui.menu_bar_fg, Color::Rgb(0, 0, 0), "Light theme menu_bar_fg must be #000000");
+        assert_eq!(light.ui.menu_item_active_bg, Color::Rgb(200, 220, 255), "Light theme active item must be Windows selection #c8dcff");
+        assert_eq!(light.editor.background, Color::Rgb(255, 255, 255), "Light theme editor background must be pure white");
+
+        // 2. Verify Tokyo Night theme has neutral dark menu bar
+        let tokyo_night = Theme::find_by_name("tokyo-night").expect("Tokyo Night theme must exist");
+        assert_eq!(tokyo_night.ui.menu_bar_bg, Color::Rgb(22, 22, 30), "Tokyo Night menu_bar_bg must be neutral dark #16161e");
+        assert_eq!(tokyo_night.ui.menu_bar_fg, Color::Rgb(192, 202, 245));
+
+        // 3. Verify all built-in themes do not have vibrant blue menu bar background
+        let vibrant_blues = [
+            Color::Rgb(9, 105, 218),  // #0969da
+            Color::Rgb(30, 102, 245), // #1e66f5
+            Color::Rgb(122, 162, 247), // #7aa2f7
+            Color::Rgb(137, 180, 250), // #89b4fa
+        ];
+        for theme in Theme::load_all() {
+            assert!(
+                !vibrant_blues.contains(&theme.ui.menu_bar_bg),
+                "Theme '{}' has vibrant blue menu_bar_bg {:?}",
+                theme.meta.name,
+                theme.ui.menu_bar_bg
+            );
+        }
+
+        // 4. Verify resolve_theme adapts to system appearance
+        let default_config = Config::default();
+        let light_resolved = crate::app::resolve_theme(&default_config, WindowAppearance::Light);
+        assert_eq!(light_resolved.meta.name, "Light", "WindowAppearance::Light must resolve to Light theme");
+
+        let dark_resolved = crate::app::resolve_theme(&default_config, WindowAppearance::Dark);
+        assert_eq!(dark_resolved.meta.name, "Tokyo Night", "WindowAppearance::Dark must resolve to Tokyo Night");
+
+        // 5. Verify explicit theme in config is respected
+        let mut custom_config = Config::default();
+        custom_config.theme = "solarized-dark".to_string();
+        let custom_resolved = crate::app::resolve_theme(&custom_config, WindowAppearance::Light);
+        assert_eq!(custom_resolved.meta.name, "Solarized Dark");
     }
 
     #[test]

@@ -113,6 +113,22 @@ impl WindowView {
             cx.notify();
         }).detach();
 
+        let view_weak = cx.weak_entity();
+        window.observe_window_appearance(move |window, cx| {
+            if let Some(view) = view_weak.upgrade() {
+                view.update(cx, |this, cx| {
+                    if this.config.theme == "terminal-default" || this.config.theme.is_empty() {
+                        let theme_to_use = crate::app::resolve_theme(&this.config, window.appearance());
+                        this.workspace.update(cx, |w, cx| {
+                            w.theme = theme_to_use;
+                            cx.notify();
+                        });
+                        cx.notify();
+                    }
+                });
+            }
+        }).detach();
+
         cx.subscribe(&tab_bar, |this, _tab_bar, event: &TabBarEvent, cx| {
             match event {
                 TabBarEvent::Select(idx) => {

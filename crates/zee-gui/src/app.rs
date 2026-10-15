@@ -232,9 +232,11 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
                 if let Some(files) = files {
                     let paths: Vec<_> = files.into_iter().map(|f| f.path().to_path_buf()).collect();
                     cx.update(|cx| {
+                        let theme_to_use = resolve_theme(&config, cx.window_appearance());
                         cx.open_window(centered_window_options(cx), move |window, cx| {
                             let workspace = cx.new(|_| {
                                 let mut w = Workspace::new(config.clone());
+                                w.theme = theme_to_use;
                                 for path in paths {
                                     if let Ok(editor) = zee_core::buffer::Editor::from_file(&path) {
                                         w.add_editor(editor);
@@ -251,12 +253,19 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
     });
 
     let i18n_about = i18n.clone();
+    let config_about = config.clone();
     app.on_action(move |_: &About, cx| {
         let i18n = i18n_about.clone();
+        let config = config_about.clone();
+        let theme_to_use = resolve_theme(&config, cx.window_appearance());
         cx.open_window(centered_window_options(cx), move |window, cx| {
-            let workspace = cx.new(|_| Workspace::new(Config::default()));
+            let workspace = cx.new(|_| {
+                let mut w = Workspace::new(config.clone());
+                w.theme = theme_to_use;
+                w
+            });
             cx.new(|cx| {
-                let mut view = WindowView::new(Config::default(), i18n.clone(), workspace, window, cx);
+                let mut view = WindowView::new(config, i18n.clone(), workspace, window, cx);
                 // Immediately show about dialog
                 view.handle_about(&About {}, window, cx);
                 view
@@ -265,8 +274,10 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
     });
 
     let i18n_update = i18n.clone();
+    let config_update = config.clone();
     app.on_action(move |_: &CheckForUpdates, cx| {
         let i18n = i18n_update.clone();
+        let config = config_update.clone();
         if let Some(window_handle) = cx.active_window() {
             let _ = cx.update_window(window_handle, |any_view, window, cx| {
                 if let Ok(view_handle) = any_view.downcast::<WindowView>() {
@@ -276,10 +287,15 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
                 }
             });
         } else {
+            let theme_to_use = resolve_theme(&config, cx.window_appearance());
             cx.open_window(centered_window_options(cx), move |window, cx| {
-                let workspace = cx.new(|_| Workspace::new(Config::default()));
+                let workspace = cx.new(|_| {
+                    let mut w = Workspace::new(config.clone());
+                    w.theme = theme_to_use;
+                    w
+                });
                 cx.new(|cx| {
-                    let mut view = WindowView::new(Config::default(), i18n.clone(), workspace, window, cx);
+                    let mut view = WindowView::new(config, i18n.clone(), workspace, window, cx);
                     view.handle_check_for_updates(&CheckForUpdates {}, window, cx);
                     view
                 })
@@ -446,20 +462,24 @@ fn centered_window_options(cx: &App) -> WindowOptions {
     }
 }
 
-pub fn new_window(config: Config, i18n: I18n, cx: &mut App) {
-    cx.activate(true);
-    let theme_to_use = if config.theme == "terminal-default" || config.theme.is_empty() {
-        match cx.window_appearance() {
+pub fn resolve_theme(config: &Config, appearance: WindowAppearance) -> Theme {
+    if config.theme == "terminal-default" || config.theme.is_empty() {
+        match appearance {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => {
                 Theme::find_by_name("tokyo-night").unwrap_or_default()
             }
             WindowAppearance::Light | WindowAppearance::VibrantLight => {
-                Theme::find_by_name("catppuccin-latte").unwrap_or_default()
+                Theme::find_by_name("light").unwrap_or_else(|| Theme::find_by_name("catppuccin-latte").unwrap_or_default())
             }
         }
     } else {
         Theme::find_by_name(&config.theme).unwrap_or_default()
-    };
+    }
+}
+
+pub fn new_window(config: Config, i18n: I18n, cx: &mut App) {
+    cx.activate(true);
+    let theme_to_use = resolve_theme(&config, cx.window_appearance());
 
     let options = centered_window_options(cx);
     cx.open_window(options, move |window, cx| {
@@ -475,18 +495,7 @@ pub fn new_window(config: Config, i18n: I18n, cx: &mut App) {
 
 pub fn open_file_targets(targets: Vec<zee_core::cli::FileTarget>, config: Config, i18n: I18n, cx: &mut App) {
     cx.activate(true);
-    let theme_to_use = if config.theme == "terminal-default" || config.theme.is_empty() {
-        match cx.window_appearance() {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => {
-                Theme::find_by_name("tokyo-night").unwrap_or_default()
-            }
-            WindowAppearance::Light | WindowAppearance::VibrantLight => {
-                Theme::find_by_name("catppuccin-latte").unwrap_or_default()
-            }
-        }
-    } else {
-        Theme::find_by_name(&config.theme).unwrap_or_default()
-    };
+    let theme_to_use = resolve_theme(&config, cx.window_appearance());
 
     let options = centered_window_options(cx);
     cx.open_window(options, move |window, cx| {
@@ -535,18 +544,7 @@ pub fn open_paths(paths: Vec<std::path::PathBuf>, config: Config, i18n: I18n, cx
 
 pub fn restore_session_window(session: zee_core::session::UpdateSession, config: Config, i18n: I18n, cx: &mut App) {
     cx.activate(true);
-    let theme_to_use = if config.theme == "terminal-default" || config.theme.is_empty() {
-        match cx.window_appearance() {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => {
-                Theme::find_by_name("tokyo-night").unwrap_or_default()
-            }
-            WindowAppearance::Light | WindowAppearance::VibrantLight => {
-                Theme::find_by_name("catppuccin-latte").unwrap_or_default()
-            }
-        }
-    } else {
-        Theme::find_by_name(&config.theme).unwrap_or_default()
-    };
+    let theme_to_use = resolve_theme(&config, cx.window_appearance());
 
     let options = centered_window_options(cx);
     cx.open_window(options, move |window, cx| {

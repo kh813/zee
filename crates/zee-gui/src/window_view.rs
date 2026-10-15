@@ -13,7 +13,7 @@ use zee_core::buffer::Editor;
 #[cfg(not(target_os = "macos"))]
 use crate::widgets::menu_bar::{MenuBar, SubmenuId};
 #[cfg(not(target_os = "macos"))]
-use crate::widgets::{led_color_to_gpui, ui_font_family, with_alpha};
+use crate::widgets::ui_font_family;
 
 use crate::widgets::dialog::{Dialog, DialogType, DialogEvent, UnsavedChangesIntent};
 
@@ -1394,7 +1394,7 @@ impl WindowView {
 }
 
 impl Render for WindowView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = self.workspace.read(cx);
         let theme = &workspace.theme;
         let bg = self.led_color_to_gpui(theme.editor.background);

@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::fs::{File, OpenOptions};
 
 /// Cross-platform single instance lock to prevent duplicate GUI/CLI application instances.

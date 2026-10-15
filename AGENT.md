@@ -54,7 +54,42 @@ Standard releases (`.github/workflows/release.yml`, triggered by git tag `v*`) m
 - The renderer must issue SGR Reset (`\x1b[0m`) when cell background transitions to `Color::Reset` to avoid terminal BCE (Background Color Erase) artifacts.
 - `Renderer::invalidate()` must be used to force differential repainting on full clear.
 
+### GUI vs CLI Menu Design Contract (メニュー配色の基本原則)
+- **GUI (macOS / Windows / Linux)**:
+  - Top application menu bars, dropdown menus, and window frames must adhere to the **OS native standard design** (Light or Dark appearance according to the system theme), **NOT** the user-selected editor theme colors.
+  - The editor theme applies exclusively to editor buffers, gutter, status bar, and dialog body contents.
+  - On Windows/Linux GPUI, `get_os_menu_colors(window)` dynamically resolves OS Light/Dark colors. Themes must not overwrite GUI menu background/foreground colors.
+- **CLI / TUI**:
+  - Terminal menus and dropdowns are rendered within the terminal grid and must follow the **selected editor theme** (`theme.menu.background`, `theme.menu.foreground`) since terminals do not possess native OS menu bar widgets.
+
 ### Self-Update & Session Preservation
 - Both CLI and GUI must automatically preserve buffer state (all open files, dirty/unsaved scratch content, cursor positions, scroll rows, active tab, sidebar tree) into `UpdateSession` before self-updating.
 - Upon relaunch, the application must automatically restore all buffers and UI state.
 - CLI must use in-place `exec` (Unix) or spawn (Windows) to automatically restart within the same terminal session.
+
+---
+
+## 5. Windows Testing & Pre-Release Verification Policy (Mac開発でのWindows品質担保)
+
+To prevent broken or regressed releases on Windows when developing on macOS:
+
+### 1. Mandatory Local Cross-Check Before Push
+Before committing changes that touch shared GUI (`zee-gui`), core logic (`zee-core`), or platform-conditional code (`#[cfg(windows)]`, `#[cfg(not(target_os = "macos"))]`):
+```bash
+cargo check --workspace --target x86_64-pc-windows-gnu
+```
+- **Execution Time**: ~1-4 seconds on macOS.
+- **What it catches**: 100% of compile errors, broken imports, missing/misnamed variables in Windows-only code blocks, type mismatches, and Windows API incompatibilities.
+- **Rule**: Never push commits to remote if this check fails.
+
+### 2. Platform-Agnostic Automated Unit Testing
+- GPUI appearance resolution, color calculations, state transitions, theme resolution, and file opening rules must be implemented as testable pure functions or unit tests.
+- Every platform behavior contract must be covered by automated regression tests runnable on macOS (`cargo test --workspace`).
+
+### 3. Release Gate: No Blind Tagging (見切り発車リリースの禁止)
+- **Never push a release tag (`v*`) directly without CI confirmation.**
+- **Standard Pre-Release Workflow**:
+  1. Commit changes and push to `main` (or a feature branch).
+  2. Confirm that the GitHub Actions CI (`.github/workflows/ci.yml`) completes successfully across all platforms, specifically **`build-and-test (windows-latest)`**.
+  3. Only after CI passes on Windows, create and push the release tag (`git tag vX.Y.Z && git push origin vX.Y.Z`).
+- This guarantees that binaries are never distributed with undetected Windows compilation or test failures.

@@ -30,6 +30,7 @@ pub fn is_cjk_char(c: char) -> bool {
     unicode_width::UnicodeWidthChar::width(c).unwrap_or(0) >= 2
 }
 
+#[allow(dead_code)]
 pub(crate) fn evaluate_input_source_cjk(
     input_mode: Option<&str>,
     bundle_id: Option<&str>,

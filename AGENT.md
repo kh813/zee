@@ -69,27 +69,39 @@ Standard releases (`.github/workflows/release.yml`, triggered by git tag `v*`) m
 
 ---
 
-## 5. Windows Testing & Pre-Release Verification Policy (Mac開発でのWindows品質担保)
+## 5. Multi-Platform Local Verification & Pre-Release Policy (Mac環境での全3ターゲット品質担保)
 
-To prevent broken or regressed releases on Windows when developing on macOS:
+To prevent broken or regressed releases across all 3 release targets (macOS GUI, Windows GUI, Linux CLI) when developing on macOS:
 
-### 1. Mandatory Local Cross-Check Before Push
-Before committing changes that touch shared GUI (`zee-gui`), core logic (`zee-core`), or platform-conditional code (`#[cfg(windows)]`, `#[cfg(not(target_os = "macos"))]`):
+### 1. Multi-Platform Local Verification Matrix
+Every release package must be verified locally on macOS before pushing or tagging:
+
+| Target | Release Asset | Local Verification Command on macOS | What It Guarantees |
+| :--- | :--- | :--- | :--- |
+| **macOS (arm64)** | `zee-v*-macos-arm64.zip` (Zee.app) | `cargo test --workspace`<br>`cargo check --release -p zee-gui --bin zeeg` | Full workspace unit/regression suite (130+ tests) passes and GUI release binary compiles cleanly without warnings. |
+| **Windows (x64)** | `zee-v*-windows-x64.zip` (zee.exe) | `cargo check --workspace --target x86_64-pc-windows-gnu` | 100% of `#[cfg(windows)]`, `#[cfg(not(target_os = "macos"))]`, GPUI Windows integration, and scope/API errors are caught in ~1-3s. |
+| **Linux (x64)** | `zee-cli-v*-linux-x64.zip` (zee) | `docker run --rm --platform linux/amd64 -v zee_cargo_registry:/usr/local/cargo/registry -v zee_cargo_git:/usr/local/cargo/git -v zee_target_linux:/workspace/target_docker -v "$PWD":/workspace -w /workspace -e CARGO_TARGET_DIR=/workspace/target_docker rust:slim cargo test -p zee-tui --lib` | Runs all 69+ CLI tests natively inside an `amd64` Linux container with persistent volume caching in ~3-5s. |
+
+### 2. All-in-One Automated Check Tool
+Run the unified verification script before finishing major tasks or pushing releases:
 ```bash
-cargo check --workspace --target x86_64-pc-windows-gnu
+./scripts/verify-all-targets.sh
 ```
-- **Execution Time**: ~1-4 seconds on macOS.
-- **What it catches**: 100% of compile errors, broken imports, missing/misnamed variables in Windows-only code blocks, type mismatches, and Windows API incompatibilities.
-- **Rule**: Never push commits to remote if this check fails.
-
-### 2. Platform-Agnostic Automated Unit Testing
-- GPUI appearance resolution, color calculations, state transitions, theme resolution, and file opening rules must be implemented as testable pure functions or unit tests.
-- Every platform behavior contract must be covered by automated regression tests runnable on macOS (`cargo test --workspace`).
+This script sequentially runs:
+1. `[1/3] macOS`: Full workspace tests + release GUI compilation.
+2. `[2/3] Windows`: Cross-target compilation check (`x86_64-pc-windows-gnu`).
+3. `[3/3] Linux`: Native unit test execution inside cached Docker container.
 
 ### 3. Release Gate: No Blind Tagging (見切り発車リリースの禁止)
 - **Never push a release tag (`v*`) directly without CI confirmation.**
 - **Standard Pre-Release Workflow**:
-  1. Commit changes and push to `main` (or a feature branch).
-  2. Confirm that the GitHub Actions CI (`.github/workflows/ci.yml`) completes successfully across all platforms, specifically **`build-and-test (windows-latest)`**.
-  3. Only after CI passes on Windows, create and push the release tag (`git tag vX.Y.Z && git push origin vX.Y.Z`).
-- This guarantees that binaries are never distributed with undetected Windows compilation or test failures.
+  1. Run `./scripts/verify-all-targets.sh` locally on macOS and verify all 3 targets pass.
+  2. Commit changes and push to `main` (or a feature branch).
+  3. Confirm that GitHub Actions CI (`.github/workflows/ci.yml`) completes successfully across all platforms (`windows-latest`, `ubuntu-latest`, `macos-latest`).
+  4. Only after CI passes, create and push the release tag:
+     ```bash
+     git tag vX.Y.Z
+     git push origin vX.Y.Z
+     ```
+- This guarantees that release packages are never distributed with undetected cross-platform compilation or test failures.
+

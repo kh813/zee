@@ -1398,6 +1398,7 @@ impl Render for WindowView {
         let workspace = self.workspace.read(cx);
         let theme = &workspace.theme;
         let bg = self.led_color_to_gpui(theme.editor.background);
+        let _ = window;
 
         let root = div()
             .w_full()

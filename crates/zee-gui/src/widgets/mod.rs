@@ -12,6 +12,8 @@ use zee_core::theme::Color as LedColor;
 pub fn ui_font_family() -> &'static str {
     if cfg!(target_os = "macos") {
         ".AppleSystemUIFont"
+    } else if cfg!(target_os = "windows") {
+        "Segoe UI"
     } else {
         "sans-serif"
     }
@@ -20,6 +22,8 @@ pub fn ui_font_family() -> &'static str {
 pub fn mono_font_family() -> &'static str {
     if cfg!(target_os = "macos") {
         "Menlo"
+    } else if cfg!(target_os = "windows") {
+        "Consolas"
     } else {
         "monospace"
     }

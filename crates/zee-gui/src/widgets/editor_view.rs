@@ -72,8 +72,12 @@ impl EditorView {
         
         let config = workspace.read(cx).config.clone();
         let font_size = config.font_size;
-        let ascii_width = if cfg!(target_os = "macos") { font_size * 0.602 } else { font_size * 0.6 };
-        let cjk_width = font_size * 1.0;
+        let font = gpui::font(config.font_family.as_deref().unwrap_or_else(|| mono_font_family()));
+        let font_id = cx.text_system().resolve_font(&font);
+        let measured_ascii = cx.text_system().advance(font_id, px(font_size), 'x').ok().map(|s| s.width / px(1.0));
+        let measured_cjk = cx.text_system().advance(font_id, px(font_size), 'あ').ok().map(|s| s.width / px(1.0));
+        let ascii_width = measured_ascii.unwrap_or(if cfg!(target_os = "macos") { font_size * 0.602 } else { font_size * 0.6 });
+        let cjk_width = measured_cjk.unwrap_or(font_size * 1.0);
 
         Self {
             workspace,
@@ -3689,8 +3693,24 @@ impl Render for EditorView {
 
         let editor = workspace.active_editor().unwrap();
         let font_family: SharedString = match &workspace.config.font_family {
-            Some(f) => SharedString::from(f.clone()),
-            None => SharedString::from(mono_font_family()),
+            Some(f) if !f.is_empty() => SharedString::from(f.clone()),
+            _ => {
+                #[cfg(target_os = "windows")]
+                {
+                    let all_fonts = cx.text_system().all_font_names();
+                    if all_fonts.iter().any(|f| f == "Cascadia Mono") {
+                        SharedString::from("Cascadia Mono")
+                    } else if all_fonts.iter().any(|f| f == "Cascadia Code") {
+                        SharedString::from("Cascadia Code")
+                    } else {
+                        SharedString::from(mono_font_family())
+                    }
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    SharedString::from(mono_font_family())
+                }
+            }
         };
         let font_size = px(workspace.config.font_size);
         let line_height = px(workspace.config.line_height);
@@ -3699,8 +3719,16 @@ impl Render for EditorView {
         let text_left_padding = if workspace.config.line_numbers { TEXT_AREA_LEFT_PADDING } else { px(0.0) };
         let sidebar_width = if workspace.sidebar_visible { px(240.0) } else { px(0.0) };
         let font_size_val = workspace.config.font_size;
-        let ascii_width = if cfg!(target_os = "macos") { font_size_val * 0.602 } else { font_size_val * 0.6 };
-        let cjk_width = font_size_val * 1.0;
+
+        let font = gpui::font(font_family.clone());
+        let font_id = cx.text_system().resolve_font(&font);
+        let measured_ascii = cx.text_system().advance(font_id, font_size, 'x').ok().map(|s| s.width / px(1.0));
+        let measured_cjk = cx.text_system().advance(font_id, font_size, 'あ').ok().map(|s| s.width / px(1.0));
+
+        let ascii_width = measured_ascii.unwrap_or_else(|| {
+            if cfg!(target_os = "macos") { font_size_val * 0.602 } else { font_size_val * 0.6 }
+        });
+        let cjk_width = measured_cjk.unwrap_or(font_size_val * 1.0);
         self.ascii_width_px = ascii_width;
         self.cjk_width_px = cjk_width;
         let viewport_width = window.viewport_size().width;
@@ -3942,7 +3970,7 @@ impl EditorView {
                     .border_r_1()
                     .border_color(if workspace.config.line_numbers { gutter_border } else { rgba(0x00000000) })
                     .text_color(led_color_to_gpui(theme.editor.line_number))
-                    .font_family(mono_font_family())
+                    .font_family(workspace.config.font_family.as_deref().unwrap_or_else(|| mono_font_family()))
                     .child(
                         if workspace.config.line_numbers && v_idx == 0 {
                             (line_idx + 1).to_string()

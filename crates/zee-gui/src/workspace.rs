@@ -1376,5 +1376,27 @@ mod tests {
         assert!(makefile.contains("<string>ja</string>"));
         assert!(makefile.contains("<string>en</string>"));
     }
+
+    #[test]
+    fn test_font_family_platform_defaults_and_contracts() {
+        let mono = crate::widgets::mono_font_family();
+        let ui = crate::widgets::ui_font_family();
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(mono, "Menlo");
+            assert_eq!(ui, ".AppleSystemUIFont");
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(mono, "Consolas");
+            assert_eq!(ui, "Segoe UI");
+        }
+        #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+        {
+            assert_eq!(mono, "monospace");
+            assert_eq!(ui, "sans-serif");
+        }
+    }
 }
 

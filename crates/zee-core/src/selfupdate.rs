@@ -322,6 +322,19 @@ pub fn download_file(url: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Strips verbatim UNC prefix (`\\?\` or `\\?\UNC\`) added by Windows canonicalize(),
+/// which breaks cmd.exe, move, copy, and batch script executions.
+pub fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{}", stripped))
+    } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// Apply update from downloaded archive in place.
 pub fn apply_update(asset_url: &str, app_type: AppType) -> Result<()> {
     let archive_bytes = download_file(asset_url)?;
@@ -329,6 +342,7 @@ pub fn apply_update(asset_url: &str, app_type: AppType) -> Result<()> {
     let current_exe = std::env::current_exe()
         .context("Could not determine currently running executable path")?;
     let current_exe = current_exe.canonicalize().unwrap_or(current_exe);
+    let current_exe = strip_verbatim_prefix(&current_exe);
 
     #[cfg(target_os = "macos")]
     {
@@ -713,57 +727,101 @@ fn extract_tar_gz_binary(tar_gz_bytes: &[u8], target_name: &str, dest_file: &Pat
     Err(anyhow!("Binary '{}' not found in update archive", target_name))
 }
 
+/// Generates a robust Windows batch script to swap the running binary upon application exit.
+pub fn generate_windows_update_script(
+    current_exe: &Path,
+    new_bin_path: &Path,
+    old_exe: &Path,
+    pid: u32,
+    is_gui: bool,
+) -> String {
+    let exe_str = strip_verbatim_prefix(current_exe).to_string_lossy().replace("/", "\\");
+    let new_exe_str = strip_verbatim_prefix(new_bin_path).to_string_lossy().replace("/", "\\");
+    let old_exe_str = strip_verbatim_prefix(old_exe).to_string_lossy().replace("/", "\\");
+
+    let relaunch_clause = if is_gui {
+        format!("ping -n 2 127.0.0.1 >nul 2>&1\r\nstart \"\" \"{}\"", exe_str)
+    } else {
+        String::new()
+    };
+
+    format!(
+        "@echo off\r\n\
+setlocal\r\n\
+\r\n\
+set \"EXE={exe}\"\r\n\
+set \"NEWEXE={new_exe}\"\r\n\
+set \"OLDEXE={old_exe}\"\r\n\
+set \"PID={pid}\"\r\n\
+\r\n\
+:: Kill the running process to unlock the binary file\r\n\
+taskkill /F /PID %PID% >nul 2>&1\r\n\
+ping -n 2 127.0.0.1 >nul 2>&1\r\n\
+\r\n\
+:: Remove old backup if present\r\n\
+if exist \"%OLDEXE%\" del /f /q \"%OLDEXE%\" >nul 2>&1\r\n\
+\r\n\
+:: Retry loop to replace the executable\r\n\
+set SWAPPED=0\r\n\
+for /L %%i in (1,1,30) do (\r\n\
+    if not exist \"%NEWEXE%\" goto done_swap\r\n\
+    if exist \"%EXE%\" (\r\n\
+        move /y \"%EXE%\" \"%OLDEXE%\" >nul 2>&1\r\n\
+    )\r\n\
+    if not exist \"%EXE%\" (\r\n\
+        move /y \"%NEWEXE%\" \"%EXE%\" >nul 2>&1\r\n\
+        if not exist \"%NEWEXE%\" (\r\n\
+            set SWAPPED=1\r\n\
+            goto done_swap\r\n\
+        )\r\n\
+        copy /y \"%NEWEXE%\" \"%EXE%\" >nul 2>&1\r\n\
+        if exist \"%EXE%\" (\r\n\
+            del /f /q \"%NEWEXE%\" >nul 2>&1\r\n\
+            set SWAPPED=1\r\n\
+            goto done_swap\r\n\
+        )\r\n\
+    )\r\n\
+    ping -n 2 127.0.0.1 >nul 2>&1\r\n\
+)\r\n\
+\r\n\
+:done_swap\r\n\
+if \"%SWAPPED%\"==\"1\" (\r\n\
+    if exist \"%OLDEXE%\" del /f /q \"%OLDEXE%\" >nul 2>&1\r\n\
+    {relaunch}\r\n\
+) else (\r\n\
+    if not exist \"%EXE%\" if exist \"%OLDEXE%\" move /y \"%OLDEXE%\" \"%EXE%\" >nul 2>&1\r\n\
+    {relaunch}\r\n\
+)\r\n\
+\r\n\
+del /f /q \"%~f0\" >nul 2>&1\r\n",
+        exe = exe_str,
+        new_exe = new_exe_str,
+        old_exe = old_exe_str,
+        pid = pid,
+        relaunch = relaunch_clause
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn apply_windows_binary(zip_bytes: &[u8], current_exe: &Path, target_candidates: &[&str], is_gui: bool) -> Result<()> {
+    let current_exe = strip_verbatim_prefix(current_exe);
     let staging_dir = tempfile_staging_dir("zee-update")?;
     let found_name = extract_zip_binary_candidates(zip_bytes, target_candidates, &staging_dir)?;
-    let new_bin_path = staging_dir.join(found_name);
+    let new_bin_path = strip_verbatim_prefix(&staging_dir.join(found_name));
 
     let pid = std::process::id();
-    let relaunch_cmd = if is_gui { "start \"\" \"%EXE%\"" } else { "" };
-    let old_exe = current_exe.with_extension("old");
+    let old_exe = strip_verbatim_prefix(&current_exe.with_extension("old"));
 
-    let script = format!(r#"@echo off
-setlocal
-set "EXE=%~1"
-set "NEWEXE=%~2"
-set "OLDEXE=%~3"
-set "PID=%~4"
-
-ping -n 2 127.0.0.1 <nul >nul 2>&1
-taskkill /F /PID %PID% <nul >nul 2>&1
-ping -n 2 127.0.0.1 <nul >nul 2>&1
-
-if exist "%OLDEXE%" del /f /q "%OLDEXE%" >nul 2>&1
-
-for /L %%i in (1,1,10) do (
-    if exist "%EXE%" move /y "%EXE%" "%OLDEXE%" >nul 2>&1
-    if exist "%NEWEXE%" move /y "%NEWEXE%" "%EXE%" >nul 2>&1
-    if not exist "%NEWEXE%" goto swapped
-    ping -n 2 127.0.0.1 <nul >nul 2>&1
-)
-
-if exist "%OLDEXE%" move /y "%OLDEXE%" "%EXE%" >nul 2>&1
-if exist "%EXE%" {}
-del /f /q "%~f0" >nul 2>&1
-exit /b 1
-
-:swapped
-{}
-if exist "%OLDEXE%" del /f /q "%OLDEXE%" >nul 2>&1
-del /f /q "%~f0" >nul 2>&1
-"#, relaunch_cmd, relaunch_cmd);
-
+    let script = generate_windows_update_script(&current_exe, &new_bin_path, &old_exe, pid, is_gui);
     let script_path = std::env::temp_dir().join(format!("zee-update-{}.bat", pid));
-    fs::write(&script_path, script.replace("\n", "\r\n"))?;
+    fs::write(&script_path, script)?;
 
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
-    const DETACHED_PROCESS: u32 = 0x00000008;
 
     let child = Command::new("cmd")
-        .args(["/c", script_path.to_str().unwrap(), current_exe.to_str().unwrap(), new_bin_path.to_str().unwrap(), old_exe.to_str().unwrap(), &pid.to_string()])
-        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .args(["/c", &script_path.to_string_lossy().replace("/", "\\")])
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .context("Failed to spawn Windows update helper process")?;
 
@@ -1229,5 +1287,77 @@ mod tests {
         let exe = res.unwrap();
         assert!(!exe.to_string_lossy().ends_with(" (deleted)"), "Resolved executable should never end with ' (deleted)'");
         assert!(exe.exists(), "Resolved executable path should exist on disk: {:?}", exe);
+    }
+
+    #[test]
+    fn test_strip_verbatim_prefix_variants() {
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\C:\Users\foo\zee.exe")),
+            PathBuf::from(r"C:\Users\foo\zee.exe")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\UNC\server\share\zee.exe")),
+            PathBuf::from(r"\\server\share\zee.exe")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"C:\Program Files\zee\zee.exe")),
+            PathBuf::from(r"C:\Program Files\zee\zee.exe")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new("/usr/local/bin/zee")),
+            PathBuf::from("/usr/local/bin/zee")
+        );
+    }
+
+    #[test]
+    fn test_generate_windows_update_script_structure_and_contracts() {
+        let exe = Path::new(r"\\?\C:\Users\test\zee.exe");
+        let new_exe = Path::new(r"\\?\C:\Users\test\AppData\Local\Temp\staging\zee.exe");
+        let old_exe = Path::new(r"\\?\C:\Users\test\zee.old");
+        let pid = 9876;
+
+        let script = generate_windows_update_script(exe, new_exe, old_exe, pid, true);
+
+        // 1. Must NOT contain verbatim UNC prefixes (\\?\) which break cmd.exe and move/copy/del
+        assert!(!script.contains(r"\\?\"), "Generated Windows batch script must NEVER contain \\?\\ prefixes");
+
+        // 2. Must start with @echo off
+        assert!(script.starts_with("@echo off"), "Batch script must begin with @echo off");
+
+        // 3. Must embed variables directly rather than relying on cmd.exe /c arg quoting
+        assert!(script.contains(r#"set "EXE=C:\Users\test\zee.exe""#));
+        assert!(script.contains(r#"set "PID=9876""#));
+
+        // 4. Must contain retry loop and copy fallback
+        assert!(script.contains("for /L %%i in (1,1,30) do"));
+        assert!(script.contains(r#"copy /y "%NEWEXE%" "%EXE%""#));
+
+        // 5. Must contain self cleanup
+        assert!(script.contains(r#"del /f /q "%~f0""#));
+
+        // 6. GUI relaunch must use start "" "%EXE%" after delay
+        assert!(script.contains(r#"start "" "C:\Users\test\zee.exe""#));
+    }
+
+    #[test]
+    fn test_extract_zip_binary_candidates_nested_folder() {
+        use zip::write::{SimpleFileOptions, ZipWriter};
+        use std::io::{Cursor, Write};
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+            let options = SimpleFileOptions::default();
+            zip.add_directory("zee-v0.2.15-windows-x64", options).unwrap();
+            zip.start_file("zee-v0.2.15-windows-x64/zee.exe", options).unwrap();
+            zip.write_all(b"windows binary in nested zip folder").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let temp_dir = tempfile_staging_dir("test-zip-win-nested").unwrap();
+        let found = extract_zip_binary_candidates(&buf, &["zee.exe", "zeeg.exe"], &temp_dir).unwrap();
+        assert_eq!(found, "zee.exe");
+        assert_eq!(fs::read(temp_dir.join("zee.exe")).unwrap(), b"windows binary in nested zip folder");
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

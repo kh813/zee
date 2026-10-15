@@ -576,16 +576,19 @@ fn extract_zip_app_bundle(zip_bytes: &[u8], dest_dir: &Path) -> Result<PathBuf> 
     let reader = Cursor::new(zip_bytes);
     let mut zip = zip::ZipArchive::new(reader).context("Failed to read ZIP archive")?;
 
-    let mut app_dir_name: Option<String> = None;
+    let mut app_dir_rel_path: Option<String> = None;
 
     for i in 0..zip.len() {
         let mut file = zip.by_index(i).context("Failed to access file in ZIP")?;
         let raw_name = file.name().to_string();
         
-        // Find the root .app folder name
-        if let Some(first_component) = raw_name.split('/').next() {
-            if first_component.ends_with(".app") {
-                app_dir_name = Some(first_component.to_string());
+        // Find the relative path to the .app bundle directory (handles both root and nested paths)
+        if app_dir_rel_path.is_none() {
+            let normalized = raw_name.replace('\\', "/");
+            let parts: Vec<&str> = normalized.split('/').collect();
+            if let Some(pos) = parts.iter().position(|p| p.ends_with(".app")) {
+                let rel = parts[..=pos].join("/");
+                app_dir_rel_path = Some(rel);
             }
         }
 
@@ -610,8 +613,8 @@ fn extract_zip_app_bundle(zip_bytes: &[u8], dest_dir: &Path) -> Result<PathBuf> 
         }
     }
 
-    let app_name = app_dir_name.ok_or_else(|| anyhow!("ZIP archive did not contain a .app bundle"))?;
-    Ok(dest_dir.join(app_name))
+    let app_path = app_dir_rel_path.ok_or_else(|| anyhow!("ZIP archive did not contain a .app bundle"))?;
+    Ok(dest_dir.join(app_path))
 }
 
 #[cfg(unix)]
@@ -712,6 +715,9 @@ fn extract_tar_gz_binary(tar_gz_bytes: &[u8], target_name: &str, dest_file: &Pat
 
     for entry in archive.entries().context("Failed to read tar archive entries")? {
         let mut entry = entry.context("Failed to read tar archive entry")?;
+        if entry.header().entry_type().is_dir() {
+            continue;
+        }
         let path = entry.path().context("Invalid entry path in tar archive")?;
         
         if let Some(file_name) = path.file_name() {
@@ -838,9 +844,16 @@ fn extract_zip_binary_candidates(zip_bytes: &[u8], target_candidates: &[&str], d
     for candidate in target_candidates {
         for i in 0..zip.len() {
             let mut file = zip.by_index(i).context("Failed to access file in ZIP")?;
+            if file.is_dir() {
+                continue;
+            }
             let raw_name = file.name();
 
-            if raw_name.ends_with(candidate) {
+            let matches = raw_name == *candidate
+                || raw_name.ends_with(&format!("/{}", candidate))
+                || raw_name.ends_with(&format!(r"\{}", candidate));
+
+            if matches {
                 let dest_file = dest_dir.join(candidate);
                 let mut out = File::create(&dest_file)
                     .context("Failed to create destination file for extracted binary")?;
@@ -861,9 +874,16 @@ fn extract_zip_binary(zip_bytes: &[u8], target_name: &str, dest_file: &Path) -> 
 
     for i in 0..zip.len() {
         let mut file = zip.by_index(i).context("Failed to access file in ZIP")?;
+        if file.is_dir() {
+            continue;
+        }
         let raw_name = file.name();
         
-        if raw_name.ends_with(target_name) {
+        let matches = raw_name == target_name
+            || raw_name.ends_with(&format!("/{}", target_name))
+            || raw_name.ends_with(&format!(r"\{}", target_name));
+
+        if matches {
             let mut out = File::create(dest_file)
                 .context("Failed to create destination file for extracted binary")?;
             io::copy(&mut file, &mut out)?;
@@ -1359,5 +1379,183 @@ mod tests {
         assert_eq!(found, "zee.exe");
         assert_eq!(fs::read(temp_dir.join("zee.exe")).unwrap(), b"windows binary in nested zip folder");
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_zip_app_bundle_nested_extraction() {
+        use zip::write::{SimpleFileOptions, ZipWriter};
+        use std::io::{Cursor, Write};
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+            let options = SimpleFileOptions::default();
+            
+            // Nested inside a release folder like: zee-v0.2.15-macos-arm64/Zee.app/Contents/MacOS/zeeg
+            zip.add_directory("zee-v0.2.15-macos-arm64", options).unwrap();
+            zip.add_directory("zee-v0.2.15-macos-arm64/Zee.app", options).unwrap();
+            zip.add_directory("zee-v0.2.15-macos-arm64/Zee.app/Contents", options).unwrap();
+            zip.add_directory("zee-v0.2.15-macos-arm64/Zee.app/Contents/MacOS", options).unwrap();
+            zip.start_file("zee-v0.2.15-macos-arm64/Zee.app/Contents/MacOS/zeeg", options).unwrap();
+            zip.write_all(b"zeeg macos gui nested binary").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let temp_dir = tempfile_staging_dir("test-zip-app-nested-extract").unwrap();
+        let app_dir = extract_zip_app_bundle(&buf, &temp_dir).unwrap();
+        assert!(app_dir.exists(), "Extracted nested .app path must exist: {:?}", app_dir);
+        assert_eq!(app_dir.file_name().unwrap(), "Zee.app");
+        assert!(app_dir.join("Contents/MacOS/zeeg").exists());
+        let content = fs::read(app_dir.join("Contents/MacOS/zeeg")).unwrap();
+        assert_eq!(content, b"zeeg macos gui nested binary");
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_extract_zip_binary_strict_name_matching_and_directory_skipping() {
+        use zip::write::{SimpleFileOptions, ZipWriter};
+        use std::io::{Cursor, Write};
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+            let options = SimpleFileOptions::default();
+            
+            // 1. Directory named "zee" (should be skipped!)
+            zip.add_directory("zee", options).unwrap();
+            // 2. File with suffix collision "not_zee" (should NOT match "zee")
+            zip.start_file("not_zee", options).unwrap();
+            zip.write_all(b"wrong file not_zee").unwrap();
+            // 3. File with extension collision "zee.bak" (should NOT match "zee")
+            zip.start_file("zee.bak", options).unwrap();
+            zip.write_all(b"wrong file zee.bak").unwrap();
+            // 4. Genuine binary in nested folder "release-artifacts/zee"
+            zip.start_file("release-artifacts/zee", options).unwrap();
+            zip.write_all(b"correct linux binary").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let temp_dir = tempfile_staging_dir("test-zip-binary-strict").unwrap();
+        let dest = temp_dir.join("zee");
+        extract_zip_binary(&buf, "zee", &dest).unwrap();
+        assert!(dest.exists());
+        assert_eq!(fs::read(&dest).unwrap(), b"correct linux binary");
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_extract_zip_binary_candidates_strict_and_dir_skip() {
+        use zip::write::{SimpleFileOptions, ZipWriter};
+        use std::io::{Cursor, Write};
+
+        let mut buf = Vec::new();
+        {
+            let mut zip = ZipWriter::new(Cursor::new(&mut buf));
+            let options = SimpleFileOptions::default();
+            
+            // 1. Directory named "zee.exe" (must be skipped!)
+            zip.add_directory("zee.exe", options).unwrap();
+            // 2. Suffix collision "fake_zee.exe"
+            zip.start_file("fake_zee.exe", options).unwrap();
+            zip.write_all(b"fake binary").unwrap();
+            // 3. Nested target binary
+            zip.start_file("package/zee.exe", options).unwrap();
+            zip.write_all(b"real windows binary").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let temp_dir = tempfile_staging_dir("test-zip-candidates-strict").unwrap();
+        let found = extract_zip_binary_candidates(&buf, &["zee.exe", "zeeg.exe"], &temp_dir).unwrap();
+        assert_eq!(found, "zee.exe");
+        assert_eq!(fs::read(temp_dir.join("zee.exe")).unwrap(), b"real windows binary");
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_extract_tar_gz_binary_skips_directories_and_nested() {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use tar::Builder;
+
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        {
+            let mut tar = Builder::new(&mut encoder);
+            
+            // Directory named "zee"
+            let mut dir_header = tar::Header::new_gnu();
+            dir_header.set_path("zee").unwrap();
+            dir_header.set_entry_type(tar::EntryType::Directory);
+            dir_header.set_size(0);
+            dir_header.set_mode(0o755);
+            dir_header.set_cksum();
+            tar.append(&dir_header, std::io::empty()).unwrap();
+
+            // Real binary in nested path "bin/zee"
+            let test_content = b"valid linux cli binary content";
+            let mut header = tar::Header::new_gnu();
+            header.set_path("bin/zee").unwrap();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_size(test_content.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tar.append(&header, &test_content[..]).unwrap();
+            tar.finish().unwrap();
+        }
+        let tar_gz_bytes = encoder.finish().unwrap();
+
+        let temp_dir = tempfile_staging_dir("test-tar-dir-skip").unwrap();
+        let dest_file = temp_dir.join("zee");
+
+        extract_tar_gz_binary(&tar_gz_bytes, "zee", &dest_file).unwrap();
+        assert!(dest_file.exists());
+        assert_eq!(fs::read(&dest_file).unwrap(), b"valid linux cli binary content");
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_generate_windows_update_script_with_spaces_and_unicode() {
+        // Path containing spaces and Japanese Unicode characters
+        let exe = Path::new(r"\\?\C:\Program Files (x86)\Zee テキストエディタ\zee.exe");
+        let new_exe = Path::new(r"C:/ユーザー/テスト/AppData/Local/Temp/staging/zee.exe");
+        let old_exe = Path::new(r"\\?\C:\Program Files (x86)\Zee テキストエディタ\zee.old");
+        let pid = 4321;
+
+        // 1. GUI mode
+        let script_gui = generate_windows_update_script(exe, new_exe, old_exe, pid, true);
+        assert!(!script_gui.contains(r"\\?\"), "Must strip verbatim prefix completely");
+        assert!(script_gui.contains(r#"set "EXE=C:\Program Files (x86)\Zee テキストエディタ\zee.exe""#));
+        assert!(script_gui.contains(r#"set "NEWEXE=C:\ユーザー\テスト\AppData\Local\Temp\staging\zee.exe""#));
+        assert!(script_gui.contains(r#"set "OLDEXE=C:\Program Files (x86)\Zee テキストエディタ\zee.old""#));
+        assert!(script_gui.contains(r#"set "PID=4321""#));
+        assert!(script_gui.contains(r#"start "" "C:\Program Files (x86)\Zee テキストエディタ\zee.exe""#));
+        assert!(script_gui.contains(r#"move /y "%OLDEXE%" "%EXE%""#), "Must include rollback clause if swap fails");
+
+        // 2. CLI mode (must NOT relaunch a GUI window)
+        let script_cli = generate_windows_update_script(exe, new_exe, old_exe, pid, false);
+        assert!(!script_cli.contains("start \"\""));
+    }
+
+    #[test]
+    fn test_real_world_release_assets_contract() {
+        for version in &["v0.2.15", "v0.2.16", "v1.0.0"] {
+            let assets = vec![
+                ReleaseAsset { name: "SHA256SUMS.txt".to_string(), browser_download_url: "https://...".into(), size: 284 },
+                ReleaseAsset { name: format!("zee-cli-{}-linux-x64.zip", version), browser_download_url: "https://...".into(), size: 10_000_000 },
+                ReleaseAsset { name: format!("zee-{}-macos-arm64.zip", version), browser_download_url: "https://...".into(), size: 11_000_000 },
+                ReleaseAsset { name: format!("zee-{}-windows-x64.zip", version), browser_download_url: "https://...".into(), size: 13_000_000 },
+            ];
+
+            let mac = find_matching_asset_for_platform(&assets, AppType::Gui, "macos", "aarch64");
+            assert!(mac.is_some(), "macOS GUI asset must match for {}", version);
+            assert_eq!(mac.unwrap().name, format!("zee-{}-macos-arm64.zip", version));
+
+            let lin = find_matching_asset_for_platform(&assets, AppType::Cli, "linux", "x86_64");
+            assert!(lin.is_some(), "Linux CLI asset must match for {}", version);
+            assert_eq!(lin.unwrap().name, format!("zee-cli-{}-linux-x64.zip", version));
+
+            let win = find_matching_asset_for_platform(&assets, AppType::Gui, "windows", "x86_64");
+            assert!(win.is_some(), "Windows GUI asset must match for {}", version);
+            assert_eq!(win.unwrap().name, format!("zee-v0.2.15-windows-x64.zip").replace("v0.2.15", version));
+        }
     }
 }

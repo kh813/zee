@@ -1126,14 +1126,18 @@ mod tests {
         use zee_core::config::Config;
         use gpui::WindowAppearance;
 
-        // 1. Verify Light theme has Windows standard neutral colors
+        // 1. Verify Light theme has soft gray eye-friendly palette (Qiita inspired)
         let light = Theme::find_by_name("light").expect("Light theme must exist");
-        assert_eq!(light.ui.menu_bar_bg, Color::Rgb(230, 230, 230), "Light theme menu_bar_bg must be neutral #e6e6e6");
-        assert_eq!(light.ui.menu_bar_fg, Color::Rgb(0, 0, 0), "Light theme menu_bar_fg must be #000000");
-        assert_eq!(light.ui.menu_item_active_bg, Color::Rgb(200, 220, 255), "Light theme active item must be Windows selection #c8dcff");
-        assert_eq!(light.editor.background, Color::Rgb(255, 255, 255), "Light theme editor background must be pure white");
+        assert_eq!(light.ui.menu_bar_bg, Color::Rgb(228, 232, 236), "Light theme menu_bar_bg must be neutral soft #e4e8ec");
+        assert_eq!(light.ui.menu_bar_fg, Color::Rgb(45, 55, 72), "Light theme menu_bar_fg must be slate dark #2d3748");
+        assert_eq!(light.ui.menu_item_active_bg, Color::Rgb(208, 225, 253), "Light theme active item must be soft blue #d0e1fd");
+        assert_eq!(light.editor.background, Color::Rgb(242, 244, 247), "Light theme editor background must be eye-friendly soft gray #f2f4f7");
 
-        // 2. Verify Tokyo Night theme has neutral dark menu bar
+        // 2. Verify Dark theme and Tokyo Night theme have neutral dark menu bar
+        let dark = Theme::find_by_name("dark").expect("Dark theme must exist");
+        assert_eq!(dark.ui.menu_bar_bg, Color::Rgb(22, 22, 30));
+        assert_eq!(dark.editor.background, Color::Rgb(26, 27, 38));
+
         let tokyo_night = Theme::find_by_name("tokyo-night").expect("Tokyo Night theme must exist");
         assert_eq!(tokyo_night.ui.menu_bar_bg, Color::Rgb(22, 22, 30), "Tokyo Night menu_bar_bg must be neutral dark #16161e");
         assert_eq!(tokyo_night.ui.menu_bar_fg, Color::Rgb(192, 202, 245));
@@ -1160,13 +1164,101 @@ mod tests {
         assert_eq!(light_resolved.meta.name, "Light", "WindowAppearance::Light must resolve to Light theme");
 
         let dark_resolved = crate::app::resolve_theme(&default_config, WindowAppearance::Dark);
-        assert_eq!(dark_resolved.meta.name, "Tokyo Night", "WindowAppearance::Dark must resolve to Tokyo Night");
+        assert_eq!(dark_resolved.meta.name, "Dark", "WindowAppearance::Dark must resolve to Dark theme");
 
         // 5. Verify explicit theme in config is respected
         let mut custom_config = Config::default();
         custom_config.theme = "solarized-dark".to_string();
         let custom_resolved = crate::app::resolve_theme(&custom_config, WindowAppearance::Light);
         assert_eq!(custom_resolved.meta.name, "Solarized Dark");
+    }
+
+    #[test]
+    fn test_theme_checkmark_resolution_and_os_default() {
+        use zee_core::config::Config;
+        use zee_core::i18n::I18n;
+        use zee_core::theme::{is_default_theme, is_same_theme};
+
+        // 1. is_default_theme test
+        assert!(is_default_theme("terminal-default"));
+        assert!(is_default_theme("os-default"));
+        assert!(is_default_theme("OS Default"));
+        assert!(is_default_theme("default"));
+        assert!(is_default_theme(""));
+        assert!(!is_default_theme("tokyo-night"));
+        assert!(!is_default_theme("Light"));
+        assert!(!is_default_theme("Dark"));
+
+        // 2. is_same_theme equivalence
+        assert!(is_same_theme("OS Default", "terminal-default"));
+        assert!(is_same_theme("OS Default", "os-default"));
+        assert!(is_same_theme("OS Default", ""));
+        assert!(is_same_theme("Tokyo Night", "tokyo-night"));
+        assert!(is_same_theme("Light", "light"));
+        assert!(is_same_theme("Dark", "dark"));
+        assert!(!is_same_theme("OS Default", "tokyo-night"));
+        assert!(!is_same_theme("Light", "dark"));
+
+        // 3. Menu checkmark verification on macOS
+        #[cfg(target_os = "macos")]
+        {
+            let i18n = I18n::load("en");
+
+            // Scenario A: Default config ("terminal-default") -> Exactly one item with "✓ OS Default"
+            let mut cfg = Config::default();
+            let menus = crate::app::build_native_menus(&i18n, &cfg, None);
+            let view_menu = menus.iter().find(|m| m.name.as_ref() == "View").expect("View menu exists");
+            let theme_submenu = view_menu.items.iter().find_map(|item| {
+                // find the Theme submenu
+                if let gpui::MenuItem::Submenu(sub) = item {
+                    if sub.name.as_ref() == "Theme" {
+                        return Some(sub);
+                    }
+                }
+                None
+            }).expect("Theme submenu must exist under View");
+
+            let checked_items: Vec<String> = theme_submenu.items.iter().filter_map(|it| {
+                if let gpui::MenuItem::Action { name, .. } = it {
+                    if name.starts_with("✓") {
+                        return Some(name.to_string());
+                    }
+                }
+                None
+            }).collect();
+            assert_eq!(checked_items.len(), 1, "Exactly one theme item must be checked, got: {:?}", checked_items);
+            assert_eq!(checked_items[0], "✓ OS Default", "Default theme must be marked as ✓ OS Default");
+
+            // Scenario B: Switch to "tokyo-night" -> Exactly one item with "✓ Tokyo Night"
+            cfg.theme = "tokyo-night".to_string();
+            let menus_b = crate::app::build_native_menus(&i18n, &cfg, None);
+            let view_b = menus_b.iter().find(|m| m.name.as_ref() == "View").unwrap();
+            let theme_sub_b = view_b.items.iter().find_map(|it| match it {
+                gpui::MenuItem::Submenu(s) if s.name.as_ref() == "Theme" => Some(s),
+                _ => None,
+            }).unwrap();
+            let checked_b: Vec<String> = theme_sub_b.items.iter().filter_map(|it| match it {
+                gpui::MenuItem::Action { name, .. } if name.starts_with("✓") => Some(name.to_string()),
+                _ => None,
+            }).collect();
+            assert_eq!(checked_b.len(), 1);
+            assert_eq!(checked_b[0], "✓ Tokyo Night");
+
+            // Scenario C: Switch to "Light" -> Exactly one item with "✓ Light"
+            cfg.theme = "light".to_string();
+            let menus_c = crate::app::build_native_menus(&i18n, &cfg, None);
+            let view_c = menus_c.iter().find(|m| m.name.as_ref() == "View").unwrap();
+            let theme_sub_c = view_c.items.iter().find_map(|it| match it {
+                gpui::MenuItem::Submenu(s) if s.name.as_ref() == "Theme" => Some(s),
+                _ => None,
+            }).unwrap();
+            let checked_c: Vec<String> = theme_sub_c.items.iter().filter_map(|it| match it {
+                gpui::MenuItem::Action { name, .. } if name.starts_with("✓") => Some(name.to_string()),
+                _ => None,
+            }).collect();
+            assert_eq!(checked_c.len(), 1);
+            assert_eq!(checked_c[0], "✓ Light");
+        }
     }
 
     #[test]

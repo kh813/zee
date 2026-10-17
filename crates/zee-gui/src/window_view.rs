@@ -117,12 +117,14 @@ impl WindowView {
         window.observe_window_appearance(move |window, cx| {
             if let Some(view) = view_weak.upgrade() {
                 view.update(cx, |this, cx| {
-                    if this.config.theme == "terminal-default" || this.config.theme.is_empty() {
+                    if zee_core::theme::is_default_theme(&this.config.theme) {
                         let theme_to_use = crate::app::resolve_theme(&this.config, window.appearance());
                         this.workspace.update(cx, |w, cx| {
                             w.theme = theme_to_use;
                             cx.notify();
                         });
+                        #[cfg(target_os = "macos")]
+                        cx.set_menus(crate::app::build_native_menus(&this.i18n, &this.config, Some(&this.workspace.read(cx).plugin_manager)));
                         cx.notify();
                     }
                 });
@@ -1042,17 +1044,31 @@ impl WindowView {
     }
 
     fn set_theme(&mut self, name: &str, cx: &mut Context<Self>) {
-        let theme = zee_core::theme::Theme::find_by_name(name)
-            .unwrap_or_default();
+        let is_default = zee_core::theme::is_default_theme(name);
+        let theme = if is_default {
+            crate::app::resolve_theme(
+                &zee_core::config::Config { theme: "os-default".to_string(), ..Default::default() },
+                cx.window_appearance(),
+            )
+        } else {
+            zee_core::theme::Theme::find_by_name(name)
+                .unwrap_or_default()
+        };
         
+        let saved_key = if is_default {
+            "os-default".to_string()
+        } else {
+            theme.meta.name.to_lowercase().replace(' ', "-")
+        };
+
         self.workspace.update(cx, |w, cx| {
             w.theme = theme.clone();
+            w.config.theme = saved_key.clone();
             cx.notify();
         });
         
-        let theme_slug = theme.meta.name.to_lowercase().replace(' ', "-");
-        self.config.theme = theme.meta.name.clone();
-        let _ = Config::write_key("theme", &theme_slug);
+        self.config.theme = saved_key.clone();
+        let _ = Config::write_key("theme", &saved_key);
         #[cfg(target_os = "macos")]
         cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
         cx.notify();

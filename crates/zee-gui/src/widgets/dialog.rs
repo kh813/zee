@@ -1841,7 +1841,12 @@ impl Dialog {
             }
             DialogType::Settings => {
                 let themes = zee_core::theme::Theme::load_all();
-                let current_theme_name = workspace.theme.meta.name.clone();
+                let is_default = zee_core::theme::is_default_theme(&workspace.config.theme);
+                let current_theme_name = if is_default {
+                    "OS Default".to_string()
+                } else {
+                    workspace.theme.meta.name.clone()
+                };
                 let is_theme_open = self.settings_dropdown == Some(SettingsDropdown::Theme);
                 let is_font_open = self.settings_dropdown == Some(SettingsDropdown::Font);
                 let is_language_open = self.settings_dropdown == Some(SettingsDropdown::Language);
@@ -2016,9 +2021,19 @@ impl Dialog {
                                                     .flex_col()
                                                     .gap_0p5()
                                                     .children(themes.into_iter().map(|t| {
-                                                        let is_active = t.meta.name == current_theme_name;
-                                                        let t_name = t.meta.name.clone();
-                                                        let t_slug = t_name.to_lowercase().replace(' ', "-");
+                                                        let display_label = if zee_core::theme::is_default_theme(&t.meta.name) {
+                                                            "OS Default".to_string()
+                                                        } else {
+                                                            t.meta.name.clone()
+                                                        };
+                                                        let is_active = zee_core::theme::is_same_theme(&display_label, &current_theme_name);
+                                                        let t_name = display_label;
+                                                        let is_default_choice = zee_core::theme::is_default_theme(&t_name);
+                                                        let t_slug = if is_default_choice {
+                                                            "os-default".to_string()
+                                                        } else {
+                                                            t_name.to_lowercase().replace(' ', "-")
+                                                        };
                                                         
                                                         div()
                                                             .h(px(28.0))
@@ -2030,14 +2045,21 @@ impl Dialog {
                                                             .bg(if is_active { with_alpha(accent, 0.22) } else { hsla(0.,0.,0.,0.).into() })
                                                             .cursor_pointer()
                                                             .hover(|s| s.bg(with_alpha(fg, 0.12)))
-                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
                                                                 cx.stop_propagation();
+                                                                let theme_to_apply = if is_default_choice {
+                                                                    crate::app::resolve_theme(
+                                                                        &zee_core::config::Config { theme: "os-default".to_string(), ..Default::default() },
+                                                                        window.appearance(),
+                                                                    )
+                                                                } else {
+                                                                    zee_core::theme::Theme::find_by_name(&t_slug).unwrap_or_default()
+                                                                };
                                                                 this.workspace.update(cx, |w, cx| {
-                                                                    if let Some(theme) = zee_core::theme::Theme::find_by_name(&t_slug) {
-                                                                        w.theme = theme;
-                                                                        let _ = zee_core::config::Config::write_key("theme", &t_slug);
-                                                                        cx.notify();
-                                                                    }
+                                                                    w.theme = theme_to_apply;
+                                                                    w.config.theme = t_slug.clone();
+                                                                    let _ = zee_core::config::Config::write_key("theme", &t_slug);
+                                                                    cx.notify();
                                                                 });
                                                                 this.settings_dropdown = None;
                                                                 cx.notify();

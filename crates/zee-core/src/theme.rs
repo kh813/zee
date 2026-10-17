@@ -163,16 +163,31 @@ pub struct Theme {
     pub syntax: SyntaxColors,
 }
 
+pub fn is_default_theme(name: &str) -> bool {
+    let s = name.trim().to_lowercase().replace([' ', '_'], "-");
+    s == "os-default" || s == "terminal-default" || s == "default" || s == "system" || s.is_empty()
+}
+
+pub fn is_same_theme(a: &str, b: &str) -> bool {
+    let norm_a = a.trim().to_lowercase().replace([' ', '_'], "-");
+    let norm_b = b.trim().to_lowercase().replace([' ', '_'], "-");
+    if norm_a == norm_b {
+        return true;
+    }
+    is_default_theme(&norm_a) && is_default_theme(&norm_b)
+}
+
 impl Theme {
     pub fn builtins() -> Vec<Self> {
         let mut themes = vec![Self::terminal_default()];
         let files = [
+            include_str!("../../../assets/themes/dark.toml"),
+            include_str!("../../../assets/themes/light.toml"),
             include_str!("../../../assets/themes/tokyo-night.toml"),
             include_str!("../../../assets/themes/catppuccin-mocha.toml"),
             include_str!("../../../assets/themes/catppuccin-latte.toml"),
             include_str!("../../../assets/themes/solarized-dark.toml"),
             include_str!("../../../assets/themes/solarized-light.toml"),
-            include_str!("../../../assets/themes/light.toml"),
         ];
 
         for s in files {
@@ -221,7 +236,14 @@ impl Theme {
         let target = name.trim().to_lowercase();
         let target_slug = target.replace([' ', '_'], "-");
 
-        if target == "dark" {
+        if is_default_theme(&target) {
+            return Some(Self::terminal_default());
+        }
+
+        if target == "dark" || target_slug == "dark" {
+            if let Some(t) = all.iter().find(|t| t.meta.name.to_lowercase() == "dark") {
+                return Some(t.clone());
+            }
             if let Some(t) = all.iter().find(|t| {
                 let n = t.meta.name.to_lowercase();
                 n == "tokyo night" || n == "tokyo-night"

@@ -463,13 +463,13 @@ fn centered_window_options(cx: &App) -> WindowOptions {
 }
 
 pub fn resolve_theme(config: &Config, appearance: WindowAppearance) -> Theme {
-    if config.theme == "terminal-default" || config.theme.is_empty() {
+    if zee_core::theme::is_default_theme(&config.theme) {
         match appearance {
             WindowAppearance::Dark | WindowAppearance::VibrantDark => {
-                Theme::find_by_name("tokyo-night").unwrap_or_default()
+                Theme::find_by_name("dark").or_else(|| Theme::find_by_name("tokyo-night")).unwrap_or_default()
             }
             WindowAppearance::Light | WindowAppearance::VibrantLight => {
-                Theme::find_by_name("light").unwrap_or_else(|| Theme::find_by_name("catppuccin-latte").unwrap_or_default())
+                Theme::find_by_name("light").or_else(|| Theme::find_by_name("catppuccin-latte")).unwrap_or_default()
             }
         }
     } else {
@@ -732,15 +732,20 @@ pub fn build_native_menus(
 ) -> Vec<Menu> {
     let mut theme_items = Vec::new();
     for theme in zee_core::theme::Theme::load_all() {
-        let is_current = theme.meta.name == config.theme;
-        let theme_name = if is_current {
-            format!("✓ {}", theme.meta.name)
+        let display_label = if zee_core::theme::is_default_theme(&theme.meta.name) {
+            "OS Default"
         } else {
-            theme.meta.name.clone()
+            &theme.meta.name
+        };
+        let is_current = zee_core::theme::is_same_theme(display_label, &config.theme);
+        let theme_name = if is_current {
+            format!("✓ {}", display_label)
+        } else {
+            display_label.to_string()
         };
         theme_items.push(MenuItem::action(
             theme_name,
-            SetTheme { name: theme.meta.name.clone() },
+            SetTheme { name: display_label.to_string() },
         ));
     }
 

@@ -16,13 +16,14 @@ impl StatusBar {
 
         let initial_ime = zee_core::is_cjk_ime_active();
         let status_bar_handle = cx.entity().clone();
+        let bg_executor = cx.background_executor().clone();
         cx.spawn(move |_, cx: &mut AsyncApp| {
             let cx = cx.clone();
             async move {
                 let mut prev = initial_ime;
                 loop {
-                    smol::Timer::after(std::time::Duration::from_millis(50)).await;
-                    let current = zee_core::is_cjk_ime_active();
+                    smol::Timer::after(std::time::Duration::from_millis(100)).await;
+                    let current = bg_executor.spawn(async { zee_core::is_cjk_ime_active() }).await;
                     if current != prev {
                         prev = current;
                         let _ = status_bar_handle.update(&mut cx.clone(), |this, cx| {
@@ -127,7 +128,7 @@ impl Render for StatusBar {
                     .children(if vi_mode_enabled {
                         let (badge_text, bg_color) = match editor.vi_mode {
                             zee_core::ViMode::Insert => {
-                                if zee_core::is_cjk_ime_active() {
+                                if self.last_ime_active {
                                     ("INSERT [あ]", gpui::rgb(0xd32f2f))
                                 } else {
                                     ("INSERT", gpui::rgb(0x2e7d32))
@@ -266,7 +267,7 @@ impl Render for StatusBar {
         } else {
             let (hint, hint_color) = match editor.vi_mode {
                 zee_core::ViMode::Insert => {
-                    if zee_core::is_cjk_ime_active() {
+                    if self.last_ime_active {
                         ("-- INSERT [あ] --", gpui::rgb(0xef5350))
                     } else {
                         ("-- INSERT --", gpui::rgb(0x4caf50))

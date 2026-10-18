@@ -1531,32 +1531,37 @@ mod tests {
     #[test]
     fn test_mixed_ascii_and_fullwidth_status_bar_column_and_cursor_alignment() {
         let mut editor = zee_core::buffer::Editor::new();
-        // User's exact test case: 4 half-width @ followed by 5 full-width ＠
-        editor.insert(0, "@@@@＠＠＠＠＠");
+        // 1. User test case: "日本語" (3 characters) -> end of line is Col 4
+        editor.insert(0, "日本語");
+        let (line_jp, col_jp) = editor.char_to_line_col(editor.cursor);
+        assert_eq!(line_jp, 0);
+        assert_eq!(col_jp + 1, 4, "At end of '日本語', Col must be 4");
 
+        // 2. User test case: "aaa＠＠＠" (6 characters) -> end of line is Col 7
+        let mut editor_mix = zee_core::buffer::Editor::new();
+        editor_mix.insert(0, "aaa＠＠＠");
+        editor_mix.cursor = 6;
+        let (line_mix, col_mix) = editor_mix.char_to_line_col(editor_mix.cursor);
+        assert_eq!(line_mix, 0);
+        assert_eq!(col_mix + 1, 7, "At end of 'aaa＠＠＠' (3 ascii + 3 fullwidth), Col must be 7");
+
+        // 3. User test case: "@@@@＠＠＠＠＠" (4 ascii + 5 fullwidth = 9 characters) -> end of line is Col 10
+        let mut editor_at = zee_core::buffer::Editor::new();
+        editor_at.insert(0, "@@@@＠＠＠＠＠");
+        for i in 0..=9 {
+            editor_at.cursor = i;
+            let (_, col_i) = editor_at.char_to_line_col(editor_at.cursor);
+            assert_eq!(col_i + 1, i + 1, "At character index {}, Col must be {}", i, i + 1);
+        }
+
+        // 4. Verify pixel rendering on screen: cjk_width is 2x ascii_width
+        // ensuring the cursor covers the whole glyph and reaches the physical end of line
         let ascii_w = 8.4;
         let cjk_w = crate::widgets::editor_view::resolve_cjk_width(Some(8.4), ascii_w);
         assert_eq!(cjk_w, ascii_w * 2.0);
 
-        // Verify status bar Col at cursor positions:
-        // Position 0..4 (ASCII @): Col 1, 2, 3, 4, 5
-        for i in 0..=4 {
-            let (line, vcol) = editor.char_to_visual_col(i, 4);
-            assert_eq!(line, 0);
-            assert_eq!(vcol + 1, i + 1, "ASCII @ at pos {} should be Col {}", i, i + 1);
-        }
-
-        // Position 5 (after 1st full-width ＠): should be Col 7 (not Col 6!)
-        let (_, vcol_5) = editor.char_to_visual_col(5, 4);
-        assert_eq!(vcol_5 + 1, 7, "After 1st fullwidth ＠, status bar must show Col 7");
-
-        // Position 9 (end of line after 5th full-width ＠): should be Col 15 (not Col 10!)
-        let (_, vcol_end) = editor.char_to_visual_col(9, 4);
-        assert_eq!(vcol_end + 1, 15, "At end of '@@@@＠＠＠＠＠', status bar must show Col 15 (was bugged as Col 10)");
-
-        // Verify cursor pixel positions do not stop at 4th ＠
-        let px_end = editor.get_visual_px(0, 9, &(0..9), ascii_w, cjk_w, 4);
-        let expected_end = 4.0 * ascii_w + 5.0 * cjk_w;
+        let px_end = editor_at.get_visual_px(0, 9, &(0..9), ascii_w, cjk_w, 4);
+        let expected_end = 4.0 * ascii_w + 5.0 * cjk_w; // 14 * 8.4 = 117.6
         assert!(
             (px_end - expected_end).abs() < 1e-4,
             "Cursor at line end must reach 14x ascii width ({}), got {}",

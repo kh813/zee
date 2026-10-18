@@ -75,7 +75,7 @@ impl Render for StatusBar {
         let is_modified = editor.is_modified();
         let vi_mode_enabled = workspace.config.vi_mode;
         
-        let (line, vcol) = editor.char_to_visual_col(editor.cursor, workspace.config.tab_size);
+        let (line, col) = editor.char_to_line_col(editor.cursor);
 
         let selection_info = editor.selection.as_ref().map(|sel| format!("{} chars", (sel.end as isize - sel.start as isize).abs()));
 
@@ -178,7 +178,7 @@ impl Render for StatusBar {
                             .rounded_sm()
                             .cursor_pointer()
                             .hover(move |s| s.bg(hover_pill_bg))
-                            .child(format!("Ln {}, Col {}", line + 1, vcol + 1))
+                            .child(format!("Ln {}, Col {}", line + 1, col + 1))
                             .on_mouse_down(MouseButton::Left, cx.listener(|_, _, _, cx| {
                                 cx.dispatch_action(&GoToLine {});
                             }))

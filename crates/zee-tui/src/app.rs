@@ -6176,46 +6176,9 @@ impl App {
 
         // Right segment components
         let (line, col) = buffer.char_to_line_col(buffer.cursor);
-        let mut visual_col = col + 1;
-        if self.config.word_wrap {
-            let (_ex, _ey, ew, _eh) = self.layout.editor_bounds();
-            let wraps = buffer.wrap_line(line, ew as usize, self.config.tab_size);
-            let char_in_line = col;
-            for wrap in wraps {
-                if char_in_line >= wrap.start && char_in_line <= wrap.end {
-                    let mut w = 0;
-                    let line_slice = buffer.rope.line(line);
-                    for (i, c) in line_slice.chars().enumerate().skip(wrap.start) {
-                        if i >= char_in_line { break; }
-                        if c == '\t' {
-                            let ts = self.config.tab_size;
-                            w += ts - (w % ts);
-                        } else {
-                            w += c.width().unwrap_or(0);
-                        }
-                    }
-                    visual_col = w + 1;
-                    break;
-                }
-            }
-        } else {
-            let mut w = 0;
-            let line_slice = buffer.rope.line(line);
-            for (i, c) in line_slice.chars().enumerate() {
-                if i >= col { break; }
-                if c == '\t' {
-                    let ts = self.config.tab_size;
-                    w += ts - (w % ts);
-                } else {
-                    w += c.width().unwrap_or(0);
-                }
-            }
-            visual_col = w + 1;
-        }
-
         let cursor_info = self.i18n.get("status.cursor")
             .replace("{line}", &(line + 1).to_string())
-            .replace("{col}", &visual_col.to_string());
+            .replace("{col}", &(col + 1).to_string());
         
         let selection_info = if let Some(ref range) = buffer.selection {
             format!(" {} ", self.i18n.get("status.selection").replace("{n}", &(range.end - range.start).to_string()))

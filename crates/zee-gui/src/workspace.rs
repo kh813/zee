@@ -1513,11 +1513,12 @@ mod tests {
             "Missing CJK advance must fall back to 2x ASCII width"
         );
 
-        // 3. Proportional or 1.0 * font_size fallback (14.0 vs 8.4 -> 1.66x < 1.8x)
+        // 3. Fallback Japanese font metric on Windows (e.g. Meiryo / Yu Gothic 14.0px vs Cascadia Mono 8.4px -> 1.66x)
+        // Must be preserved so cursor position matches the exact pixel width drawn on screen.
         assert_eq!(
             resolve_cjk_width(Some(14.0), ascii_width),
-            ascii_width * 2.0,
-            "Under-proportioned CJK metric (< 1.8x) must fall back to exact 2x ASCII width"
+            14.0,
+            "Genuine fallback CJK font width (~1.66x) must be preserved to prevent cursor drift"
         );
 
         // 4. Genuine CJK monospace font with exact or near 2x advance (e.g. 16.8)
@@ -1526,6 +1527,32 @@ mod tests {
             16.8,
             "Genuine ~2x CJK advance should be preserved"
         );
+    }
+
+    #[test]
+    fn test_resolve_editor_font_family_selection() {
+        use crate::widgets::editor_view::resolve_editor_font_family;
+
+        // Explicit user config overrides everything
+        let fonts = vec!["Cascadia Mono".to_string(), "Consolas".to_string(), "Menlo".to_string()];
+        let resolved = resolve_editor_font_family(Some("Fira Code"), &fonts);
+        assert_eq!(resolved.as_ref(), "Fira Code");
+
+        // Windows fallback prefers Cascadia Mono over Consolas when installed
+        #[cfg(target_os = "windows")]
+        {
+            let with_cascadia = vec!["Cascadia Mono".to_string(), "Consolas".to_string()];
+            assert_eq!(resolve_editor_font_family(None, &with_cascadia).as_ref(), "Cascadia Mono");
+
+            let without_cascadia = vec!["Consolas".to_string()];
+            assert_eq!(resolve_editor_font_family(None, &without_cascadia).as_ref(), "Consolas");
+        }
+
+        // macOS fallback defaults to Menlo
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(resolve_editor_font_family(None, &fonts).as_ref(), "Menlo");
+        }
     }
 
     #[test]

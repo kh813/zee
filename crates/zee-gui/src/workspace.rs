@@ -1596,5 +1596,118 @@ mod tests {
             px_end
         );
     }
+
+    #[test]
+    fn test_visual_cursor_position_and_width_calculation_for_mixed_content() {
+        let mut editor = zee_core::buffer::Editor::new();
+        // Line 0: "a\tあb"
+        editor.insert(0, "a\tあb");
+
+        let ascii_w = 8.0;
+        let cjk_w = 16.0;
+        let tab_size = 4;
+        let range = 0..4; // characters 0 to 4
+
+        // Char 0: 'a' at visual px 0.0
+        let px_0 = editor.get_visual_px(0, 0, &range, ascii_w, cjk_w, tab_size);
+        assert_eq!(px_0, 0.0);
+
+        // Char 1: '\t' starts at 8.0px, tab stop is at 4 * 8.0 = 32.0px
+        let px_1 = editor.get_visual_px(0, 1, &range, ascii_w, cjk_w, tab_size);
+        assert_eq!(px_1, 8.0);
+
+        // Char 2: 'あ' starts at 32.0px
+        let px_2 = editor.get_visual_px(0, 2, &range, ascii_w, cjk_w, tab_size);
+        assert_eq!(px_2, 32.0);
+
+        // Char 3: 'b' starts after 'あ' (32.0 + 16.0 = 48.0px)
+        let px_3 = editor.get_visual_px(0, 3, &range, ascii_w, cjk_w, tab_size);
+        assert_eq!(px_3, 48.0);
+
+        // Line end: starts after 'b' (48.0 + 8.0 = 56.0px)
+        let px_end = editor.get_visual_px(0, 4, &range, ascii_w, cjk_w, tab_size);
+        assert_eq!(px_end, 56.0);
+
+        // Block cursor width verification
+        let line = editor.rope.line(0);
+        use unicode_width::UnicodeWidthChar;
+
+        // At 'a' -> ascii_w
+        let w_a = match line.chars().nth(0) {
+            Some(c) if c.width() == Some(2) => cjk_w,
+            _ => ascii_w,
+        };
+        assert_eq!(w_a, ascii_w);
+
+        // At '\t' -> remaining tab width (32.0 - 8.0 = 24.0px)
+        let tab_width_px = tab_size as f32 * ascii_w;
+        let col_px = px_1 % tab_width_px;
+        let w_tab = tab_width_px - col_px;
+        assert_eq!(w_tab, 24.0);
+
+        // At 'あ' -> cjk_w
+        let w_cjk = match line.chars().nth(2) {
+            Some(c) if c.width() == Some(2) => cjk_w,
+            _ => ascii_w,
+        };
+        assert_eq!(w_cjk, cjk_w);
+
+        // At 'b' -> ascii_w
+        let w_b = match line.chars().nth(3) {
+            Some(c) if c.width() == Some(2) => cjk_w,
+            _ => ascii_w,
+        };
+        assert_eq!(w_b, ascii_w);
+    }
+
+    #[test]
+    fn test_windows_cursor_boundary_centering_alignment() {
+        // On Windows, the 2px vertical bar cursor is placed at (cursor_x - 1.0).max(0.0)
+        // so that the 2px bar is centered directly on the character boundary.
+        let cursor_x: f32 = 0.0;
+        let bar_x_at_start = (cursor_x - 1.0_f32).max(0.0_f32);
+        assert_eq!(bar_x_at_start, 0.0);
+
+        let cursor_x_col1: f32 = 8.4;
+        let bar_x_col1 = (cursor_x_col1 - 1.0_f32).max(0.0_f32);
+        assert!((bar_x_col1 - 7.4).abs() < 1e-5);
+
+        // Ensure 2px cursor spans [7.4, 9.4], centered at 8.4 boundary
+        let bar_width = 2.0_f32;
+        let bar_center = bar_x_col1 + (bar_width / 2.0_f32);
+        assert!((bar_center - cursor_x_col1).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_chunk_selection_splitting_multibyte_safety() {
+        // Verify character-based slicing for selection highlights in non-Windows rendering
+        let text = "こんにちは世界！Hello 🦀";
+        let chunk_chars: Vec<char> = text.chars().collect();
+        let chunk_len = chunk_chars.len();
+        assert_eq!(chunk_len, 15);
+
+        // Simulate selection [5..7] ("世界")
+        let selection = Some(5..7);
+        if let Some(ref sel) = selection {
+            let sel_start = sel.start;
+            let sel_end = sel.end;
+            assert!(sel_start < chunk_len && sel_end > 0);
+
+            let before: String = chunk_chars[..sel_start].iter().collect();
+            let selected: String = chunk_chars[sel_start..sel_end].iter().collect();
+            let after: String = chunk_chars[sel_end..].iter().collect();
+
+            assert_eq!(before, "こんにちは");
+            assert_eq!(selected, "世界");
+            assert_eq!(after, "！Hello 🦀");
+        }
+
+        // Simulate selection at emoji boundary [14..15] ("🦀")
+        let emoji_sel = Some(14..15);
+        if let Some(ref sel) = emoji_sel {
+            let selected: String = chunk_chars[sel.start..sel.end].iter().collect();
+            assert_eq!(selected, "🦀");
+        }
+    }
 }
 

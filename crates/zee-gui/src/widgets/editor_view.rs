@@ -4371,11 +4371,12 @@ impl EditorView {
                         .into_any_element(),
                 )
             } else {
+                let bar_x = (cursor_x - 1.0).max(0.0);
                 Some(
                     div()
                         .absolute()
                         .top_0()
-                        .left(px(cursor_x))
+                        .left(px(bar_x))
                         .w(px(2.0))
                         .h(line_height)
                         .bg(cursor_color)

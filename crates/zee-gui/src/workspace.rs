@@ -1513,8 +1513,8 @@ mod tests {
             "Missing CJK advance must fall back to 2x ASCII width"
         );
 
-        // 3. Fallback Japanese font metric on Windows (e.g. Meiryo / Yu Gothic 14.0px vs Cascadia Mono 8.4px -> 1.66x)
-        // Must be preserved so cursor position matches the exact pixel width drawn on screen.
+        // 3. Shaped Japanese font metric on Windows (e.g. 14.0px vs Cascadia Mono 8.4px -> 1.66x)
+        // Must preserve the actual rendered glyph width drawn on screen.
         assert_eq!(
             resolve_cjk_width(Some(14.0), ascii_width),
             14.0,

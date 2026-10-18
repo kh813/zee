@@ -353,6 +353,14 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         cx.quit();
     });
 
+    #[cfg(not(target_os = "macos"))]
+    app.on_window_closed(|cx, _| {
+        if cx.windows().is_empty() && !zee_core::session::UpdateSession::exists() {
+            cx.quit();
+        }
+    })
+    .detach();
+
     // Activate the application on launch so its window is brought to the foreground
     app.activate(true);
 

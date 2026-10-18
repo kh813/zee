@@ -2932,7 +2932,19 @@ impl EditorView {
     }
 
 
-    fn mouse_pos_to_char_pos(&self, position: Point<Pixels>, cx: &mut Context<Self>) -> usize {
+    fn closest_char_index_for_x(v_text: &str, layout: &LineLayout, target_x: Pixels) -> usize {
+        for (char_idx, (byte_offset, ch)) in v_text.char_indices().enumerate() {
+            let x0 = layout.x_for_index(byte_offset);
+            let x1 = layout.x_for_index(byte_offset + ch.len_utf8());
+            let mid = (x0 + x1) * 0.5;
+            if target_x < mid {
+                return char_idx;
+            }
+        }
+        v_text.chars().count()
+    }
+
+    fn mouse_pos_to_char_pos(&self, position: Point<Pixels>, window: &Window, cx: &mut Context<Self>) -> usize {
         let workspace = self.workspace.read(cx);
         let editor = match workspace.active_editor() {
             Some(e) => e,
@@ -2940,32 +2952,41 @@ impl EditorView {
         };
         
         let line_height = px(workspace.config.line_height);
-        let font_size = workspace.config.font_size;
         let gutter_width = if workspace.config.line_numbers { px(52.0) } else { px(0.0) };
         let text_left_padding = if workspace.config.line_numbers { TEXT_AREA_LEFT_PADDING } else { px(0.0) };
-        let sidebar_width = if workspace.sidebar_visible { px(240.0) } else { px(0.0) };
-        let char_width = px(font_size * 0.6);
         let tab_size = workspace.config.tab_size;
         let word_wrap = workspace.config.word_wrap;
 
-        let tab_bar_height = px(36.0);
-        #[cfg(not(target_os = "macos"))]
-        let menu_bar_height = px(28.0);
-        #[cfg(target_os = "macos")]
-        let menu_bar_height = px(0.0);
+        let (editor_left, editor_top) = if let Some(b) = self.last_bounds {
+            (b.origin.x, b.origin.y)
+        } else {
+            let sidebar_width = if workspace.sidebar_visible && workspace.config.sidebar_position == "left" {
+                px(240.0)
+            } else {
+                px(0.0)
+            };
+            let tab_bar_height = px(36.0);
+            #[cfg(not(target_os = "macos"))]
+            let menu_bar_height = px(28.0);
+            #[cfg(target_os = "macos")]
+            let menu_bar_height = px(0.0);
+            (sidebar_width, tab_bar_height + menu_bar_height)
+        };
 
-        let top_offset = tab_bar_height + menu_bar_height;
-        let relative_y = position.y - top_offset;
-        let left_offset = sidebar_width + gutter_width + text_left_padding;
+        let relative_y = position.y - editor_top;
+        let left_offset = editor_left + gutter_width + text_left_padding;
         let relative_x = (position.x - left_offset).max(px(0.0));
 
         if !word_wrap {
             let line_idx = (relative_y / line_height).floor() as i32 + editor.scroll_row as i32;
             let line_idx = line_idx.max(0).min(editor.line_count() as i32 - 1) as usize;
 
-            let relative_x = relative_x + px(editor.scroll_col as f32 * font_size * 0.6);
-            let col_idx = (relative_x / char_width).round() as i32;
-            let col_idx = col_idx.max(0) as usize;
+            let line_str = Self::strip_line_endings(editor.rope.line(line_idx).to_string());
+            let line_len = line_str.chars().count();
+            let range = 0..line_len;
+            let target_x = relative_x + px(editor.scroll_col as f32 * self.ascii_width_px);
+            let (v_text, layout) = self.layout_visual_line(line_idx, &range, &line_str, workspace, editor, window);
+            let col_idx = Self::closest_char_index_for_x(&v_text, &layout, target_x);
 
             editor.line_col_to_char(line_idx, col_idx)
         } else {
@@ -2974,7 +2995,6 @@ impl EditorView {
                 return editor.line_col_to_char(editor.scroll_row, 0);
             }
             let mut current_vrow = 0;
-            let target_vx: f32 = relative_x / px(1.0);
 
             for line_idx in editor.scroll_row..editor.line_count() {
                 let wraps = editor.wrap_line_px(
@@ -2989,14 +3009,11 @@ impl EditorView {
                     let v_idx = (visual_row - current_vrow).max(0) as usize;
                     let v_idx = v_idx.min(line_vrows.saturating_sub(1));
                     let range = wraps[v_idx].clone();
-                    return editor.get_char_at_v_px(
-                        line_idx,
-                        range,
-                        target_vx,
-                        self.ascii_width_px,
-                        self.cjk_width_px,
-                        tab_size,
-                    );
+                    let line_str = Self::strip_line_endings(editor.rope.line(line_idx).to_string());
+                    let (v_text, layout) = self.layout_visual_line(line_idx, &range, &line_str, workspace, editor, window);
+                    let char_in_v = Self::closest_char_index_for_x(&v_text, &layout, relative_x);
+                    let line_start_char = editor.rope.line_to_char(line_idx);
+                    return line_start_char + range.start + char_in_v;
                 }
                 current_vrow += line_vrows as i32;
             }
@@ -3111,11 +3128,17 @@ impl EditorView {
         }
         self.last_click_at = Some(now);
 
-        let char_pos = self.mouse_pos_to_char_pos(event.position, cx);
+        let char_pos = self.mouse_pos_to_char_pos(event.position, window, cx);
         let workspace_read = self.workspace.read(cx);
         let gutter_width = if workspace_read.config.line_numbers { px(52.0) } else { px(0.0) };
-        let sidebar_width = if workspace_read.sidebar_visible { px(240.0) } else { px(0.0) };
-        let is_gutter_click = event.position.x >= sidebar_width && event.position.x < (sidebar_width + gutter_width);
+        let editor_left = self.last_bounds.map(|b| b.origin.x).unwrap_or_else(|| {
+            if workspace_read.sidebar_visible && workspace_read.config.sidebar_position == "left" {
+                px(240.0)
+            } else {
+                px(0.0)
+            }
+        });
+        let is_gutter_click = event.position.x >= editor_left && event.position.x < (editor_left + gutter_width);
 
         self.workspace.update(cx, |w, cx| {
             let vi_mode_enabled = w.config.vi_mode;
@@ -3219,7 +3242,7 @@ impl EditorView {
             let top_offset = tab_bar_height + menu_bar_height;
             let viewport_height = window.viewport_size().height;
 
-            let char_pos = self.mouse_pos_to_char_pos(event.position, cx);
+            let char_pos = self.mouse_pos_to_char_pos(event.position, window, cx);
             self.workspace.update(cx, |w, cx| {
                 let line_height = w.config.line_height;
                 let word_wrap = w.config.word_wrap;
@@ -3328,7 +3351,7 @@ impl EditorView {
             return;
         }
         let line_height_px = px(self.workspace.read(cx).config.line_height);
-        let char_width_px = px(self.workspace.read(cx).config.font_size * 0.6);
+        let char_width_px = px(self.ascii_width_px.max(1.0));
         let viewport_height = window.viewport_size().height;
 
         self.workspace.update(cx, |w, cx| {
@@ -3556,7 +3579,7 @@ impl EntityInputHandler for EditorView {
         cx.notify();
     }
 
-    fn bounds_for_range(&mut self, range_utf16: std::ops::Range<usize>, bounds: Bounds<Pixels>, _window: &mut Window, cx: &mut Context<Self>) -> Option<Bounds<Pixels>> {
+    fn bounds_for_range(&mut self, range_utf16: std::ops::Range<usize>, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) -> Option<Bounds<Pixels>> {
         let workspace = self.workspace.read(cx);
         let vi_mode_enabled = workspace.config.vi_mode;
         let in_vi_cmd = vi_mode_enabled && workspace.vi_cmd.is_some();
@@ -3590,7 +3613,7 @@ impl EntityInputHandler for EditorView {
         let line_height = px(workspace.config.line_height);
         let gutter_width = if workspace.config.line_numbers { px(52.0) } else { px(0.0) };
         let text_left_padding = if workspace.config.line_numbers { TEXT_AREA_LEFT_PADDING } else { px(0.0) };
-        let char_width = px(workspace.config.font_size * 0.6);
+        let char_width = px(self.ascii_width_px.max(1.0));
 
         let (line, col) = editor.char_to_line_col(range_utf16.start);
         
@@ -3600,13 +3623,24 @@ impl EntityInputHandler for EditorView {
 
         let word_wrap = workspace.config.word_wrap;
         let tab_size = workspace.config.tab_size;
+        let line_str = Self::strip_line_endings(editor.rope.line(line).to_string());
         let (visual_row, visual_x) = if !word_wrap {
             let vr = line - editor.scroll_row;
-            let vc = (col as i32) - (editor.scroll_col as i32);
-            if vc < 0 {
+            if col < editor.scroll_col {
                 return None;
             }
-            (vr, char_width * vc as f32)
+            let line_len = line_str.chars().count();
+            let (cursor_x, _) = self.measure_cursor_in_visual_line(
+                line,
+                col,
+                &(0..line_len),
+                &line_str,
+                workspace,
+                editor,
+                window,
+            );
+            let scroll_offset_px = editor.scroll_col as f32 * self.ascii_width_px;
+            (vr, px((cursor_x - scroll_offset_px).max(0.0)))
         } else {
             let mut vrow = 0;
             for l in editor.scroll_row..line {
@@ -3632,14 +3666,16 @@ impl EntityInputHandler for EditorView {
             for (v_idx, r) in wraps.into_iter().enumerate() {
                 if col >= r.start && (col < r.end || v_idx == wraps_len.saturating_sub(1)) {
                     vrow += v_idx;
-                    target_vx = editor.get_visual_px(
+                    let (cx_px, _) = self.measure_cursor_in_visual_line(
                         line,
                         col,
                         &r,
-                        self.ascii_width_px,
-                        self.cjk_width_px,
-                        tab_size,
+                        &line_str,
+                        workspace,
+                        editor,
+                        window,
                     );
+                    target_vx = cx_px;
                     found = true;
                     break;
                 }
@@ -3807,7 +3843,7 @@ impl Render for EditorView {
                     .w_full()
                     .h_full()
                     .font_family(font_family)
-                    .child(self.render_lines(workspace, editor))
+                    .child(self.render_lines(workspace, editor, window))
             )
             .child(self.render_scrollbar(workspace, editor, window, cx))
             .into_any_element()
@@ -3815,6 +3851,175 @@ impl Render for EditorView {
 }
 
 impl EditorView {
+    fn strip_line_endings(mut line_str: String) -> String {
+        if line_str.ends_with('\n') {
+            line_str.pop();
+            if line_str.ends_with('\r') {
+                line_str.pop();
+            }
+        } else if line_str.ends_with('\r') {
+            line_str.pop();
+        }
+        line_str
+    }
+
+    fn slice_visual_line<'a>(line_str: &'a str, range: &std::ops::Range<usize>) -> (usize, usize, &'a str) {
+        let char_offsets: Vec<usize> = line_str.char_indices().map(|(b, _)| b).collect();
+        let total_chars = char_offsets.len();
+        let byte_start = if range.start >= total_chars {
+            line_str.len()
+        } else {
+            char_offsets[range.start]
+        };
+        let byte_end = if range.end >= total_chars {
+            line_str.len()
+        } else {
+            char_offsets[range.end]
+        };
+        let byte_end = byte_end.max(byte_start);
+        (byte_start, byte_end, &line_str[byte_start..byte_end])
+    }
+
+    fn build_visual_line_runs(
+        &self,
+        line_idx: usize,
+        range: &std::ops::Range<usize>,
+        byte_start: usize,
+        v_text: &str,
+        workspace: &Workspace,
+        editor: &zee_core::buffer::Editor,
+    ) -> Vec<TextRun> {
+        if v_text.is_empty() {
+            return Vec::new();
+        }
+
+        let theme = &workspace.theme;
+        let default_fg = led_color_to_gpui(theme.editor.foreground);
+        let sel_bg = with_alpha(led_color_to_gpui(theme.editor.selection), 0.75);
+
+        let v_len_chars = v_text.chars().count();
+        let line_start_char = editor.rope.line_to_char(line_idx);
+        let v_start_char = line_start_char + range.start;
+        let v_end_char = line_start_char + range.end;
+
+        let global_selection = if editor.vi_mode == zee_core::ViMode::VisualBlock {
+            let ranges = editor.get_visual_block_ranges();
+            ranges.into_iter().find(|r| {
+                (r.start < v_end_char && r.end > v_start_char)
+                    || (r.start >= v_start_char && r.start <= v_end_char)
+            })
+        } else {
+            editor.selection.clone()
+        };
+
+        let v_selection: Option<std::ops::Range<usize>> = if let Some(ref sel) = global_selection {
+            let sel_min = sel.start.min(sel.end);
+            let sel_max = sel.start.max(sel.end);
+            if sel_min < v_end_char && sel_max > v_start_char {
+                let s = sel_min.saturating_sub(v_start_char).min(v_len_chars);
+                let e = sel_max.saturating_sub(v_start_char).min(v_len_chars);
+                if s < e { Some(s..e) } else { None }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let tokens = editor.line_tokens.get(line_idx).and_then(|t| t.as_ref());
+        let font = gpui::font(self.font_family.clone());
+        let mut runs: Vec<TextRun> = Vec::new();
+        let mut tok_idx = 0;
+
+        for (char_idx, (rel_byte, ch)) in v_text.char_indices().enumerate() {
+            let abs_byte = byte_start + rel_byte;
+            let fg_color = if let Some(toks) = tokens {
+                while tok_idx < toks.len() && toks[tok_idx].byte_range.end <= abs_byte {
+                    tok_idx += 1;
+                }
+                if tok_idx < toks.len() && toks[tok_idx].byte_range.start <= abs_byte {
+                    self.token_color(toks[tok_idx].token, theme)
+                } else {
+                    default_fg
+                }
+            } else {
+                default_fg
+            };
+
+            let is_selected = v_selection
+                .as_ref()
+                .map(|sel| char_idx >= sel.start && char_idx < sel.end)
+                .unwrap_or(false);
+            let bg_color = if is_selected {
+                Some(Hsla::from(sel_bg))
+            } else {
+                None
+            };
+            let fg_hsla = Hsla::from(fg_color);
+            let ch_len = ch.len_utf8();
+
+            if let Some(last) = runs.last_mut() {
+                if last.color == fg_hsla && last.background_color == bg_color {
+                    last.len += ch_len;
+                    continue;
+                }
+            }
+            runs.push(TextRun {
+                len: ch_len,
+                font: font.clone(),
+                color: fg_hsla,
+                background_color: bg_color,
+                underline: None,
+                strikethrough: None,
+            });
+        }
+
+        runs
+    }
+
+    fn layout_visual_line(
+        &self,
+        line_idx: usize,
+        range: &std::ops::Range<usize>,
+        line_str: &str,
+        workspace: &Workspace,
+        editor: &zee_core::buffer::Editor,
+        window: &Window,
+    ) -> (String, std::sync::Arc<LineLayout>) {
+        let (byte_start, _byte_end, v_text) = Self::slice_visual_line(line_str, range);
+        let runs = self.build_visual_line_runs(line_idx, range, byte_start, v_text, workspace, editor);
+        let font_size = px(workspace.config.font_size);
+        let layout = window.text_system().layout_line(v_text, font_size, &runs, None);
+        (v_text.to_string(), layout)
+    }
+
+    fn measure_cursor_in_visual_line(
+        &self,
+        line_idx: usize,
+        cursor_col: usize,
+        range: &std::ops::Range<usize>,
+        line_str: &str,
+        workspace: &Workspace,
+        editor: &zee_core::buffer::Editor,
+        window: &Window,
+    ) -> (f32, Option<f32>) {
+        let (v_text, layout) = self.layout_visual_line(line_idx, range, line_str, workspace, editor, window);
+        let v_cursor_char = cursor_col.saturating_sub(range.start);
+        let mut chars = v_text.char_indices().skip(v_cursor_char);
+        match chars.next() {
+            Some((byte_offset, ch)) => {
+                let x0 = layout.x_for_index(byte_offset) / px(1.0);
+                let x1 = layout.x_for_index(byte_offset + ch.len_utf8()) / px(1.0);
+                let w = (x1 - x0).max(0.0);
+                (x0, if w > 0.0 { Some(w) } else { None })
+            }
+            None => {
+                let x0 = layout.x_for_index(v_text.len()) / px(1.0);
+                (x0, None)
+            }
+        }
+    }
+
     fn render_scrollbar(
         &self,
         workspace: &Workspace,
@@ -3881,7 +4086,7 @@ impl EditorView {
             .into_any_element()
     }
 
-    fn render_lines(&self, workspace: &Workspace, editor: &zee_core::buffer::Editor) -> impl IntoElement {
+    fn render_lines(&self, workspace: &Workspace, editor: &zee_core::buffer::Editor, window: &Window) -> impl IntoElement {
         let line_count = editor.line_count();
         let scroll_row = editor.scroll_row;
         let word_wrap = workspace.config.word_wrap;
@@ -3904,14 +4109,14 @@ impl EditorView {
                 );
                 let wraps_len = wraps.len();
                 for (v_idx, range) in wraps.into_iter().enumerate() {
-                    rows.push(self.render_visual_line(line_idx, v_idx, wraps_len, range, workspace, editor).into_any_element());
+                    rows.push(self.render_visual_line(line_idx, v_idx, wraps_len, range, workspace, editor, window).into_any_element());
                     if rows.len() >= max_visual_rows {
                         break;
                     }
                 }
             } else {
                 let len = editor.line(line_idx).len_chars();
-                rows.push(self.render_visual_line(line_idx, 0, 1, 0..len, workspace, editor).into_any_element());
+                rows.push(self.render_visual_line(line_idx, 0, 1, 0..len, workspace, editor, window).into_any_element());
             }
         }
 
@@ -3923,6 +4128,7 @@ impl EditorView {
             .children(rows)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_visual_line(
         &self,
         line_idx: usize,
@@ -3931,6 +4137,7 @@ impl EditorView {
         range: std::ops::Range<usize>,
         workspace: &Workspace,
         editor: &zee_core::buffer::Editor,
+        window: &Window,
     ) -> impl IntoElement {
         let theme = &workspace.theme;
         let word_wrap = workspace.config.word_wrap;
@@ -3938,16 +4145,7 @@ impl EditorView {
         let char_width = self.ascii_width_px;
 
         let line = editor.rope.line(line_idx);
-        let mut line_str = line.to_string();
-        // Strip line endings for rendering
-        if line_str.ends_with('\n') {
-            line_str.pop();
-            if line_str.ends_with('\r') {
-                line_str.pop();
-            }
-        } else if line_str.ends_with('\r') {
-            line_str.pop();
-        }
+        let line_str = Self::strip_line_endings(line.to_string());
 
         let (cursor_line, _) = editor.char_to_line_col(editor.cursor);
         let is_cursor_line = line_idx == cursor_line;
@@ -4003,9 +4201,11 @@ impl EditorView {
                             v_idx,
                             wraps_len,
                             &range,
+                            &line_str,
                             workspace,
                             editor,
                             is_cursor_line,
+                            window,
                         );
 
                         let mut line_container = div()
@@ -4052,91 +4252,21 @@ impl EditorView {
         workspace: &Workspace,
         editor: &zee_core::buffer::Editor,
     ) -> Vec<AnyElement> {
-        let theme = &workspace.theme;
         let line_height = px(workspace.config.line_height);
-
-        let char_offsets: Vec<usize> = line_str.char_indices().map(|(b, _)| b).collect();
-        let total_chars = char_offsets.len();
-        let byte_start = if range.start >= total_chars {
-            line_str.len()
-        } else {
-            char_offsets[range.start]
-        };
-        let byte_end = if range.end >= total_chars {
-            line_str.len()
-        } else {
-            char_offsets[range.end]
-        };
-        let v_text = &line_str[byte_start..byte_end];
-        let v_len_chars = v_text.chars().count();
-
-        let line_start_char = editor.rope.line_to_char(line_idx);
-        let v_start_char = line_start_char + range.start;
-        let v_end_char = line_start_char + range.end;
-
-        let global_selection = if editor.vi_mode == zee_core::ViMode::VisualBlock {
-            let ranges = editor.get_visual_block_ranges();
-            ranges.into_iter().find(|r| (r.start < v_end_char && r.end > v_start_char) || (r.start >= v_start_char && r.start <= v_end_char))
-        } else {
-            editor.selection.clone()
-        };
-
-        let v_selection: Option<std::ops::Range<usize>> = if let Some(ref sel) = global_selection {
-            let sel_min = sel.start.min(sel.end);
-            let sel_max = sel.start.max(sel.end);
-            if sel_min < v_end_char && sel_max > v_start_char {
-                let s = sel_min.saturating_sub(v_start_char).min(v_len_chars);
-                let e = sel_max.saturating_sub(v_start_char).min(v_len_chars);
-                if s < e {
-                    Some(s..e)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let mut elements = Vec::new();
-
-        let render_chunk = |text: &str, chunk_start_char: usize, token_color: Option<Rgba>, elements: &mut Vec<AnyElement>| {
-            if text.is_empty() { return; }
-            self.render_chunk_internal(text, chunk_start_char, token_color, v_selection.clone(), theme, line_height, elements);
-        };
-
-        if let Some(Some(tokens)) = editor.line_tokens.get(line_idx) {
-            let mut last_v_offset = 0;
-            for token in tokens {
-                let tok_start = token.byte_range.start.clamp(byte_start, byte_end);
-                let tok_end = token.byte_range.end.clamp(byte_start, byte_end);
-                if tok_end > tok_start {
-                    let v_tok_start = tok_start - byte_start;
-                    let v_tok_end = tok_end - byte_start;
-
-                    if v_tok_start > last_v_offset {
-                        let text = &v_text[last_v_offset..v_tok_start];
-                        let start_char = v_text[..last_v_offset].chars().count();
-                        render_chunk(text, start_char, None, &mut elements);
-                    }
-
-                    let text = &v_text[v_tok_start..v_tok_end];
-                    let start_char = v_text[..v_tok_start].chars().count();
-                    render_chunk(text, start_char, Some(self.token_color(token.token, theme)), &mut elements);
-                    last_v_offset = v_tok_end;
-                }
-            }
-            if last_v_offset < v_text.len() {
-                let text = &v_text[last_v_offset..];
-                let start_char = v_text[..last_v_offset].chars().count();
-                render_chunk(text, start_char, None, &mut elements);
-            }
-        } else {
-            render_chunk(v_text, 0, None, &mut elements);
+        let (byte_start, _byte_end, v_text) = Self::slice_visual_line(line_str, &range);
+        if v_text.is_empty() {
+            return Vec::new();
         }
-
-        elements
+        let runs = self.build_visual_line_runs(line_idx, &range, byte_start, v_text, workspace, editor);
+        vec![
+            div()
+                .h(line_height)
+                .flex()
+                .items_center()
+                .font_family(self.font_family.clone())
+                .child(StyledText::new(v_text.to_string()).with_runs(runs))
+                .into_any_element(),
+        ]
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4146,9 +4276,11 @@ impl EditorView {
         v_idx: usize,
         wraps_len: usize,
         range: &std::ops::Range<usize>,
+        line_str: &str,
         workspace: &Workspace,
         editor: &zee_core::buffer::Editor,
         is_cursor_line: bool,
+        window: &Window,
     ) -> Option<AnyElement> {
         if !is_cursor_line {
             return None;
@@ -4166,13 +4298,14 @@ impl EditorView {
             return None;
         }
 
-        let cursor_x = editor.get_visual_px(
+        let (cursor_x, measured_char_w) = self.measure_cursor_in_visual_line(
             line_idx,
             cursor_col,
             range,
-            self.ascii_width_px,
-            self.cjk_width_px,
-            workspace.config.tab_size,
+            line_str,
+            workspace,
+            editor,
+            window,
         );
 
         let theme = &workspace.theme;
@@ -4204,18 +4337,7 @@ impl EditorView {
         let cursor_color = led_color_to_gpui(theme.editor.cursor);
 
         if is_block_cursor {
-            let line = editor.rope.line(line_idx);
-            let char_at_cursor = line.chars().nth(cursor_col);
-            use unicode_width::UnicodeWidthChar;
-            let cursor_w = match char_at_cursor {
-                Some('\t') => {
-                    let tab_width_px = workspace.config.tab_size as f32 * self.ascii_width_px;
-                    let col_px = cursor_x % tab_width_px;
-                    tab_width_px - col_px
-                }
-                Some(c) if c.width() == Some(2) => self.cjk_width_px,
-                _ => self.ascii_width_px,
-            };
+            let cursor_w = measured_char_w.unwrap_or(self.ascii_width_px);
 
             Some(
                 div()
@@ -4232,13 +4354,7 @@ impl EditorView {
         } else {
             let is_ime_active = zee_core::is_cjk_ime_active() || self.preedit_text.is_some();
             if is_ime_active {
-                let line = editor.rope.line(line_idx);
-                let char_at_cursor = line.chars().nth(cursor_col);
-                use unicode_width::UnicodeWidthChar;
-                let cursor_w = match char_at_cursor {
-                    Some(c) if c.width() == Some(2) => self.cjk_width_px,
-                    _ => self.ascii_width_px.max(8.0),
-                };
+                let cursor_w = measured_char_w.unwrap_or_else(|| self.ascii_width_px.max(8.0));
                 let ime_cursor_color = gpui::rgb(0xffa726); // Vibrant amber/orange
                 let underscore_height = px(3.0);
                 let underscore_top = line_height - underscore_height;
@@ -4268,87 +4384,6 @@ impl EditorView {
             }
         }
     }
-
-
-    #[allow(clippy::too_many_arguments)]
-    fn render_chunk_internal(
-        &self,
-        text: &str,
-        start_char: usize,
-        token_color: Option<Rgba>,
-        selection: Option<std::ops::Range<usize>>,
-        theme: &Theme,
-        line_height: Pixels,
-        elements: &mut Vec<AnyElement>,
-    ) {
-        if text.is_empty() { return; }
-
-        let text_color = token_color.unwrap_or(led_color_to_gpui(theme.editor.foreground));
-        let sel_bg = with_alpha(led_color_to_gpui(theme.editor.selection), 0.75);
-
-        let chunk_chars: Vec<char> = text.chars().collect();
-        let chunk_len = chunk_chars.len();
-
-        if let Some(ref sel) = selection {
-            let sel_start = sel.start.saturating_sub(start_char);
-            let sel_end = sel.end.saturating_sub(start_char);
-
-            if sel_start < chunk_len && sel_end > 0 {
-                let highlight_start = sel_start;
-                let highlight_end = sel_end.min(chunk_len);
-
-                if highlight_start > 0 {
-                    elements.push(
-                        div()
-                            .h(line_height)
-                            .flex()
-                            .items_center()
-                            .text_color(text_color)
-                            .font_family(self.font_family.clone())
-                            .child(chunk_chars[..highlight_start].iter().collect::<String>())
-                            .into_any_element()
-                    );
-                }
-
-                elements.push(
-                    div()
-                        .h(line_height)
-                        .flex()
-                        .items_center()
-                        .bg(sel_bg)
-                        .text_color(text_color)
-                        .font_family(self.font_family.clone())
-                        .child(chunk_chars[highlight_start..highlight_end].iter().collect::<String>())
-                        .into_any_element()
-                );
-
-                if highlight_end < chunk_len {
-                    elements.push(
-                        div()
-                            .h(line_height)
-                            .flex()
-                            .items_center()
-                            .text_color(text_color)
-                            .font_family(self.font_family.clone())
-                            .child(chunk_chars[highlight_end..].iter().collect::<String>())
-                            .into_any_element()
-                    );
-                }
-                return;
-            }
-        }
-
-        elements.push(
-            div()
-                .h(line_height)
-                .flex()
-                .items_center()
-                .text_color(text_color)
-                .font_family(self.font_family.clone())
-                .child(text.to_string())
-                .into_any_element()
-        );
-    }
 }
 
 /// Resolves the active font family for the editor based on configuration and system availability.
@@ -4370,15 +4405,13 @@ pub fn resolve_editor_font_family(configured: Option<&str>, available_fonts: &[S
     SharedString::from(mono_font_family())
 }
 
-/// Resolves the width of full-width CJK characters in monospace text editing.
+/// Resolves the width of full-width CJK characters in text editing.
 ///
-/// In monospace typography, full-width CJK characters (East Asian Fullwidth/Wide)
-/// must occupy character columns matching the rendered fallback font or standard 2x ASCII columns.
 /// On systems like Windows where the primary monospace font (e.g. Consolas, Cascadia Mono)
 /// lacks CJK glyphs, font advance queries without shaping return the missing glyph (.notdef) width (1.0 * ascii_width)
 /// rather than failing or returning the fallback font's actual advance.
 /// This helper detects such degenerate metrics (< 1.2x ASCII) and reliably enforces `ascii_width * 2.0`,
-/// while preserving genuine fallback font metrics (e.g. 1.2x to 2.5x ASCII width).
+/// while preserving genuine shaped font metrics (e.g. 1.2x to 2.5x ASCII width).
 pub fn resolve_cjk_width(measured_cjk: Option<f32>, ascii_width: f32) -> f32 {
     match measured_cjk {
         Some(w) if w >= ascii_width * 1.2 && w <= ascii_width * 2.5 => w,

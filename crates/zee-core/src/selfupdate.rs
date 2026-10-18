@@ -1537,7 +1537,7 @@ mod tests {
 
     #[test]
     fn test_real_world_release_assets_contract() {
-        for version in &["v0.2.15", "v0.2.16", "v0.2.17", "v0.2.18", "v1.0.0"] {
+        for version in &["v0.2.15", "v0.2.16", "v0.2.17", "v0.2.18", "v0.2.19", "v1.0.0"] {
             let assets = vec![
                 ReleaseAsset { name: "SHA256SUMS.txt".to_string(), browser_download_url: "https://...".into(), size: 284 },
                 ReleaseAsset { name: format!("zee-cli-{}-linux-x64.zip", version), browser_download_url: "https://...".into(), size: 10_000_000 },

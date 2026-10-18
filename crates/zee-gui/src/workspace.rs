@@ -1490,5 +1490,79 @@ mod tests {
             assert_eq!(ui, "sans-serif");
         }
     }
+
+    #[test]
+    fn test_resolve_cjk_width_enforces_double_column_on_degenerate_metrics() {
+        use crate::widgets::editor_view::resolve_cjk_width;
+
+        let ascii_width = 8.4;
+
+        // 1. Windows Consolas / Cascadia Mono bug: font has no 'あ' glyph,
+        // so DirectWrite queries return .notdef advance which equals ascii_width.
+        let degenerate_cjk = Some(8.4);
+        assert_eq!(
+            resolve_cjk_width(degenerate_cjk, ascii_width),
+            ascii_width * 2.0,
+            "Degenerate CJK advance matching ASCII width must be corrected to 2x ASCII width"
+        );
+
+        // 2. Missing CJK metrics (None)
+        assert_eq!(
+            resolve_cjk_width(None, ascii_width),
+            ascii_width * 2.0,
+            "Missing CJK advance must fall back to 2x ASCII width"
+        );
+
+        // 3. Proportional or 1.0 * font_size fallback (14.0 vs 8.4 -> 1.66x < 1.8x)
+        assert_eq!(
+            resolve_cjk_width(Some(14.0), ascii_width),
+            ascii_width * 2.0,
+            "Under-proportioned CJK metric (< 1.8x) must fall back to exact 2x ASCII width"
+        );
+
+        // 4. Genuine CJK monospace font with exact or near 2x advance (e.g. 16.8)
+        assert_eq!(
+            resolve_cjk_width(Some(16.8), ascii_width),
+            16.8,
+            "Genuine ~2x CJK advance should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_mixed_ascii_and_fullwidth_status_bar_column_and_cursor_alignment() {
+        let mut editor = zee_core::buffer::Editor::new();
+        // User's exact test case: 4 half-width @ followed by 5 full-width ＠
+        editor.insert(0, "@@@@＠＠＠＠＠");
+
+        let ascii_w = 8.4;
+        let cjk_w = crate::widgets::editor_view::resolve_cjk_width(Some(8.4), ascii_w);
+        assert_eq!(cjk_w, ascii_w * 2.0);
+
+        // Verify status bar Col at cursor positions:
+        // Position 0..4 (ASCII @): Col 1, 2, 3, 4, 5
+        for i in 0..=4 {
+            let (line, vcol) = editor.char_to_visual_col(i, 4);
+            assert_eq!(line, 0);
+            assert_eq!(vcol + 1, i + 1, "ASCII @ at pos {} should be Col {}", i, i + 1);
+        }
+
+        // Position 5 (after 1st full-width ＠): should be Col 7 (not Col 6!)
+        let (_, vcol_5) = editor.char_to_visual_col(5, 4);
+        assert_eq!(vcol_5 + 1, 7, "After 1st fullwidth ＠, status bar must show Col 7");
+
+        // Position 9 (end of line after 5th full-width ＠): should be Col 15 (not Col 10!)
+        let (_, vcol_end) = editor.char_to_visual_col(9, 4);
+        assert_eq!(vcol_end + 1, 15, "At end of '@@@@＠＠＠＠＠', status bar must show Col 15 (was bugged as Col 10)");
+
+        // Verify cursor pixel positions do not stop at 4th ＠
+        let px_end = editor.get_visual_px(0, 9, &(0..9), ascii_w, cjk_w, 4);
+        let expected_end = 4.0 * ascii_w + 5.0 * cjk_w;
+        assert!(
+            (px_end - expected_end).abs() < 1e-4,
+            "Cursor at line end must reach 14x ascii width ({}), got {}",
+            expected_end,
+            px_end
+        );
+    }
 }
 

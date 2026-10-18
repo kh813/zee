@@ -77,7 +77,7 @@ impl EditorView {
         let measured_ascii = cx.text_system().advance(font_id, px(font_size), 'x').ok().map(|s| s.width / px(1.0));
         let measured_cjk = cx.text_system().advance(font_id, px(font_size), 'あ').ok().map(|s| s.width / px(1.0));
         let ascii_width = measured_ascii.unwrap_or(if cfg!(target_os = "macos") { font_size * 0.602 } else { font_size * 0.6 });
-        let cjk_width = measured_cjk.unwrap_or(font_size * 1.0);
+        let cjk_width = resolve_cjk_width(measured_cjk, ascii_width);
 
         Self {
             workspace,
@@ -3728,7 +3728,7 @@ impl Render for EditorView {
         let ascii_width = measured_ascii.unwrap_or_else(|| {
             if cfg!(target_os = "macos") { font_size_val * 0.602 } else { font_size_val * 0.6 }
         });
-        let cjk_width = measured_cjk.unwrap_or(font_size_val * 1.0);
+        let cjk_width = resolve_cjk_width(measured_cjk, ascii_width);
         self.ascii_width_px = ascii_width;
         self.cjk_width_px = cjk_width;
         let viewport_width = window.viewport_size().width;
@@ -4336,5 +4336,20 @@ impl EditorView {
                 .child(text.to_string())
                 .into_any_element()
         );
+    }
+}
+
+/// Resolves the width of full-width CJK characters in monospace text editing.
+///
+/// In monospace typography, full-width CJK characters (East Asian Fullwidth/Wide)
+/// must occupy exactly 2 standard character columns (2.0 * ascii_width).
+/// On systems like Windows where the primary monospace font (e.g. Consolas, Cascadia Mono)
+/// lacks CJK glyphs, font advance queries return the missing glyph (.notdef) width (1.0 * ascii_width)
+/// rather than failing or returning the fallback font's full-width advance.
+/// This helper detects such degenerate or missing metrics and reliably enforces `ascii_width * 2.0`.
+pub fn resolve_cjk_width(measured_cjk: Option<f32>, ascii_width: f32) -> f32 {
+    match measured_cjk {
+        Some(w) if w >= ascii_width * 1.8 && w <= ascii_width * 2.2 => w,
+        _ => ascii_width * 2.0,
     }
 }

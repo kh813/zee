@@ -782,6 +782,17 @@ impl Editor {
         (line, pos - line_start)
     }
 
+    pub fn char_to_visual_col(&self, pos: usize, tab_size: usize) -> (usize, usize) {
+        let (line, col) = self.char_to_line_col(pos);
+        let line_len = if line < self.rope.len_lines() {
+            self.rope.line(line).len_chars()
+        } else {
+            0
+        };
+        let vcol = self.get_visual_col(line, col, &(0..line_len), tab_size);
+        (line, vcol)
+    }
+
     pub fn line_col_to_char(&self, line: usize, col: usize) -> usize {
         if line >= self.rope.len_lines() {
             return self.rope.len_chars();
@@ -3617,6 +3628,61 @@ mod tests {
 
         editor.move_to_prev_sentence(false);
         assert_eq!(editor.cursor, 0); // 'F' of First
+    }
+
+    #[test]
+    fn test_fullwidth_characters_visual_metrics_and_column_counts() {
+        let mut editor = Editor::new();
+        editor.insert(0, "@@@@＠＠＠＠＠");
+        
+        // 1. Column counts (char_to_visual_col)
+        let expected_cols = [
+            (0, 0),  // pos 0: Col 1
+            (1, 1),  // pos 1: Col 2
+            (2, 2),  // pos 2: Col 3
+            (3, 3),  // pos 3: Col 4
+            (4, 4),  // pos 4: Col 5 (before 1st ＠)
+            (5, 6),  // pos 5: Col 7 (before 2nd ＠)
+            (6, 8),  // pos 6: Col 9 (before 3rd ＠)
+            (7, 10), // pos 7: Col 11 (before 4th ＠)
+            (8, 12), // pos 8: Col 13 (before 5th ＠)
+            (9, 14), // pos 9: Col 15 (after 5th ＠, end of line!)
+        ];
+
+        for (pos, expected_col) in expected_cols {
+            let (line, vcol) = editor.char_to_visual_col(pos, 4);
+            assert_eq!(line, 0, "Line should be 0 at pos {}", pos);
+            assert_eq!(vcol, expected_col, "Visual column mismatch at pos {}", pos);
+        }
+
+        // 2. Pixel offsets (get_visual_px with 10.0 ascii and 20.0 cjk)
+        let ascii_px = 10.0;
+        let cjk_px = 20.0;
+        let expected_pxs = [
+            (0, 0.0),
+            (1, 10.0),
+            (2, 20.0),
+            (3, 30.0),
+            (4, 40.0),
+            (5, 60.0),
+            (6, 80.0),
+            (7, 100.0),
+            (8, 120.0),
+            (9, 140.0),
+        ];
+
+        for (pos, expected_px) in expected_pxs {
+            let px = editor.get_visual_px(0, pos, &(0..9), ascii_px, cjk_px, 4);
+            assert_eq!(px, expected_px, "Visual px mismatch at pos {}", pos);
+        }
+
+        // 3. Mouse hit testing (get_char_at_v_px)
+        assert_eq!(editor.get_char_at_v_px(0, 0..9, 34.0, ascii_px, cjk_px, 4), 3); // left half of char 3
+        assert_eq!(editor.get_char_at_v_px(0, 0..9, 45.0, ascii_px, cjk_px, 4), 4); // 1st ＠ left half (40..50)
+        assert_eq!(editor.get_char_at_v_px(0, 0..9, 55.0, ascii_px, cjk_px, 4), 5); // 1st ＠ right half (50..60), rounds to 2nd ＠
+        assert_eq!(editor.get_char_at_v_px(0, 0..9, 125.0, ascii_px, cjk_px, 4), 8); // 5th ＠ left half (120..130)
+        assert_eq!(editor.get_char_at_v_px(0, 0..9, 135.0, ascii_px, cjk_px, 4), 9); // 5th ＠ right half (130..140), rounds to end of line
+        assert_eq!(editor.get_char_at_v_px(0, 0..9, 200.0, ascii_px, cjk_px, 4), 9); // past line end
     }
 }
 

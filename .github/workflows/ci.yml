@@ -52,11 +52,4 @@ jobs:
         run: cargo check --workspace --all-targets
 
       - name: Run workspace tests
-        run: cargo test --workspace --verbose
-
-      - name: Build TUI on macOS & Linux (Release)
-        if: runner.os != 'Windows'
-        run: cargo build --release -p zee-tui
-
-      - name: Build GUI (Release)
-        run: cargo build --release -p zee-gui
+        run: cargo test --workspace

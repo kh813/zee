@@ -536,19 +536,33 @@ if kill -0 "$PID" 2>/dev/null; then
     sleep 0.2
 fi
 
-# Replace the application bundle
-rm -rf "$APP"
-mv "$NEW_APP" "$APP"
+# Backup current application bundle in case replacement fails
+BACKUP="${APP}.old_backup"
+rm -rf "$BACKUP"
+SWAPPED=0
 
-# Strip quarantine and ad-hoc sign so Gatekeeper doesn't block relaunch
-xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
-xattr -cr "$APP" 2>/dev/null || true
-codesign --force --deep --sign - "$APP" 2>/dev/null || true
+if mv "$APP" "$BACKUP"; then
+    if mv "$NEW_APP" "$APP"; then
+        # Strip quarantine and ad-hoc sign so Gatekeeper doesn't block relaunch
+        xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
+        xattr -cr "$APP" 2>/dev/null || true
+        codesign --force --deep --sign - "$APP" 2>/dev/null || true
+        SWAPPED=1
+    else
+        # Rollback to original bundle if moving new app failed
+        mv "$BACKUP" "$APP" 2>/dev/null || true
+    fi
+fi
+
+# If swap succeeded, remove the old backup
+if [ "$SWAPPED" -eq 1 ]; then
+    rm -rf "$BACKUP"
+fi
 
 # Clean up staging directory
 rm -rf "$STAGING"
 
-# Automatically relaunch the updated application!
+# Automatically relaunch the application (new version if succeeded, original if rolled back)
 open -a "$APP"
 "#;
 
@@ -634,23 +648,39 @@ fn apply_unix_binary(archive_bytes: &[u8], current_exe: &Path, target_bin_name: 
         .context("Failed to set executable permissions on updated binary")?;
 
     if !is_gui {
-        // CLI in-place replacement:
-        // On Unix, unlinking the running executable and replacing it with the new binary
-        // is atomic and does not terminate the active running process.
-        // It avoids helper scripts, timeouts, and abrupt kill -9 signals that would
-        // corrupt the terminal state or close the editor unexpectedly.
+        // CLI in-place replacement with backup and rollback:
+        let old_backup = current_exe.with_extension("old_backup");
+        let _ = fs::remove_file(&old_backup);
+
         let temp_target = current_exe.with_extension("tmp_new_update");
         let _ = fs::copy(&new_bin_path, &temp_target);
         let _ = fs::set_permissions(&temp_target, fs::Permissions::from_mode(0o755));
 
-        // Unlink the current executable so ETXTBSY is never encountered on Linux
-        let _ = fs::remove_file(current_exe);
-        if let Err(e) = fs::rename(&temp_target, current_exe) {
-            // Fallback to copy if rename fails across mount boundaries
-            fs::copy(&new_bin_path, current_exe)
-                .context(format!("Failed to install new binary: {}", e))?;
-            let _ = fs::set_permissions(current_exe, fs::Permissions::from_mode(0o755));
+        // Create backup of current executable
+        let mut backed_up = false;
+        if fs::rename(current_exe, &old_backup).is_ok() || fs::copy(current_exe, &old_backup).is_ok() {
+            backed_up = true;
         }
+
+        let mut installed = false;
+        if fs::rename(&temp_target, current_exe).is_ok() {
+            installed = true;
+        } else if fs::copy(&new_bin_path, current_exe).is_ok() {
+            let _ = fs::set_permissions(current_exe, fs::Permissions::from_mode(0o755));
+            installed = true;
+        }
+
+        if !installed {
+            // Rollback to original backup if install failed
+            if backed_up {
+                let _ = fs::rename(&old_backup, current_exe);
+            }
+            let _ = fs::remove_file(&temp_target);
+            let _ = fs::remove_dir_all(&staging_dir);
+            return Err(anyhow!("Failed to install new binary; original executable restored"));
+        }
+
+        let _ = fs::remove_file(&old_backup);
         let _ = fs::remove_file(&temp_target);
         let _ = fs::remove_dir_all(&staging_dir);
         return Ok(());
@@ -676,11 +706,26 @@ if kill -0 "$PID" 2>/dev/null; then
     sleep 0.2
 fi
 
-rm -f "$EXE"
-mv "$NEW_EXE" "$EXE"
-chmod +x "$EXE"
-xattr -d com.apple.quarantine "$EXE" 2>/dev/null || true
-codesign --force --sign - "$EXE" 2>/dev/null || true
+BACKUP="${{EXE}}.old_backup"
+rm -f "$BACKUP"
+SWAPPED=0
+
+if mv "$EXE" "$BACKUP"; then
+    if mv "$NEW_EXE" "$EXE"; then
+        chmod +x "$EXE"
+        xattr -d com.apple.quarantine "$EXE" 2>/dev/null || true
+        codesign --force --sign - "$EXE" 2>/dev/null || true
+        SWAPPED=1
+    else
+        # Rollback to backup if moving new binary failed
+        mv "$BACKUP" "$EXE" 2>/dev/null || true
+    fi
+fi
+
+if [ "$SWAPPED" -eq 1 ]; then
+    rm -f "$BACKUP"
+fi
+
 rm -rf "$STAGING"
 
 {}

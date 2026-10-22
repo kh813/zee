@@ -43,7 +43,7 @@ impl Render for TabBar {
         let border_color = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
         let hover_tab_bg = with_alpha(led_color_to_gpui(theme.ui.tab_active_bg), 0.4);
 
-        div()
+        let mut bar = div()
             .h(px(36.0))
             .w_full()
             .flex()
@@ -189,45 +189,39 @@ impl Render for TabBar {
                         cx.stop_propagation();
                         cx.emit(TabBarEvent::New);
                     }))
-            )
-            .children({
-                #[cfg(target_os = "macos")]
-                {
-                    if let Some(ref ver) = workspace.available_update {
-                        let i18n = zee_core::i18n::I18n::load(&workspace.config.language);
-                        let label = format!("⬆ v{} {}", ver, i18n.get("menu.help.update_available"));
-                        Some(
-                            div()
-                                .ml_auto()
-                                .mr_2()
-                                .mb_1()
-                                .h(px(22.0))
-                                .px_2()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .rounded_full()
-                                .cursor_pointer()
-                                .bg(with_alpha(gpui::rgb(0x2563eb), 0.2))
-                                .border_1()
-                                .border_color(with_alpha(gpui::rgb(0x3b82f6), 0.4))
-                                .text_color(gpui::rgb(0x60a5fa))
-                                .text_size(px(11.0))
-                                .hover(|s| s.bg(with_alpha(gpui::rgb(0x2563eb), 0.35)).border_color(with_alpha(gpui::rgb(0x3b82f6), 0.7)))
-                                .on_mouse_down(MouseButton::Left, cx.listener(|_, _, window, cx| {
-                                    window.dispatch_action(Box::new(crate::app::CheckForUpdates {}), cx);
-                                }))
-                                .child(label)
-                        )
-                    } else {
-                        None
-                    }
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    None
-                }
-            })
+            );
+
+        #[cfg(target_os = "macos")]
+        if let Some(ref ver) = workspace.available_update {
+            let i18n = zee_core::i18n::I18n::load(&workspace.config.language);
+            let label = format!("⬆ v{} {}", ver, i18n.get("menu.help.update_available"));
+            bar = bar.child(
+                div()
+                    .ml_auto()
+                    .mr_2()
+                    .mb_1()
+                    .h(px(22.0))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .bg(with_alpha(gpui::rgb(0x2563eb), 0.2))
+                    .border_1()
+                    .border_color(with_alpha(gpui::rgb(0x3b82f6), 0.4))
+                    .text_color(gpui::rgb(0x60a5fa))
+                    .text_size(px(11.0))
+                    .hover(|s| s.bg(with_alpha(gpui::rgb(0x2563eb), 0.35)).border_color(with_alpha(gpui::rgb(0x3b82f6), 0.7)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(Box::new(crate::app::CheckForUpdates {}), cx);
+                    }))
+                    .child(label),
+            );
+        }
+
+        bar
     }
 }
+
 

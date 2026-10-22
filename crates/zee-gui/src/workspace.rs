@@ -1711,5 +1711,26 @@ mod tests {
             assert_eq!(selected, "🦀");
         }
     }
+
+    #[test]
+    fn test_workspace_available_update_and_menu_indicator() {
+        let mut workspace = Workspace::new(Config::default());
+        workspace.available_update = None;
+        assert!(workspace.available_update.is_none());
+
+        workspace.available_update = Some("0.2.23".to_string());
+        assert_eq!(workspace.available_update.as_deref(), Some("0.2.23"));
+
+        let i18n_ja = zee_core::i18n::I18n::load("ja");
+        let label_ja = format!("⬆ v{} {}", workspace.available_update.as_ref().unwrap(), i18n_ja.get("menu.help.update_available"));
+        assert!(label_ja.contains("0.2.23"));
+        assert!(label_ja.contains("利用可能"));
+
+        let i18n_en = zee_core::i18n::I18n::load("en");
+        let label_en = format!("⬆ v{} {}", workspace.available_update.as_ref().unwrap(), i18n_en.get("menu.help.update_available"));
+        assert!(label_en.contains("0.2.23"));
+        assert!(label_en.contains("Available"));
+    }
 }
+
 

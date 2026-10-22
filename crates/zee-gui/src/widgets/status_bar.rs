@@ -22,7 +22,7 @@ impl StatusBar {
             async move {
                 let mut prev = initial_ime;
                 loop {
-                    smol::Timer::after(std::time::Duration::from_millis(100)).await;
+                    smol::Timer::after(std::time::Duration::from_millis(200)).await;
                     let current = bg_executor.spawn(async { zee_core::is_cjk_ime_active() }).await;
                     if current != prev {
                         prev = current;

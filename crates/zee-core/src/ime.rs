@@ -154,6 +154,45 @@ pub(crate) fn evaluate_windows_ime_status(is_open: bool, lang_id: u16) -> bool {
 
 #[cfg(target_os = "macos")]
 fn detect_macos_ime() -> bool {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Instant;
+
+    static LAST_CHECK_MS: AtomicU64 = AtomicU64::new(0);
+    static LAST_RESULT: AtomicBool = AtomicBool::new(false);
+    static IS_CHECKING: AtomicBool = AtomicBool::new(false);
+    static START_INSTANT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+    let start = START_INSTANT.get_or_init(Instant::now);
+    let now_ms = start.elapsed().as_millis() as u64;
+    let last = LAST_CHECK_MS.load(Ordering::Relaxed);
+
+    // Throttle queries to once every 150ms to prevent heavy IPC / CPU load
+    if now_ms.saturating_sub(last) < 150 {
+        return LAST_RESULT.load(Ordering::Relaxed);
+    }
+
+    // Ensure only one thread performs the actual query at a time to prevent lock contention
+    if IS_CHECKING.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        return LAST_RESULT.load(Ordering::Relaxed);
+    }
+
+    let result = query_macos_ime(now_ms);
+    LAST_RESULT.store(result, Ordering::Relaxed);
+    LAST_CHECK_MS.store(now_ms, Ordering::Relaxed);
+    IS_CHECKING.store(false, Ordering::Release);
+    result
+}
+
+#[cfg(target_os = "macos")]
+fn query_macos_ime(now_ms: u64) -> bool {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST_SYNC_MS: AtomicU64 = AtomicU64::new(0);
+
+    #[link(name = "pthread")]
+    extern "C" {
+        fn pthread_main_np() -> i32;
+    }
+
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
         fn CFPreferencesAppSynchronize(application_id: *const std::ffi::c_void) -> u8;
@@ -219,12 +258,26 @@ fn detect_macos_ime() -> bool {
         };
 
         // 1. Primary approach: Query AppleSelectedInputSources from com.apple.HIToolbox
-        // This reflects live global macOS IME state for CLI processes without an NSApplication runloop
+        // This reflects live global macOS IME state for CLI and GUI processes
         let app_id = make_cfstring("com.apple.HIToolbox");
         let key_selected = make_cfstring("AppleSelectedInputSources");
 
-        CFPreferencesAppSynchronize(app_id);
-        let selected_val = CFPreferencesCopyAppValue(key_selected, app_id);
+        // Throttle CFPreferencesAppSynchronize to at most once every 2 seconds to avoid
+        // hammering cfprefsd IPC and triggering disk/daemon locks.
+        let last_sync = LAST_SYNC_MS.load(Ordering::Relaxed);
+        if now_ms.saturating_sub(last_sync) >= 2000 {
+            CFPreferencesAppSynchronize(app_id);
+            LAST_SYNC_MS.store(now_ms, Ordering::Relaxed);
+        }
+
+        let mut selected_val = CFPreferencesCopyAppValue(key_selected, app_id);
+
+        // If not found and at least 500ms since last sync, retry after synchronize
+        if selected_val.is_null() && now_ms.saturating_sub(last_sync) >= 500 {
+            CFPreferencesAppSynchronize(app_id);
+            LAST_SYNC_MS.store(now_ms, Ordering::Relaxed);
+            selected_val = CFPreferencesCopyAppValue(key_selected, app_id);
+        }
 
         if !selected_val.is_null() {
             if CFGetTypeID(selected_val) == CFArrayGetTypeID() {
@@ -281,45 +334,114 @@ fn detect_macos_ime() -> bool {
         }
 
         // 2. Fallback to TISCopyCurrentKeyboardInputSource
-        let source = TISCopyCurrentKeyboardInputSource();
-        if source.is_null() {
-            return false;
+        // CRITICAL: Carbon / HIToolbox TIS APIs (TSMGetInputSourceProperty, islGetInputSourceListWithAdditions)
+        // assert that they are running on the main queue (dispatch_assert_queue).
+        // Calling them on background threads triggers a SIGTRAP crash (_dispatch_assert_queue_fail).
+        // Therefore, we MUST verify pthread_main_np() != 0 before calling any TIS functions.
+        if pthread_main_np() != 0 {
+            let source = TISCopyCurrentKeyboardInputSource();
+            if !source.is_null() {
+                let mode_ref = TISGetInputSourceProperty(source, kTISPropertyInputModeID);
+                let mode_str = cfstring_to_string(mode_ref);
+
+                let id_ref = TISGetInputSourceProperty(source, kTISPropertyInputSourceID);
+                let id_str = cfstring_to_string(id_ref);
+
+                CFRelease(source);
+
+                if let Some(res) = evaluate_input_source_cjk(mode_str.as_deref(), id_str.as_deref(), None) {
+                    return res;
+                }
+            }
         }
 
-        let mode_ref = TISGetInputSourceProperty(source, kTISPropertyInputModeID);
-        let mode_str = cfstring_to_string(mode_ref);
-
-        let id_ref = TISGetInputSourceProperty(source, kTISPropertyInputSourceID);
-        let id_str = cfstring_to_string(id_ref);
-
-        CFRelease(source);
-
-        evaluate_input_source_cjk(mode_str.as_deref(), id_str.as_deref(), None).unwrap_or(false)
+        false
     }
 }
 
 #[cfg(target_os = "windows")]
 fn detect_windows_ime() -> bool {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::time::Instant;
+
+    static LAST_CHECK_MS: AtomicU64 = AtomicU64::new(0);
+    static LAST_RESULT: AtomicBool = AtomicBool::new(false);
+    static IS_CHECKING: AtomicBool = AtomicBool::new(false);
+    static START_INSTANT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+    let start = START_INSTANT.get_or_init(Instant::now);
+    let now_ms = start.elapsed().as_millis() as u64;
+    let last = LAST_CHECK_MS.load(Ordering::Relaxed);
+
+    // Throttle queries to once every 150ms to prevent heavy polling
+    if now_ms.saturating_sub(last) < 150 {
+        return LAST_RESULT.load(Ordering::Relaxed);
+    }
+
+    // Ensure only one thread queries at a time
+    if IS_CHECKING.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        return LAST_RESULT.load(Ordering::Relaxed);
+    }
+
+    let result = query_windows_ime();
+    LAST_RESULT.store(result, Ordering::Relaxed);
+    LAST_CHECK_MS.store(now_ms, Ordering::Relaxed);
+    IS_CHECKING.store(false, Ordering::Release);
+    result
+}
+
+#[cfg(target_os = "windows")]
+fn query_windows_ime() -> bool {
     #[link(name = "user32")]
     extern "system" {
         fn GetKeyboardLayout(id_thread: u32) -> *mut std::ffi::c_void;
         fn GetForegroundWindow() -> *mut std::ffi::c_void;
-        fn SendMessageA(hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
+        fn GetWindowThreadProcessId(hwnd: *mut std::ffi::c_void, lpdw_process_id: *mut u32) -> u32;
+        fn SendMessageTimeoutA(
+            hwnd: *mut std::ffi::c_void,
+            msg: u32,
+            wparam: usize,
+            lparam: isize,
+            flags: u32,
+            timeout: u32,
+            result: *mut usize,
+        ) -> isize;
     }
     #[link(name = "imm32")]
     extern "system" {
         fn ImmGetDefaultIMEWnd(hwnd: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
     }
     unsafe {
-        let layout = GetKeyboardLayout(0) as usize;
+        let hwnd = GetForegroundWindow();
+
+        // Query the keyboard layout of the foreground window's thread rather than
+        // the calling thread (which may be a background worker thread with no message queue).
+        let thread_id = if !hwnd.is_null() {
+            GetWindowThreadProcessId(hwnd, std::ptr::null_mut())
+        } else {
+            0
+        };
+
+        let layout = GetKeyboardLayout(thread_id) as usize;
         let lang_id = (layout & 0xFFFF) as u16;
 
-        let hwnd = GetForegroundWindow();
         let is_open = if !hwnd.is_null() {
             let ime_hwnd = ImmGetDefaultIMEWnd(hwnd);
             if !ime_hwnd.is_null() {
                 // WM_IME_CONTROL = 0x0283, IMC_GETOPENSTATUS = 0x0005
-                SendMessageA(ime_hwnd, 0x0283, 0x0005, 0) != 0
+                // Use SendMessageTimeoutA with SMTO_ABORTIFHUNG (0x0002) and 50ms timeout
+                // to avoid blocking the calling thread if the target window is unresponsive.
+                let mut status_result: usize = 0;
+                let ok = SendMessageTimeoutA(
+                    ime_hwnd,
+                    0x0283,
+                    0x0005,
+                    0,
+                    0x0002,
+                    50,
+                    &mut status_result,
+                );
+                ok != 0 && status_result != 0
             } else {
                 false
             }
@@ -338,20 +460,27 @@ fn detect_linux_ime() -> bool {
 
     static LAST_CHECK_MS: AtomicU64 = AtomicU64::new(0);
     static LAST_RESULT: AtomicBool = AtomicBool::new(false);
+    static IS_CHECKING: AtomicBool = AtomicBool::new(false);
     static START_INSTANT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
     let start = START_INSTANT.get_or_init(Instant::now);
     let now_ms = start.elapsed().as_millis() as u64;
     let last = LAST_CHECK_MS.load(Ordering::Relaxed);
 
-    // Throttle queries to once every 100ms to avoid excessive process spawns in TUI event loop
-    if now_ms.saturating_sub(last) < 100 {
+    // Throttle queries to once every 150ms to avoid excessive process spawns in event loops
+    if now_ms.saturating_sub(last) < 150 {
+        return LAST_RESULT.load(Ordering::Relaxed);
+    }
+
+    // Ensure only one thread performs the actual process spawn query at a time
+    if IS_CHECKING.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
         return LAST_RESULT.load(Ordering::Relaxed);
     }
 
     let result = query_linux_ime();
     LAST_RESULT.store(result, Ordering::Relaxed);
     LAST_CHECK_MS.store(now_ms, Ordering::Relaxed);
+    IS_CHECKING.store(false, Ordering::Release);
     result
 }
 
@@ -551,5 +680,23 @@ mod tests {
     #[test]
     fn test_is_ssh_session_does_not_panic() {
         let _ = is_ssh_session();
+    }
+
+    #[test]
+    fn test_is_cjk_ime_active_concurrent_background_threads() {
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..20 {
+                        let _ = is_cjk_ime_active();
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
     }
 }

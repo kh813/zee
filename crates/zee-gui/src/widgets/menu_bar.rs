@@ -20,7 +20,10 @@ pub struct MenuBar {
 
 #[allow(dead_code)]
 impl MenuBar {
-    pub fn new(workspace: Entity<Workspace>, i18n: I18n, _cx: &mut Context<Self>) -> Self {
+    pub fn new(workspace: Entity<Workspace>, i18n: I18n, cx: &mut Context<Self>) -> Self {
+        cx.observe(&workspace, |_, _, cx| {
+            cx.notify();
+        }).detach();
         Self {
             workspace,
             i18n,
@@ -173,6 +176,33 @@ impl Render for MenuBar {
                         this.hover_menu(idx, window, cx);
                     }))
                     .child(title)
+            );
+        }
+
+        let workspace = self.workspace.read(cx);
+        if let Some(ref ver) = workspace.available_update {
+            let label = format!("⬆ v{} {}", ver, self.i18n.get("menu.help.update_available"));
+            bar = bar.child(
+                div()
+                    .ml_auto()
+                    .mr_1()
+                    .h(px(20.0))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .bg(with_alpha(gpui::rgb(0x2563eb), 0.2))
+                    .border_1()
+                    .border_color(with_alpha(gpui::rgb(0x3b82f6), 0.4))
+                    .text_color(gpui::rgb(0x60a5fa))
+                    .text_size(px(11.0))
+                    .hover(|s| s.bg(with_alpha(gpui::rgb(0x2563eb), 0.35)).border_color(with_alpha(gpui::rgb(0x3b82f6), 0.7)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(Box::new(crate::app::CheckForUpdates {}), cx);
+                    }))
+                    .child(label)
             );
         }
 

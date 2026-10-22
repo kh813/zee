@@ -100,6 +100,8 @@ pub struct App {
     pub pending_op_count: usize,
     pub adaptive_ime_active: bool,
     pub needs_clear: bool,
+    pub available_update: Option<String>,
+    pub update_rx: std::sync::mpsc::Receiver<String>,
 }
 
 impl App {
@@ -192,6 +194,20 @@ impl App {
         let root_dir = root_dir.unwrap_or_else(zee_core::file_tree::user_root_dir);
         let sidebar = crate::widgets::sidebar::Sidebar::new(root_dir, config.sidebar, config.show_hidden);
 
+        let cached_update = zee_core::selfupdate::get_cached_available_update();
+        let (update_tx, update_rx) = std::sync::mpsc::channel();
+        let include_prerelease = config.include_prerelease;
+        std::thread::spawn(move || {
+            // Wait 3 minutes (180s) after launch before first background check
+            std::thread::sleep(std::time::Duration::from_secs(180));
+            loop {
+                if let Some(ver) = zee_core::selfupdate::check_background_update(zee_core::selfupdate::AppType::Cli, include_prerelease) {
+                    let _ = update_tx.send(ver);
+                }
+                std::thread::sleep(std::time::Duration::from_secs(4 * 3600));
+            }
+        });
+
         let mut app = App {
             focus: Focus::Editor,
             running: true,
@@ -245,6 +261,8 @@ impl App {
             pending_op_count: 0,
             adaptive_ime_active: false,
             needs_clear: false,
+            available_update: cached_update,
+            update_rx,
         };
 
         app.update_active_outline();
@@ -913,6 +931,10 @@ impl App {
         self.init_terminal(&mut stdout)?;
 
         while self.running {
+            if let Ok(ver) = self.update_rx.try_recv() {
+                self.available_update = Some(ver);
+            }
+
             if self.width < 40 || self.height < 24 {
                 self.render_too_small(&mut stdout)?;
             } else {
@@ -4785,11 +4807,23 @@ impl App {
                     }
                 }
 
-                let (_mx, my, _mw, mh) = self.layout.menu_bounds();
+                let (mx, my, mw, mh) = self.layout.menu_bounds();
                 let (_tx, ty, _tw, th) = self.layout.tab_bounds();
                 if y >= my && y < my + mh {
                     // Menu Bar
                     if !is_middle {
+                        if let Some(ref ver) = self.available_update {
+                            let badge = format!("[⬆ v{}]", ver);
+                            let b_len = unicode_width::UnicodeWidthStr::width(badge.as_str()) as u16;
+                            if mw > b_len + 2 {
+                                let badge_x = mx + mw - b_len - 1;
+                                if x >= badge_x && x < badge_x + b_len {
+                                    self.perform_action(Action::CheckForUpdates);
+                                    return;
+                                }
+                            }
+                        }
+
                         for (idx, (_label, start, end)) in self.layout.menu_bar_items.iter().enumerate() {
                             if x >= *start && x < *end {
                                 self.open_menu(idx);
@@ -5194,6 +5228,30 @@ impl App {
             // Fill padding
             self.renderer.set_cell(*start, y, Cell { ch: ' ', bg: item_bg, ..Default::default() });
             self.renderer.set_cell(*end - 1, y, Cell { ch: ' ', bg: item_bg, ..Default::default() });
+        }
+
+        // Available update indicator on the right side of the menu bar
+        if let Some(ref ver) = self.available_update {
+            let badge = format!("[⬆ v{}]", ver);
+            let b_len = unicode_width::UnicodeWidthStr::width(badge.as_str()) as u16;
+            if w > b_len + 2 {
+                let badge_x = x + w - b_len - 1;
+                let badge_bg = bg;
+                let badge_fg = crossterm::style::Color::Cyan;
+                let mut cur_x = badge_x;
+                for c in badge.chars() {
+                    let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) as u16;
+                    self.renderer.set_cell(cur_x, y, Cell {
+                        ch: c,
+                        width: cw as u8,
+                        bg: badge_bg,
+                        fg: badge_fg,
+                        bold: true,
+                        ..Default::default()
+                    });
+                    cur_x += cw;
+                }
+            }
         }
     }
 
@@ -8288,7 +8346,48 @@ mod tests {
         assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Visual);
         assert!(app.buffers[0].selection.is_some(), "Selection should be active in Visual mode");
     }
+
+    #[test]
+    fn test_update_badge_rendered_and_clickable_in_menu_bar() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.width = 80;
+        app.height = 24;
+        app.recompute_layout();
+
+        // 1. Without available update, badge is not rendered
+        app.available_update = None;
+        app.render_menu();
+        assert!(app.current_dialog.is_none());
+
+        // 2. Set available update
+        app.available_update = Some("0.2.23".to_string());
+        app.render_menu();
+
+        // Calculate expected position of badge
+        let badge = "[⬆ v0.2.23]";
+        let b_len = unicode_width::UnicodeWidthStr::width(badge) as u16;
+        let (mx, my, mw, _mh) = app.layout.menu_bounds();
+        let badge_x = mx + mw - b_len - 1;
+
+        // Verify cell character at badge_x is '['
+        let cell = app.renderer.get_cell(badge_x, my);
+        assert_eq!(cell.ch, '[');
+
+        // Click on the update badge
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: badge_x + 2,
+            row: my,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        // Verify UpdateDialog is now open
+        assert!(app.current_dialog.is_some(), "Clicking update badge must open UpdateDialog");
+        assert_eq!(app.focus, Focus::Dialog);
+    }
 }
+
 
 
 

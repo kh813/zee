@@ -999,6 +999,102 @@ pub fn restart_cli_process() -> Result<()> {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpdateCheckCache {
+    pub last_checked_epoch_secs: u64,
+    pub latest_version: String,
+}
+
+impl UpdateCheckCache {
+    pub fn cache_path() -> Option<PathBuf> {
+        crate::config::Config::config_dir().map(|d| d.join("last_update_check.json"))
+    }
+
+    pub fn load() -> Option<Self> {
+        let path = Self::cache_path()?;
+        let data = fs::read_to_string(path).ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    pub fn save(&self) -> Result<()> {
+        if let Some(path) = Self::cache_path() {
+            if let Some(parent) = path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            let data = serde_json::to_string_pretty(self)?;
+            fs::write(path, data)?;
+        }
+        Ok(())
+    }
+}
+
+/// Returns the cached available update version if one was previously discovered
+/// and is newer than CURRENT_VERSION. This performs zero network calls.
+pub fn get_cached_available_update() -> Option<String> {
+    if let Some(cache) = UpdateCheckCache::load() {
+        if is_newer(CURRENT_VERSION, &cache.latest_version) {
+            return Some(cache.latest_version);
+        }
+    }
+    None
+}
+
+/// Checks GitHub for updates in the background if at least 24 hours (86,400s) have passed
+/// since the last check. Updates the local cache file upon success.
+/// Returns `Some(new_version)` if a newer release is found.
+pub fn check_background_update(app_type: AppType, include_prerelease: bool) -> Option<String> {
+    // Avoid network requests during tests
+    let is_test_runner = std::env::current_exe()
+        .map(|p| {
+            let s = p.to_string_lossy();
+            s.contains("/deps/") || s.contains("\\deps\\")
+        })
+        .unwrap_or(false);
+    if is_test_runner || cfg!(test) || std::env::var("ZEE_DISABLE_UPDATE_CHECK").is_ok() {
+        return get_cached_available_update();
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let cached = UpdateCheckCache::load();
+    if let Some(ref c) = cached {
+        // If checked within the last 24 hours, don't hit the GitHub API
+        if now.saturating_sub(c.last_checked_epoch_secs) < 86400 {
+            if is_newer(CURRENT_VERSION, &c.latest_version) {
+                return Some(c.latest_version.clone());
+            } else {
+                return None;
+            }
+        }
+    }
+
+    match check_latest_with_options(app_type, include_prerelease) {
+        Ok(info) => {
+            let cache = UpdateCheckCache {
+                last_checked_epoch_secs: now,
+                latest_version: info.version.clone(),
+            };
+            let _ = cache.save();
+            if is_newer(CURRENT_VERSION, &info.version) {
+                Some(info.version)
+            } else {
+                None
+            }
+        }
+        Err(_) => {
+            if let Some(c) = cached {
+                if is_newer(CURRENT_VERSION, &c.latest_version) {
+                    return Some(c.latest_version);
+                }
+            }
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1557,5 +1653,36 @@ mod tests {
             assert!(win.is_some(), "Windows GUI asset must match for {}", version);
             assert_eq!(win.unwrap().name, format!("zee-v0.2.15-windows-x64.zip").replace("v0.2.15", version));
         }
+    }
+
+    #[test]
+    fn test_update_check_cache_lifecycle() {
+        let temp_dir = std::env::temp_dir().join(format!("zee-test-update-cache-{}", std::process::id()));
+        let _ = fs::create_dir_all(&temp_dir);
+        crate::config::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
+        // 1. Initially no cache exists
+        assert!(UpdateCheckCache::load().is_none());
+        assert_eq!(get_cached_available_update(), None);
+
+        // 2. Save cache with older/same version
+        let cache_old = UpdateCheckCache {
+            last_checked_epoch_secs: 1000,
+            latest_version: "0.0.1".to_string(),
+        };
+        cache_old.save().unwrap();
+        assert_eq!(UpdateCheckCache::load(), Some(cache_old));
+        assert_eq!(get_cached_available_update(), None);
+
+        // 3. Save cache with newer version (e.g. "99.0.0")
+        let cache_new = UpdateCheckCache {
+            last_checked_epoch_secs: 2000,
+            latest_version: "99.0.0".to_string(),
+        };
+        cache_new.save().unwrap();
+        assert_eq!(get_cached_available_update(), Some("99.0.0".to_string()));
+
+        crate::config::Config::set_custom_config_dir(None);
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

@@ -26,6 +26,7 @@ pub struct Workspace {
     pub vi_message: Option<(String, bool)>,
     pub plugins_version: usize,
     pub modal_open: bool,
+    pub available_update: Option<String>,
 }
 
 impl Workspace {
@@ -83,6 +84,7 @@ impl Workspace {
             vi_message: None,
             plugins_version: 0,
             modal_open: false,
+            available_update: zee_core::selfupdate::get_cached_available_update(),
         }
     }
 

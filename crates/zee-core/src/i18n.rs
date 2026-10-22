@@ -246,6 +246,7 @@ impl I18n {
         m.insert("menu.help".to_string(), "Help".to_string());
         m.insert("menu.help.about".to_string(), "About".to_string());
         m.insert("menu.help.check_for_updates".to_string(), "Check for Updates…".to_string());
+        m.insert("menu.help.update_available".to_string(), "Available".to_string());
         m.insert("dialog.update.title".to_string(), "Check for Updates".to_string());
         m.insert("dialog.update.checking".to_string(), "Checking for updates...".to_string());
         m.insert("dialog.update.up_to_date".to_string(), "zee is up to date (v{version}).".to_string());
@@ -509,6 +510,7 @@ impl I18n {
         m.insert("menu.help".to_string(), "ヘルプ".to_string());
         m.insert("menu.help.about".to_string(), "このソフトについて".to_string());
         m.insert("menu.help.check_for_updates".to_string(), "アップデートを確認…".to_string());
+        m.insert("menu.help.update_available".to_string(), "利用可能".to_string());
         m.insert("dialog.update.title".to_string(), "アップデートの確認".to_string());
         m.insert("dialog.update.checking".to_string(), "最新バージョンを確認中...".to_string());
         m.insert("dialog.update.up_to_date".to_string(), "最新バージョン (v{version}) を使用しています。".to_string());

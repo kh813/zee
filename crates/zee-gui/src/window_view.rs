@@ -53,6 +53,29 @@ impl WindowView {
             editor.focus_handle.focus(window, cx);
         });
 
+        // Periodic background update check (waits 3 minutes after launch, then checks every 24h via cache)
+        let workspace_for_update = workspace.clone();
+        let bg_executor = cx.background_executor().clone();
+        let include_prerelease = workspace.read(cx).config.include_prerelease;
+        cx.spawn(move |_, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                smol::Timer::after(std::time::Duration::from_secs(180)).await;
+                loop {
+                    let update = bg_executor.spawn(async move {
+                        zee_core::selfupdate::check_background_update(zee_core::selfupdate::AppType::Gui, include_prerelease)
+                    }).await;
+                    if let Some(new_ver) = update {
+                        let _ = workspace_for_update.update(&mut cx.clone(), |w, cx| {
+                            w.available_update = Some(new_ver);
+                            cx.notify();
+                        });
+                    }
+                    smol::Timer::after(std::time::Duration::from_secs(4 * 3600)).await;
+                }
+            }
+        }).detach();
+
         cx.observe(&workspace, |this, workspace, cx| {
             #[allow(unused_mut)]
             let mut menu_changed = false;

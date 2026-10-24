@@ -314,10 +314,10 @@ impl Theme {
                 error: Some(Color::Ansi(1)),       // Red
                 heading1: Some(Color::Ansi(2)),    // Green / Teal
                 heading2: Some(Color::Ansi(4)),    // Blue
-                heading3: Some(Color::Ansi(1)),    // Red / Coral
-                heading4: Some(Color::Ansi(3)),    // Yellow / Orange
-                heading5: Some(Color::Ansi(11)),   // Bright Yellow / Amber
-                heading6: Some(Color::Ansi(8)),    // Gray / Slate
+                heading3: Some(Color::Ansi(1)),    // Red
+                heading4: Some(Color::Ansi(11)),   // Bright Yellow / Gold
+                heading5: Some(Color::Ansi(8)),    // Gray / Slate
+                heading6: Some(Color::Ansi(5)),    // Magenta / Violet
                 inline_code: Some(Color::Ansi(13)), // Bright Magenta / Pink
             },
         }
@@ -444,9 +444,9 @@ impl Default for Theme {
                 heading1: Some(Color::Rgb(122, 162, 247)),
                 heading2: Some(Color::Rgb(187, 154, 247)),
                 heading3: Some(Color::Rgb(255, 51, 85)),
-                heading4: Some(Color::Rgb(255, 158, 100)),
-                heading5: Some(Color::Rgb(241, 207, 84)),
-                heading6: Some(Color::Rgb(86, 95, 137)),
+                heading4: Some(Color::Rgb(241, 207, 84)),
+                heading5: Some(Color::Rgb(86, 95, 137)),
+                heading6: Some(Color::Rgb(157, 124, 216)),
                 inline_code: Some(Color::Rgb(245, 194, 231)),
             },
         }

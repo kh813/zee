@@ -58,6 +58,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-a", SelectAll {}, None),
         #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-/", ToggleComment {}, None),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-,", OpenSettings {}, None),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-=", ZoomIn {}, None),
@@ -127,6 +129,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         KeyBinding::new("ctrl-e", ToggleViMode {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-a", SelectAll {}, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-/", ToggleComment {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-,", OpenSettings {}, None),
         #[cfg(not(target_os = "macos"))]
@@ -831,7 +835,7 @@ pub fn build_native_menus(
     plugin_menu_items.push(MenuItem::action(i18n.get("menu.plugins.open_folder"), OpenPluginsFolder {}));
 
     let mut language_items = Vec::new();
-    for lang in zee_core::i18n::AVAILABLE_LANGUAGES {
+    for lang in zee_core::i18n::I18n::all_available_languages() {
         let is_current = if lang.id == "auto" {
             config.language == "auto" || config.language.is_empty()
         } else {
@@ -840,7 +844,7 @@ pub fn build_native_menus(
         let label = if lang.id == "auto" {
             i18n.get("dialog.settings.language_auto").to_string()
         } else {
-            lang.name.to_string()
+            lang.name
         };
         let display_name = if is_current {
             format!("✓ {}", label)
@@ -849,7 +853,7 @@ pub fn build_native_menus(
         };
         language_items.push(MenuItem::action(
             display_name,
-            SetLanguage { id: lang.id.to_string() },
+            SetLanguage { id: lang.id },
         ));
     }
 
@@ -953,6 +957,7 @@ pub fn build_native_menus(
                 MenuItem::action(i18n.get("menu.edit.find"), Find {}),
                 MenuItem::action(i18n.get("menu.edit.replace"), Replace {}),
                 MenuItem::action(i18n.get("menu.edit.select_all"), SelectAll {}),
+                MenuItem::action(i18n.get("menu.edit.toggle_comment"), ToggleComment {}),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.edit.format_document"), FormatDocument {}),
                 MenuItem::action(i18n.get("menu.edit.sort_lines"), SortLines {}),
@@ -1044,7 +1049,7 @@ actions!(zee, [
     ExportConfig, ExportAll, ImportConfig, ManagePlugins, OpenPluginsFolder, OpenTemplatesFolder,
 
     // Edit
-    Undo, Redo, Cut, Copy, Paste, Find, Replace, SelectAll,
+    Undo, Redo, Cut, Copy, Paste, Find, Replace, SelectAll, ToggleComment,
     FormatDocument, SortLines,
     // Tabs
     NextTab, PrevTab,

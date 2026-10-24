@@ -1,6 +1,7 @@
 [meta]
 name = "HTML"
 extensions = ["html", "htm"]
+block_comment = ["<!--", "-->"]
 
 [[rule]]
 token = "keyword"

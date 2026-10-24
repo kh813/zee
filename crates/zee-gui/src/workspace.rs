@@ -273,7 +273,7 @@ impl Workspace {
 
             if !tpl.extension.is_empty() {
                 let ext_clean = tpl.extension.trim_start_matches('.');
-                let syntax_defs = zee_core::syntax::SyntaxDefinition::builtins();
+                let syntax_defs = zee_core::syntax::SyntaxDefinition::load_all();
                 if let Some(def) = syntax_defs.iter().find(|s| s.meta.extensions.iter().any(|e| e == ext_clean)) {
                     if let Ok(highlighter) = zee_core::syntax::SyntaxHighlighter::new(def.clone()) {
                         editor.update_syntax(Some(highlighter));

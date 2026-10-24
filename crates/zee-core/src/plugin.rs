@@ -10,6 +10,9 @@ use crate::outline::OutlineNode;
 pub enum PluginType {
     Wasm,
     Lua,
+    Theme,
+    Syntax,
+    Locale,
 }
 
 impl Default for PluginType {
@@ -438,6 +441,155 @@ impl PluginManager {
         for p in &self.lua_plugins {
             list.push(p.manifest.clone());
         }
+
+        // Custom Themes
+        if let Some(themes_dir) = crate::config::Config::themes_dir() {
+            if themes_dir.exists() {
+                if let Ok(entries) = fs::read_dir(themes_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("theme");
+                            let (name, author) = if let Ok(content) = fs::read_to_string(&path) {
+                                #[derive(Deserialize)]
+                                struct SimpleMeta {
+                                    #[serde(default)]
+                                    name: String,
+                                    author: Option<String>,
+                                }
+                                #[derive(Deserialize)]
+                                struct SimpleThemeDoc {
+                                    meta: Option<SimpleMeta>,
+                                }
+                                if let Ok(t) = toml::from_str::<SimpleThemeDoc>(&content) {
+                                    if let Some(m) = t.meta {
+                                        (
+                                            if m.name.is_empty() { stem.to_string() } else { m.name },
+                                            m.author,
+                                        )
+                                    } else {
+                                        (stem.to_string(), None)
+                                    }
+                                } else {
+                                    (stem.to_string(), None)
+                                }
+                            } else {
+                                (stem.to_string(), None)
+                            };
+                            list.push(PluginManifest {
+                                id: stem.to_string(),
+                                name,
+                                version: "1.0.0".to_string(),
+                                description: Some("Color scheme theme".to_string()),
+                                plugin_type: PluginType::Theme,
+                                entry: path.file_name().map(|f| f.to_string_lossy().to_string()),
+                                author,
+                                homepage: None,
+                                languages: Vec::new(),
+                                capabilities: PluginCapabilities::default(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Custom Syntax definitions
+        if let Some(syntax_dir) = crate::config::Config::syntax_dir() {
+            if syntax_dir.exists() {
+                if let Ok(entries) = fs::read_dir(syntax_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("syntax");
+                            let (name, exts) = if let Ok(content) = fs::read_to_string(&path) {
+                                #[derive(Deserialize)]
+                                struct SimpleSyntaxMeta {
+                                    #[serde(default)]
+                                    name: String,
+                                    #[serde(default)]
+                                    extensions: Vec<String>,
+                                }
+                                #[derive(Deserialize)]
+                                struct SimpleSyntaxDoc {
+                                    meta: Option<SimpleSyntaxMeta>,
+                                }
+                                if let Ok(s) = toml::from_str::<SimpleSyntaxDoc>(&content) {
+                                    if let Some(m) = s.meta {
+                                        (
+                                            if m.name.is_empty() { stem.to_string() } else { m.name },
+                                            m.extensions,
+                                        )
+                                    } else {
+                                        (stem.to_string(), Vec::new())
+                                    }
+                                } else {
+                                    (stem.to_string(), Vec::new())
+                                }
+                            } else {
+                                (stem.to_string(), Vec::new())
+                            };
+                            let desc = if exts.is_empty() {
+                                "Syntax definition".to_string()
+                            } else {
+                                format!("Syntax definition for {}", exts.join(", "))
+                            };
+                            list.push(PluginManifest {
+                                id: stem.to_string(),
+                                name,
+                                version: "1.0.0".to_string(),
+                                description: Some(desc),
+                                plugin_type: PluginType::Syntax,
+                                entry: path.file_name().map(|f| f.to_string_lossy().to_string()),
+                                author: None,
+                                homepage: None,
+                                languages: exts,
+                                capabilities: PluginCapabilities::default(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // Custom Locales
+        if let Some(locales_dir) = crate::config::Config::locales_dir() {
+            if locales_dir.exists() {
+                if let Ok(entries) = fs::read_dir(locales_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("locale");
+                            let name = if let Ok(content) = fs::read_to_string(&path) {
+                                if let Ok(map) = crate::i18n::I18n::parse_locale_toml(&content) {
+                                    map.get("meta.name")
+                                        .or_else(|| map.get("language.name"))
+                                        .cloned()
+                                        .unwrap_or_else(|| format!("Language ({})", stem))
+                                } else {
+                                    format!("Language ({})", stem)
+                                }
+                            } else {
+                                format!("Language ({})", stem)
+                            };
+                            list.push(PluginManifest {
+                                id: stem.to_string(),
+                                name,
+                                version: "1.0.0".to_string(),
+                                description: Some("UI and menu localization pack".to_string()),
+                                plugin_type: PluginType::Locale,
+                                entry: path.file_name().map(|f| f.to_string_lossy().to_string()),
+                                author: None,
+                                homepage: None,
+                                languages: vec![stem.to_string()],
+                                capabilities: PluginCapabilities::default(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         list
     }
 
@@ -732,6 +884,38 @@ impl PluginManager {
         let filename_str = filename.to_string_lossy().to_string();
 
         if src.is_file() {
+            if src.extension().and_then(|e| e.to_str()) == Some("toml") {
+                if let Ok(content) = fs::read_to_string(src) {
+                    let is_syntax = toml::from_str::<crate::syntax::SyntaxDefinition>(&content).is_ok()
+                        || content.contains("[[rule]]")
+                        || (content.contains("[meta]") && content.contains("extensions"));
+                    let is_theme = toml::from_str::<crate::theme::Theme>(&content).is_ok()
+                        || content.contains("[editor]")
+                        || content.contains("[ui]")
+                        || (content.contains("[meta]") && (content.contains("background") || content.contains("foreground") || content.contains("bg = ")));
+                    let is_locale = content.contains("menu.") || content.contains("[menu") || content.contains("[dialog");
+
+                    if is_theme {
+                        let themes_dir = crate::config::Config::themes_dir().context("Could not determine themes directory")?;
+                        fs::create_dir_all(&themes_dir)?;
+                        let dest = themes_dir.join(filename);
+                        fs::copy(src, &dest)?;
+                        return Ok(filename_str);
+                    } else if is_syntax {
+                        let syntax_dir = crate::config::Config::syntax_dir().context("Could not determine syntax directory")?;
+                        fs::create_dir_all(&syntax_dir)?;
+                        let dest = syntax_dir.join(filename);
+                        fs::copy(src, &dest)?;
+                        return Ok(filename_str);
+                    } else if is_locale {
+                        let locales_dir = crate::config::Config::locales_dir().context("Could not determine locales directory")?;
+                        fs::create_dir_all(&locales_dir)?;
+                        let dest = locales_dir.join(filename);
+                        fs::copy(src, &dest)?;
+                        return Ok(filename_str);
+                    }
+                }
+            }
             let dest = plugins_dir.join(filename);
             fs::copy(src, &dest)?;
             Ok(filename_str)
@@ -911,79 +1095,233 @@ impl PluginManager {
                 .ok_or_else(|| anyhow::anyhow!("Plugin '{}' not found in configured registries", plugin_id))?
         };
 
-        let plugins_dir = Self::plugins_dir().context("Could not determine plugins directory")?;
-        let target_dir = plugins_dir.join(&target_plugin.id);
-        fs::create_dir_all(&target_dir)?;
+        match target_plugin.plugin_type {
+            PluginType::Theme => {
+                let themes_dir = crate::config::Config::themes_dir()
+                    .context("Could not determine themes directory")?;
+                fs::create_dir_all(&themes_dir)?;
 
-        let base_download_url = target_plugin.download_url
-            .unwrap_or_else(|| format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/plugins/{}", target_plugin.id));
+                let filename = target_plugin.entry.clone().unwrap_or_else(|| format!("{}.toml", target_plugin.id));
+                let dest = themes_dir.join(&filename);
 
-        // 1. Download plugin.toml
-        let toml_url = format!("{}/plugin.toml", base_download_url.trim_end_matches('/'));
-        if let Ok(resp) = ureq::get(&toml_url).set("User-Agent", "zee-editor").timeout(std::time::Duration::from_secs(10)).call() {
-            let mut reader = resp.into_reader();
-            let mut file = fs::File::create(target_dir.join("plugin.toml"))?;
-            std::io::copy(&mut reader, &mut file)?;
+                let file_url = if let Some(ref dl) = target_plugin.download_url {
+                    if dl.ends_with(".toml") {
+                        dl.clone()
+                    } else {
+                        format!("{}/{}", dl.trim_end_matches('/'), filename)
+                    }
+                } else {
+                    format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/themes/{}", filename)
+                };
+
+                let resp = ureq::get(&file_url)
+                    .set("User-Agent", "zee-editor")
+                    .timeout(std::time::Duration::from_secs(15))
+                    .call()
+                    .context(format!("Failed to download theme file from '{}'", file_url))?;
+                let mut reader = resp.into_reader();
+                let mut file = fs::File::create(&dest)?;
+                std::io::copy(&mut reader, &mut file)?;
+                Ok(())
+            }
+            PluginType::Syntax => {
+                let syntax_dir = crate::config::Config::syntax_dir()
+                    .context("Could not determine syntax directory")?;
+                fs::create_dir_all(&syntax_dir)?;
+
+                let filename = target_plugin.entry.clone().unwrap_or_else(|| format!("{}.toml", target_plugin.id));
+                let dest = syntax_dir.join(&filename);
+
+                let file_url = if let Some(ref dl) = target_plugin.download_url {
+                    if dl.ends_with(".toml") {
+                        dl.clone()
+                    } else {
+                        format!("{}/{}", dl.trim_end_matches('/'), filename)
+                    }
+                } else {
+                    format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/syntax/{}", filename)
+                };
+
+                let resp = ureq::get(&file_url)
+                    .set("User-Agent", "zee-editor")
+                    .timeout(std::time::Duration::from_secs(15))
+                    .call()
+                    .context(format!("Failed to download syntax file from '{}'", file_url))?;
+                let mut reader = resp.into_reader();
+                let mut file = fs::File::create(&dest)?;
+                std::io::copy(&mut reader, &mut file)?;
+                Ok(())
+            }
+            PluginType::Locale => {
+                let locales_dir = crate::config::Config::locales_dir()
+                    .context("Could not determine locales directory")?;
+                fs::create_dir_all(&locales_dir)?;
+
+                let filename = target_plugin.entry.clone().unwrap_or_else(|| format!("{}.toml", target_plugin.id));
+                let dest = locales_dir.join(&filename);
+
+                let file_url = if let Some(ref dl) = target_plugin.download_url {
+                    if dl.ends_with(".toml") {
+                        dl.clone()
+                    } else {
+                        format!("{}/{}", dl.trim_end_matches('/'), filename)
+                    }
+                } else {
+                    format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/locales/{}", filename)
+                };
+
+                let resp = ureq::get(&file_url)
+                    .set("User-Agent", "zee-editor")
+                    .timeout(std::time::Duration::from_secs(15))
+                    .call()
+                    .context(format!("Failed to download locale file from '{}'", file_url))?;
+                let mut reader = resp.into_reader();
+                let mut file = fs::File::create(&dest)?;
+                std::io::copy(&mut reader, &mut file)?;
+                Ok(())
+            }
+            PluginType::Wasm | PluginType::Lua => {
+                let plugins_dir = Self::plugins_dir().context("Could not determine plugins directory")?;
+                let target_dir = plugins_dir.join(&target_plugin.id);
+                fs::create_dir_all(&target_dir)?;
+
+                let base_download_url = target_plugin.download_url
+                    .unwrap_or_else(|| format!("https://raw.githubusercontent.com/kh813/zee-plugins/main/plugins/{}", target_plugin.id));
+
+                // 1. Download plugin.toml
+                let toml_url = format!("{}/plugin.toml", base_download_url.trim_end_matches('/'));
+                if let Ok(resp) = ureq::get(&toml_url).set("User-Agent", "zee-editor").timeout(std::time::Duration::from_secs(10)).call() {
+                    let mut reader = resp.into_reader();
+                    let mut file = fs::File::create(target_dir.join("plugin.toml"))?;
+                    std::io::copy(&mut reader, &mut file)?;
+                }
+
+                // 2. Download entry file based on type
+                let entry_filename = target_plugin.entry.clone().unwrap_or_else(|| match target_plugin.plugin_type {
+                    PluginType::Lua => "init.lua".to_string(),
+                    _ => "plugin.wasm".to_string(),
+                });
+
+                let entry_url = format!("{}/{}", base_download_url.trim_end_matches('/'), entry_filename);
+                let resp = ureq::get(&entry_url)
+                    .set("User-Agent", "zee-editor")
+                    .timeout(std::time::Duration::from_secs(15))
+                    .call()
+                    .context(format!("Failed to download plugin entry file '{}'", entry_filename))?;
+                let mut reader = resp.into_reader();
+                let mut file = fs::File::create(target_dir.join(&entry_filename))?;
+                std::io::copy(&mut reader, &mut file)?;
+
+                Ok(())
+            }
         }
-
-        // 2. Download entry file based on type
-        let entry_filename = target_plugin.entry.clone().unwrap_or_else(|| match target_plugin.plugin_type {
-            PluginType::Lua => "init.lua".to_string(),
-            PluginType::Wasm => "plugin.wasm".to_string(),
-        });
-
-        let entry_url = format!("{}/{}", base_download_url.trim_end_matches('/'), entry_filename);
-        let resp = ureq::get(&entry_url)
-            .set("User-Agent", "zee-editor")
-            .timeout(std::time::Duration::from_secs(15))
-            .call()
-            .context(format!("Failed to download plugin entry file '{}'", entry_filename))?;
-        let mut reader = resp.into_reader();
-        let mut file = fs::File::create(target_dir.join(&entry_filename))?;
-        std::io::copy(&mut reader, &mut file)?;
-
-        Ok(())
     }
 
     pub fn uninstall_plugin_by_id(id: &str) -> Result<bool> {
-        let plugins_dir = Self::plugins_dir().context("Could not determine plugins directory")?;
-        if !plugins_dir.exists() {
-            return Ok(false);
-        }
-
         let mut removed = false;
-        let wasm_file = plugins_dir.join(format!("{}.wasm", id));
-        if wasm_file.exists() {
-            fs::remove_file(&wasm_file)?;
-            removed = true;
-        }
 
-        let lua_file = plugins_dir.join(format!("{}.lua", id));
-        if lua_file.exists() {
-            fs::remove_file(&lua_file)?;
-            removed = true;
-        }
+        // 1. Check plugins_dir
+        if let Some(plugins_dir) = Self::plugins_dir() {
+            if plugins_dir.exists() {
+                let wasm_file = plugins_dir.join(format!("{}.wasm", id));
+                if wasm_file.exists() {
+                    let _ = fs::remove_file(&wasm_file);
+                    removed = true;
+                }
 
-        let plugin_dir = plugins_dir.join(id);
-        if plugin_dir.exists() {
-            fs::remove_dir_all(&plugin_dir)?;
-            removed = true;
-        }
+                let lua_file = plugins_dir.join(format!("{}.lua", id));
+                if lua_file.exists() {
+                    let _ = fs::remove_file(&lua_file);
+                    removed = true;
+                }
 
-        for entry in fs::read_dir(&plugins_dir)?.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let toml_path = path.join("plugin.toml");
-                if toml_path.exists() {
-                    if let Ok(content) = fs::read_to_string(&toml_path) {
-                        if let Ok(manifest) = toml::from_str::<PluginManifest>(&content) {
-                            if manifest.id == id {
-                                fs::remove_dir_all(&path)?;
-                                removed = true;
-                                break;
+                let plugin_dir = plugins_dir.join(id);
+                if plugin_dir.exists() {
+                    let _ = fs::remove_dir_all(&plugin_dir);
+                    removed = true;
+                }
+
+                if let Ok(entries) = fs::read_dir(&plugins_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            let toml_path = path.join("plugin.toml");
+                            if toml_path.exists() {
+                                if let Ok(content) = fs::read_to_string(&toml_path) {
+                                    if let Ok(manifest) = toml::from_str::<PluginManifest>(&content) {
+                                        if manifest.id == id {
+                                            let _ = fs::remove_dir_all(&path);
+                                            removed = true;
+                                            break;
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // 2. Check themes_dir
+        if let Some(themes_dir) = crate::config::Config::themes_dir() {
+            if themes_dir.exists() {
+                let direct_file = themes_dir.join(format!("{}.toml", id));
+                if direct_file.exists() {
+                    let _ = fs::remove_file(&direct_file);
+                    removed = true;
+                }
+                if let Ok(entries) = fs::read_dir(&themes_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                            if let Ok(content) = fs::read_to_string(&path) {
+                                if let Ok(theme) = toml::from_str::<crate::theme::Theme>(&content) {
+                                    if theme.meta.name.eq_ignore_ascii_case(id) || theme.meta.name.replace(' ', "-").eq_ignore_ascii_case(id) {
+                                        let _ = fs::remove_file(&path);
+                                        removed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Check syntax_dir
+        if let Some(syntax_dir) = crate::config::Config::syntax_dir() {
+            if syntax_dir.exists() {
+                let direct_file = syntax_dir.join(format!("{}.toml", id));
+                if direct_file.exists() {
+                    let _ = fs::remove_file(&direct_file);
+                    removed = true;
+                }
+                if let Ok(entries) = fs::read_dir(&syntax_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                            if let Ok(content) = fs::read_to_string(&path) {
+                                if let Ok(syntax) = toml::from_str::<crate::syntax::SyntaxDefinition>(&content) {
+                                    if syntax.meta.name.eq_ignore_ascii_case(id) {
+                                        let _ = fs::remove_file(&path);
+                                        removed = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Check locales_dir
+        if let Some(locales_dir) = crate::config::Config::locales_dir() {
+            if locales_dir.exists() {
+                let direct_file = locales_dir.join(format!("{}.toml", id));
+                if direct_file.exists() {
+                    let _ = fs::remove_file(&direct_file);
+                    removed = true;
                 }
             }
         }
@@ -1109,6 +1447,7 @@ commands = ["outline.refresh"]
 
     #[test]
     fn test_lua_plugin_directory_workflow() {
+        let _lock = crate::config::TEST_MUTEX.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee_test_lua_dir_{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
@@ -1140,7 +1479,7 @@ commands = ["lorem"]
         let mut manager = PluginManager::default();
         manager.load_plugin_dir(&temp_dir).unwrap();
         assert_eq!(manager.lua_plugins.len(), 1);
-        assert_eq!(manager.all_manifests().len(), 1);
+        assert!(manager.all_manifests().iter().any(|m| m.id == "sample-lorem"));
 
         let res = manager.execute_command("lorem", "").unwrap();
         assert_eq!(res, "Lorem ipsum dolor sit amet.");
@@ -1220,6 +1559,130 @@ commands = ["lorem"]
             PluginManager::derive_plugin_base_url("https://raw.githubusercontent.com/user/repo/main/index.json", "my-plugin"),
             "https://raw.githubusercontent.com/user/repo/main/plugins/my-plugin"
         );
+    }
+
+    #[test]
+    fn test_theme_syntax_locale_plugin_types_deserialization() {
+        let index_json = r#"{
+            "version": 1,
+            "plugins": [
+                {
+                    "id": "my-theme",
+                    "name": "My Theme",
+                    "version": "1.0.0",
+                    "type": "theme"
+                },
+                {
+                    "id": "my-syntax",
+                    "name": "My Syntax",
+                    "version": "1.0.0",
+                    "type": "syntax"
+                },
+                {
+                    "id": "my-locale",
+                    "name": "My Locale",
+                    "version": "1.0.0",
+                    "type": "locale"
+                }
+            ]
+        }"#;
+
+        let index: PluginRegistryIndex = serde_json::from_str(index_json).unwrap();
+        assert_eq!(index.plugins.len(), 3);
+        assert_eq!(index.plugins[0].plugin_type, PluginType::Theme);
+        assert_eq!(index.plugins[1].plugin_type, PluginType::Syntax);
+        assert_eq!(index.plugins[2].plugin_type, PluginType::Locale);
+    }
+
+    #[test]
+    fn test_install_and_uninstall_theme_syntax_locale() {
+        let _lock = crate::config::TEST_MUTEX.lock().unwrap();
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_plugin_types_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        crate::config::Config::set_custom_config_dir(Some(temp_dir.clone()));
+
+        // 1. Create a dummy theme toml
+        let theme_file = temp_dir.join("test_custom_theme.toml");
+        fs::write(&theme_file, r##"
+[meta]
+name = "Test Custom Theme"
+author = "Tester"
+
+[editor]
+background = "#112233"
+foreground = "#ffffff"
+"##).unwrap();
+
+        // 2. Install theme from path
+        let res = PluginManager::install_plugin_from_path(&theme_file);
+        assert!(res.is_ok());
+
+        let themes_dir = crate::config::Config::themes_dir().unwrap();
+        assert!(themes_dir.join("test_custom_theme.toml").exists());
+
+        // 3. Create dummy syntax toml
+        let syntax_file = temp_dir.join("test_custom_syntax.toml");
+        fs::write(&syntax_file, r#"
+[meta]
+name = "MyLang"
+extensions = ["mylang"]
+
+[[rule]]
+token = "keyword"
+pattern = "def|fn"
+"#).unwrap();
+
+        let s_res = PluginManager::install_plugin_from_path(&syntax_file);
+        assert!(s_res.is_ok());
+
+        let syntax_dir = crate::config::Config::syntax_dir().unwrap();
+        assert!(syntax_dir.join("test_custom_syntax.toml").exists());
+
+        // 4. Create dummy locale toml
+        let locale_file = temp_dir.join("eo.toml");
+        fs::write(&locale_file, r#"
+[meta]
+name = "Esperanto"
+
+[menu.file]
+new = "Nova"
+"#).unwrap();
+
+        let l_res = PluginManager::install_plugin_from_path(&locale_file);
+        assert!(l_res.is_ok());
+
+        let locales_dir = crate::config::Config::locales_dir().unwrap();
+        assert!(locales_dir.join("eo.toml").exists());
+
+        // 5. Check all_manifests
+        let pm = PluginManager::empty();
+        let manifests = pm.all_manifests();
+        assert!(manifests.iter().any(|m| m.id == "test_custom_theme" && m.plugin_type == PluginType::Theme));
+        assert!(manifests.iter().any(|m| m.id == "test_custom_syntax" && m.plugin_type == PluginType::Syntax));
+        assert!(manifests.iter().any(|m| m.id == "eo" && m.plugin_type == PluginType::Locale));
+
+        // 6. Test SyntaxDefinition::load_all includes custom syntax
+        let all_syntaxes = crate::syntax::SyntaxDefinition::load_all();
+        assert!(all_syntaxes.iter().any(|s| s.meta.name == "MyLang"));
+
+        // 7. Test I18n::all_available_languages includes Esperanto
+        let all_langs = crate::i18n::I18n::all_available_languages();
+        assert!(all_langs.iter().any(|l| l.id == "eo" && l.name == "Esperanto"));
+
+        // 8. Uninstall
+        assert!(PluginManager::uninstall_plugin_by_id("test_custom_theme").unwrap());
+        assert!(!themes_dir.join("test_custom_theme.toml").exists());
+
+        assert!(PluginManager::uninstall_plugin_by_id("test_custom_syntax").unwrap());
+        assert!(!syntax_dir.join("test_custom_syntax.toml").exists());
+
+        assert!(PluginManager::uninstall_plugin_by_id("eo").unwrap());
+        assert!(!locales_dir.join("eo.toml").exists());
+
+        crate::config::Config::set_custom_config_dir(None);
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
 

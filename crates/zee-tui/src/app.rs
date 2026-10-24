@@ -118,12 +118,11 @@ impl App {
     pub fn with_targets(targets: Vec<zee_core::cli::FileTarget>) -> Result<Self> {
         let (width, height) = terminal::size().unwrap_or((80, 24));
         
-        let mut config = Config::load();
-        config.vi_mode = false;
+        let config = Config::load();
         let i18n = I18n::load(&config.language);
 
         let themes = zee_core::theme::Theme::load_all();
-        let syntax_defs = zee_core::syntax::SyntaxDefinition::builtins();
+        let syntax_defs = zee_core::syntax::SyntaxDefinition::load_all();
         let theme = zee_core::theme::Theme::find_by_name(&config.theme)
             .unwrap_or_else(|| themes.first().cloned().unwrap_or_default());
 
@@ -400,6 +399,12 @@ impl App {
             zee_core::syntax::TokenType::Constant => theme.syntax.constant,
             zee_core::syntax::TokenType::Attribute => theme.syntax.attribute,
             zee_core::syntax::TokenType::Error => theme.syntax.error,
+            zee_core::syntax::TokenType::Heading1 => theme.syntax.heading1.or(theme.syntax.type_name).or(theme.syntax.keyword),
+            zee_core::syntax::TokenType::Heading2 => theme.syntax.heading2.or(theme.syntax.keyword),
+            zee_core::syntax::TokenType::Heading3 => theme.syntax.heading3.or(theme.syntax.operator),
+            zee_core::syntax::TokenType::Heading4 => theme.syntax.heading4.or(theme.syntax.constant),
+            zee_core::syntax::TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
+            zee_core::syntax::TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
         };
         self.to_ct_color(color.unwrap_or(theme.editor.foreground))
     }
@@ -471,7 +476,7 @@ impl App {
             }
         }).collect();
 
-        let language_items = zee_core::i18n::AVAILABLE_LANGUAGES.iter().map(|lang| {
+        let language_items = zee_core::i18n::I18n::all_available_languages().into_iter().map(|lang| {
             let is_current = if lang.id == "auto" {
                 config.language == "auto" || config.language.is_empty()
             } else {
@@ -480,11 +485,11 @@ impl App {
             let label = if lang.id == "auto" {
                 i18n.get("dialog.settings.language_auto").to_string()
             } else {
-                lang.name.to_string()
+                lang.name
             };
             MenuItem::Toggle {
                 label,
-                action: Action::SetLanguage(lang.id.to_string()),
+                action: Action::SetLanguage(lang.id),
                 checked: is_current,
                 is_radio: true,
             }
@@ -637,6 +642,7 @@ impl App {
                 MenuItem::Action { label: i18n.get("menu.edit.replace").to_string(), action: Action::Replace, shortcut: Some("Ctrl+R".to_string()) },
                 MenuItem::Separator,
                 MenuItem::Action { label: i18n.get("menu.edit.select_all").to_string(), action: Action::SelectAll, shortcut: Some("Ctrl+A".to_string()) },
+                MenuItem::Action { label: i18n.get("menu.edit.toggle_comment").to_string(), action: Action::ToggleComment, shortcut: Some("Ctrl+/".to_string()) },
                 MenuItem::Separator,
                 MenuItem::Action { label: i18n.get("menu.edit.format_document").to_string(), action: Action::FormatDocument, shortcut: None },
                 MenuItem::Action { label: i18n.get("menu.edit.sort_lines").to_string(), action: Action::SortLines, shortcut: None },
@@ -1051,6 +1057,7 @@ impl App {
                 KeyCode::Char('e') => { self.perform_action(Action::ToggleViMode); return; }
                 KeyCode::Char('l') => { self.needs_clear = true; return; }
                 KeyCode::Char(',') => { self.perform_action(Action::OpenSettings); return; }
+                KeyCode::Char('/') | KeyCode::Char('_') => { self.perform_action(Action::ToggleComment); return; }
                 KeyCode::Tab | KeyCode::PageDown | KeyCode::Char(']') => {
                     self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
                     self.update_active_outline();
@@ -4424,6 +4431,12 @@ impl App {
                     buffer.select_all();
                 }
             }
+            Action::ToggleComment => {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.toggle_comment();
+                }
+                self.ensure_cursor_visible();
+            }
             Action::Copy => {
                 if let Some(buffer) = self.buffers.get(self.active_buffer) {
                     if let Some(range) = buffer.selection.clone() {
@@ -5856,7 +5869,7 @@ impl App {
 
         let mut token_colors = std::collections::HashMap::new();
         use zee_core::syntax::TokenType::*;
-        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error] {
+        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6] {
             token_colors.insert(t, self.get_token_color(t));
         }
 
@@ -7815,7 +7828,7 @@ mod tests {
     #[test]
     fn test_menu_dropdown_rendering_contrast_all_themes() {
         let mut app = App::new(vec![]).expect("Failed to init App");
-        let themes = zee_core::theme::Theme::load_all();
+        let themes = zee_core::theme::Theme::builtins();
         assert!(!themes.is_empty());
 
         // Test in both TrueColor mode and simulated Apple_Terminal (256-color) mode

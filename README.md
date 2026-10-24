@@ -65,9 +65,11 @@ Whether launching the GUI app on a Mac/Windows workstation or editing over SSH o
 - **Direct CLI Line Jumps / コマンドラインからの行指定起動**:
   - Open files directly at specific line numbers: `zee file.rs:42` or `zee +42 file.rs`.
   - *ファイル名に行番号を添えて即座に対象行を開く。*
-- **Extensible WASM Plugin System / WebAssembly プラグイン拡張**:
-  - Sandboxed WASM plugin runtime with an in-app Plugin Manager.
-  - *WASMによる安全で高速なプラグイン拡張と内蔵プラグインマネージャー。*
+- **Extensible Plugins & Customization / プラグイン・カスタマイズ拡張**:
+  - Sandboxed WASM & Lua runtime for custom text transformers and outlines with an in-app Plugin Manager.
+  - Fully customizable color schemes (themes), syntax highlighting (regex-based), and translations (locales) via simple TOML files.
+  - Built-in syntax highlighting (e.g. Python, Rust) can be automatically overridden simply by dropping a custom `python.toml` into `~/.config/zee/syntax/`.
+  - *WASM/Luaプラグインによる高機能拡張に加え、テーマ、シンタックスハイライト、UI言語パックをTOMLファイルで自由にカスタマイズ・追加・上書き可能（[開発・カスタマイズガイド](docs/plugin_development_guide.md#10-静的リソース拡張テーマシンタックス言語パック)）。*
 - **Optional Vi Mode / Viモード (Vim互換)**:
   - Modal editing (`Normal`, `Insert`, `Visual`, `VisualBlock`) with Ex command line (`:w`, `:q`, `:wq`, `:%s`).
   - Full Japanese IME transparency: automatically normalizes full-width keys (`っ` for `dd`, `い` for `i`).

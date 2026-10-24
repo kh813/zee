@@ -17,6 +17,12 @@ pub enum TokenType {
     Constant,
     Attribute,
     Error,
+    Heading1,
+    Heading2,
+    Heading3,
+    Heading4,
+    Heading5,
+    Heading6,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,22 +60,118 @@ impl SyntaxDefinition {
             .map(|s| toml::from_str(s).expect("failed to parse builtin syntax definition"))
             .collect()
     }
+
+    pub fn load_all() -> Vec<Self> {
+        let mut syntaxes = Self::builtins();
+
+        if let Some(syntax_dir) = crate::config::Config::syntax_dir() {
+            if syntax_dir.exists() {
+                if let Ok(entries) = std::fs::read_dir(syntax_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                if let Ok(mut custom_syntax) = toml::from_str::<SyntaxDefinition>(&content) {
+                                    if custom_syntax.meta.name.is_empty() {
+                                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                            custom_syntax.meta.name = stem.to_string();
+                                        }
+                                    }
+                                    // If custom syntax has same name as a built-in, override it
+                                    if let Some(pos) = syntaxes.iter().position(|s| s.meta.name.eq_ignore_ascii_case(&custom_syntax.meta.name)) {
+                                        syntaxes[pos] = custom_syntax;
+                                    } else {
+                                        syntaxes.push(custom_syntax);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        syntaxes
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommentSyntax {
+    Line(String),
+    Block(String, String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyntaxMeta {
     pub name: String,
     pub extensions: Vec<String>,
+    #[serde(default)]
+    pub line_comment: Option<String>,
+    #[serde(default)]
+    pub block_comment: Option<Vec<String>>,
+}
+
+impl SyntaxMeta {
+    pub fn comment_syntax(&self) -> Option<CommentSyntax> {
+        if let Some(ref l) = self.line_comment {
+            return Some(CommentSyntax::Line(l.clone()));
+        }
+        if let Some(ref b) = self.block_comment {
+            if b.len() == 2 {
+                return Some(CommentSyntax::Block(b[0].clone(), b[1].clone()));
+            }
+        }
+        let name_lower = self.name.to_lowercase();
+        match name_lower.as_str() {
+            "python" | "shell" | "sh" | "bash" | "zsh" | "yaml" | "toml" | "ruby" | "perl" => {
+                Some(CommentSyntax::Line("#".to_string()))
+            }
+            "rust" | "c" | "cpp" | "c++" | "go" | "javascript" | "typescript" | "swift" | "java" | "csharp" => {
+                Some(CommentSyntax::Line("//".to_string()))
+            }
+            "sql" | "lua" | "haskell" => {
+                Some(CommentSyntax::Line("--".to_string()))
+            }
+            "ini" => {
+                Some(CommentSyntax::Line(";".to_string()))
+            }
+            "css" => {
+                Some(CommentSyntax::Block("/*".to_string(), "*/".to_string()))
+            }
+            "html" | "xml" | "markdown" => {
+                Some(CommentSyntax::Block("<!--".to_string(), "-->".to_string()))
+            }
+            _ => {
+                if self.extensions.iter().any(|e| matches!(e.to_lowercase().as_str(), "py" | "sh" | "bash" | "zsh" | "yml" | "yaml" | "toml" | "rb" | "pl")) {
+                    Some(CommentSyntax::Line("#".to_string()))
+                } else if self.extensions.iter().any(|e| matches!(e.to_lowercase().as_str(), "rs" | "c" | "h" | "cpp" | "hpp" | "cc" | "cs" | "go" | "js" | "ts" | "jsx" | "tsx" | "swift" | "java")) {
+                    Some(CommentSyntax::Line("//".to_string()))
+                } else if self.extensions.iter().any(|e| matches!(e.to_lowercase().as_str(), "sql" | "lua")) {
+                    Some(CommentSyntax::Line("--".to_string()))
+                } else if self.extensions.iter().any(|e| matches!(e.to_lowercase().as_str(), "html" | "xml" | "md" | "markdown")) {
+                    Some(CommentSyntax::Block("<!--".to_string(), "-->".to_string()))
+                } else if self.extensions.iter().any(|e| matches!(e.to_lowercase().as_str(), "css")) {
+                    Some(CommentSyntax::Block("/*".to_string(), "*/".to_string()))
+                } else {
+                    None
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyntaxRuleDef {
     pub token: TokenType,
+    #[serde(default)]
     pub pattern: Option<String>,
+    #[serde(default)]
     pub start: Option<String>,
+    #[serde(default)]
     pub end: Option<String>,
     #[serde(default)]
     pub word_boundary: bool,
+    #[serde(default)]
     pub escape: Option<String>,
 }
 

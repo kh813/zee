@@ -312,6 +312,12 @@ impl Theme {
                 constant: Some(Color::Ansi(11)),
                 attribute: Some(Color::Ansi(5)),
                 error: Some(Color::Ansi(1)),       // Red
+                heading1: Some(Color::Ansi(2)),    // Green / Teal
+                heading2: Some(Color::Ansi(4)),    // Blue
+                heading3: Some(Color::Ansi(1)),    // Red / Coral
+                heading4: Some(Color::Ansi(3)),    // Yellow / Orange
+                heading5: Some(Color::Ansi(11)),   // Bright Yellow / Amber
+                heading6: Some(Color::Ansi(8)),    // Gray / Slate
             },
         }
     }
@@ -369,6 +375,18 @@ pub struct SyntaxColors {
     pub constant: Option<Color>,
     pub attribute: Option<Color>,
     pub error: Option<Color>,
+    #[serde(default)]
+    pub heading1: Option<Color>,
+    #[serde(default)]
+    pub heading2: Option<Color>,
+    #[serde(default)]
+    pub heading3: Option<Color>,
+    #[serde(default)]
+    pub heading4: Option<Color>,
+    #[serde(default)]
+    pub heading5: Option<Color>,
+    #[serde(default)]
+    pub heading6: Option<Color>,
 }
 
 impl Default for Theme {
@@ -420,6 +438,12 @@ impl Default for Theme {
                 constant: Some(Color::Rgb(255, 158, 100)),
                 attribute: Some(Color::Rgb(187, 154, 247)),
                 error: Some(Color::Rgb(247, 118, 142)),
+                heading1: Some(Color::Rgb(122, 162, 247)),
+                heading2: Some(Color::Rgb(187, 154, 247)),
+                heading3: Some(Color::Rgb(247, 118, 142)),
+                heading4: Some(Color::Rgb(255, 158, 100)),
+                heading5: Some(Color::Rgb(224, 175, 104)),
+                heading6: Some(Color::Rgb(86, 95, 137)),
             },
         }
     }

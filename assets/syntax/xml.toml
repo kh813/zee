@@ -1,6 +1,7 @@
 [meta]
 name = "XML"
 extensions = ["xml", "svg", "plist"]
+block_comment = ["<!--", "-->"]
 
 [[rule]]
 token = "keyword"

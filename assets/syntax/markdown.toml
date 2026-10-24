@@ -1,10 +1,31 @@
 [meta]
 name = "Markdown"
 extensions = ["md", "markdown"]
+block_comment = ["<!--", "-->"]
 
 [[rule]]
-token = "keyword"
-pattern = "^#+.*"
+token = "heading6"
+pattern = "^######.*"
+
+[[rule]]
+token = "heading5"
+pattern = "^#####.*"
+
+[[rule]]
+token = "heading4"
+pattern = "^####.*"
+
+[[rule]]
+token = "heading3"
+pattern = "^###.*"
+
+[[rule]]
+token = "heading2"
+pattern = "^##.*"
+
+[[rule]]
+token = "heading1"
+pattern = "^#.*"
 
 [[rule]]
 token = "type_name"

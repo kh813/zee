@@ -1,6 +1,8 @@
 [meta]
 name = "C++"
 extensions = ["cpp", "hpp", "cc", "cxx", "c++", "hh", "hxx"]
+line_comment = "//"
+block_comment = ["/*", "*/"]
 
 [[rule]]
 token = "attribute"

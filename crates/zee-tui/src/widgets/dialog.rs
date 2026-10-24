@@ -1123,7 +1123,14 @@ impl Dialog for PluginManagerDialog {
                         renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg, ..Default::default() });
                     }
 
-                    let name_str = format!("{} v{}", item.name, item.version);
+                    let type_str = match item.plugin_type {
+                        zee_core::plugin::PluginType::Wasm => "WASM",
+                        zee_core::plugin::PluginType::Lua => "Lua",
+                        zee_core::plugin::PluginType::Theme => "Theme",
+                        zee_core::plugin::PluginType::Syntax => "Syntax",
+                        zee_core::plugin::PluginType::Locale => "Locale",
+                    };
+                    let name_str = format!("{} [{}] v{}", item.name, type_str, item.version);
                     let mut cur_x = x + 3;
                     for c in name_str.chars() {
                         let cw = c.width().unwrap_or(1) as u16;
@@ -1180,7 +1187,14 @@ impl Dialog for PluginManagerDialog {
                         renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg, ..Default::default() });
                     }
 
-                    let name_str = format!("{} v{}", item.name, item.version);
+                    let type_str = match item.plugin_type {
+                        zee_core::plugin::PluginType::Wasm => "WASM",
+                        zee_core::plugin::PluginType::Lua => "Lua",
+                        zee_core::plugin::PluginType::Theme => "Theme",
+                        zee_core::plugin::PluginType::Syntax => "Syntax",
+                        zee_core::plugin::PluginType::Locale => "Locale",
+                    };
+                    let name_str = format!("{} [{}] v{}", item.name, type_str, item.version);
                     let mut cur_x = x + 3;
                     for c in name_str.chars() {
                         let cw = c.width().unwrap_or(1) as u16;
@@ -2579,13 +2593,13 @@ impl SettingsDialog {
             (id, t.meta.name.clone())
         }).collect();
 
-        let lang_list: Vec<(String, String)> = zee_core::i18n::AVAILABLE_LANGUAGES.iter().map(|l| {
+        let lang_list: Vec<(String, String)> = zee_core::i18n::I18n::all_available_languages().into_iter().map(|l| {
             let name = if l.id == "auto" {
                 i18n.get("dialog.settings.language_auto").to_string()
             } else {
-                l.name.to_string()
+                l.name
             };
-            (l.id.to_string(), name)
+            (l.id, name)
         }).collect();
 
         Self {

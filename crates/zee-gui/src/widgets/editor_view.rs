@@ -203,6 +203,12 @@ impl EditorView {
             TokenType::Constant => theme.syntax.constant,
             TokenType::Attribute => theme.syntax.attribute,
             TokenType::Error => theme.syntax.error,
+            TokenType::Heading1 => theme.syntax.heading1.or(theme.syntax.type_name).or(theme.syntax.keyword),
+            TokenType::Heading2 => theme.syntax.heading2.or(theme.syntax.keyword),
+            TokenType::Heading3 => theme.syntax.heading3.or(theme.syntax.operator),
+            TokenType::Heading4 => theme.syntax.heading4.or(theme.syntax.constant),
+            TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
+            TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
         };
         led_color_to_gpui(color.unwrap_or(theme.editor.foreground))
     }

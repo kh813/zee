@@ -18,6 +18,10 @@ Zee のプラグインシステムは、安全で高速な **WebAssembly (WASM)*
 7. [ビルドとインストール](#7-ビルドとインストール)
 8. [動作確認とデバッグ](#8-動作確認とデバッグ)
 9. [Component Model (WIT) への対応について](#9-component-model-wit-への対応について)
+10. [静的リソース拡張（テーマ・シンタックス・言語パック）](#10-静的リソース拡張テーマシンタックス言語パック)
+    - [A. オーバーライドとカスタマイズの仕様 (優先順位ルール)](#オーバーライドとカスタマイズの仕様-優先順位ルール)
+    - [B. 各リソースの TOML フォーマットと記述仕様](#各リソースの-toml-フォーマットと記述仕様)
+    - [C. `zee-plugins` レジストリへの登録例](#zee-plugins-レジストリ-indexjson-への登録例)
 
 ---
 
@@ -340,3 +344,205 @@ Component Model では WIT (WebAssembly Interface Types) ファイルに基づ�
 - **StoreLimits**: プラグインごとのメモリ消費上限が厳格に保護されます。
 
 詳細なアーキテクチャや WIT 定義については、[docs/wasm_plugin_system_design.md](file:///Users/hiroshi/dev/zee/docs/wasm_plugin_system_design.md) をご参照ください。
+
+---
+
+## 10. 静的リソース拡張（テーマ・シンタックス・言語パック）
+
+Zee では、WASM/Lua 実行形式プラグインに加えて、**カラースキーム（テーマ）**、**シンタックスハイライト定義**、**メニュー言語パック（i18n）** もプラグイン（拡張機能）として `zee-plugins` リポジトリ経由で配信・インストール・管理できます。
+
+### プラグイン種別一覧 (`PluginType`)
+| 種別 (`type`) | 配置先ディレクトリ (macOS/Linux) | 配置先ディレクトリ (Windows) | 概要 |
+| :--- | :--- | :--- | :--- |
+| `wasm` | `~/.config/zee/plugins/<id>/` | `%APPDATA%\zee\plugins\<id>\` | WebAssembly 拡張（テキスト変換・アウトライン等） |
+| `lua` | `~/.config/zee/plugins/<id>/` | `%APPDATA%\zee\plugins\<id>\` | Lua スクリプト拡張 |
+| `theme` | `~/.config/zee/themes/<id>.toml` | `%APPDATA%\zee\themes\<id>.toml` | カラースキーム定義（TOML形式） |
+| `syntax` | `~/.config/zee/syntax/<id>.toml` | `%APPDATA%\zee\syntax\<id>.toml` | シンタックスハイライト定義（TOML形式） |
+| `locale` | `~/.config/zee/locales/<id>.toml` | `%APPDATA%\zee\locales\<id>.toml` | UI・メニュー多言語化パック（TOML形式） |
+
+---
+
+### オーバーライドとカスタマイズの仕様 (優先順位ルール)
+
+Zee は内蔵リソース（デフォルト定義）とユーザーカスタムリソース（ディレクトリ配置またはプラグイン）を自動的にマージします：
+
+1. **シンタックスハイライトのオーバーライド**:
+   - `~/.config/zee/syntax/` 内の TOML ファイルの `[meta] name`（またはファイル名幹）が内蔵シンタックス名（例: `Python`, `Rust`, `Markdown` 等、大文字小文字不問）と一致する場合、**内蔵の定義がカスタム TOML の内容で自動的に完全上書き**されます。
+   - これにより、例えば `~/.config/zee/syntax/python.toml` を置くだけで、設定を変更することなく次回以降の `.py` ファイル編集時に自動的に自作ハイライトがデフォルトとして適用されます。
+   - 内蔵にない新しい言語（例: `elixir.toml`, `gleam.toml`）を置いた場合は、`extensions`（拡張子）やファイル名で自動判定されて新言語として認識されます。
+
+2. **テーマ（カラースキーム）のオーバーライドとデフォルト化**:
+   - `[meta] name` を内蔵テーマ名（例: `Dark`, `Tokyo Night`）と同じにすると、内蔵テーマがその内容で置き換わります。
+   - 独自の新しい名前（例: `name = "Nord Custom"`）にした場合は、メニューバーの **Theme** または設定画面（**Settings**）のドロップダウンに新テーマとして現れます。
+   - 設定画面で選択すると `~/.config/zee/config.toml` に `theme = "Nord Custom"` が保存され、次回以降のアプリ起動時もデフォルトとして適用されます。
+
+3. **メニュー言語リソース（i18n / Locale）のオーバーライド**:
+   - `~/.config/zee/locales/` 内に `ja.toml` や `en.toml` を置くと内蔵の文言を上書きできます。
+   - `sample-custom-ja.toml` や `eo.toml`（エスペラント語等）のように新規言語コードで作成すると、メニューバーの **Language** および設定画面の言語選択肢に動的に追加されます。
+
+---
+
+### 各リソースの TOML フォーマットと記述仕様
+
+#### 1. シンタックスハイライト (`syntax/<id>.toml`)
+```toml
+[meta]
+name = "Python"                  # 言語名（内蔵の "Python" と一致させることで自動上書き）
+extensions = ["py", "pyw"]       # 対象となる拡張子の配列
+line_comment = "#"               # 行コメント記号（ショートカット一括切り替えで使用）
+# block_comment = ["/*", "*/"]   # ブロックコメント記号（オプション）
+
+# 単一トークン（正規表現）
+[[rule]]
+token = "keyword"
+pattern = "def|class|return|if|elif|else|for|while|try|except|with|as|import|from|async|await"
+word_boundary = true            # 単語境界 (\b...\b) を自動付与するかどうか
+
+# コメント
+[[rule]]
+token = "comment"
+pattern = "#.*$"
+
+# 複数行ブロック（三重クォート文字列など）
+[[rule]]
+token = "string"
+start = "\"\"\""
+end = "\"\"\""
+escape = "\\"
+
+# 通常の文字列
+[[rule]]
+token = "string"
+pattern = "\".*?\"|'.*?'"
+
+# 数値
+[[rule]]
+token = "number"
+pattern = "\\b[0-9]+(\\.[0-9]+)?\\b"
+```
+
+**利用可能な `token` 一覧**:
+- `keyword` : キーワード（制御構文、予約語）
+- `type_name` : 型名・クラス名
+- `function` : 関数・メソッド名
+- `string` : 文字列リテラル
+- `number` : 数値リテラル
+- `comment` : コメント
+- `operator` : 演算子 (`+`, `-`, `*`, `==` など)
+- `punctuation` : 記号・区切り文字 (`;`, `,`, `{}`, `()` など)
+- `constant` : 定数（`True`, `False`, `None` など）
+- `attribute` : 属性・デコレータ・環境変数 (`@staticmethod`, `$ENV` など)
+- `error` : 構文エラーや警告
+- `heading1`〜`heading6` : Markdown などの見出しレベル1〜6 (`#` 〜 `######`)
+
+---
+
+#### 2. カラースキーム・テーマ (`themes/<id>.toml`)
+色の指定には、`"#RRGGBB"`, `"#RGB"`, `"ansi(0)"`〜`"ansi(255)"`, または基本色名（`"black"`, `"white"`, `"red"`, `"blue"` など）が使用できます。
+
+```toml
+[meta]
+name = "My Custom Dark"
+author = "Your Name"
+version = "1.0"
+
+[editor]
+background = "#1a1b26"
+foreground = "#c0caf5"
+cursor = "#c0caf5"
+selection = "#33467c"
+line_number = "#565f89"
+current_line = "#24283b"          # オプション（現在の行の背景色ハイライト）
+
+[ui]
+menu_bar_bg = "#16161e"
+menu_bar_fg = "#a9b1d6"
+menu_item_active_bg = "#3d59a1"
+menu_item_active_fg = "#ffffff"
+tab_bar_bg = "#16161e"
+tab_active_bg = "#1f2335"
+tab_active_fg = "#c0caf5"
+tab_inactive_bg = "#16161e"
+tab_inactive_fg = "#565f89"
+status_bar_bg = "#16161e"
+status_bar_fg = "#a9b1d6"
+panel_bg = "#1f2335"
+panel_fg = "#a9b1d6"
+panel_error_fg = "#f7768e"
+dialog_bg = "#1f2335"
+dialog_border = "#7aa2f7"
+button_active_bg = "#3d59a1"
+button_active_fg = "#ffffff"
+
+[syntax]
+keyword = "#bb9af7"
+type_name = "#7dcfff"
+function = "#7aa2f7"
+string = "#9ece6a"
+number = "#ff9e64"
+comment = "#565f89"
+operator = "#89ddff"
+punctuation = "#c0caf5"
+constant = "#ff9e64"
+attribute = "#bb9af7"
+error = "#f7768e"
+```
+
+---
+
+#### 3. メニュー言語パック (`locales/<id>.toml`)
+```toml
+[meta]
+name = "カスタム日本語 (Sample Custom)" # 言語選択メニュー・設定画面に表示される名前
+
+[menu.zee]
+about = "Zee について（カスタム設定）"
+quit = "Zee を終了"
+
+[menu.file]
+name = "ファイル"
+new = "新規作成"
+open = "開く..."
+save = "保存"
+save_as = "名前を付けて保存..."
+
+# 必要なメニュー項目のみ記述すれば、未定義のキーは内蔵のデフォルト言語（英語）にフォールバックします
+```
+
+---
+
+### `zee-plugins` レジストリ (`index.json`) への登録例
+```json
+{
+  "version": 1,
+  "plugins": [
+    {
+      "id": "dracula",
+      "name": "Dracula Theme",
+      "version": "1.0.0",
+      "type": "theme",
+      "author": "Dracula Theme",
+      "description": "Dark theme for Zee based on Dracula color palette",
+      "download_url": "https://raw.githubusercontent.com/kh813/zee-plugins/main/themes/dracula.toml"
+    },
+    {
+      "id": "python",
+      "name": "Python (Enhanced)",
+      "version": "1.1.0",
+      "type": "syntax",
+      "description": "Customized Python syntax highlighting with extended keywords",
+      "download_url": "https://raw.githubusercontent.com/kh813/zee-plugins/main/syntax/python.toml"
+    },
+    {
+      "id": "sample-custom-ja",
+      "name": "カスタム日本語",
+      "version": "1.0.0",
+      "type": "locale",
+      "description": "Custom Japanese localization",
+      "download_url": "https://raw.githubusercontent.com/kh813/zee-plugins/main/locales/sample-custom-ja.toml"
+    }
+  ]
+}
+```
+
+ユーザーは GUI/TUI の `Plugin Manager` からこれらのテーマ・シンタックス・言語パックをワンクリックで追加・削除できます。また、手動で該当フォルダへ `.toml` ファイルを配置することでも即座に認識されます。

@@ -1,6 +1,7 @@
 [meta]
 name = "TOML"
 extensions = ["toml"]
+line_comment = "#"
 
 [[rule]]
 token = "keyword"

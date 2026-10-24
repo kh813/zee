@@ -1,6 +1,7 @@
 [meta]
 name = "YAML"
 extensions = ["yaml", "yml"]
+line_comment = "#"
 
 [[rule]]
 token = "comment"

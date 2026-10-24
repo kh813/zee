@@ -1859,10 +1859,10 @@ impl Dialog {
                 let current_lang_name = if current_lang_id == "auto" {
                     self.i18n.get("dialog.settings.language_auto").to_string()
                 } else {
-                    zee_core::i18n::AVAILABLE_LANGUAGES
-                        .iter()
+                    zee_core::i18n::I18n::all_available_languages()
+                        .into_iter()
                         .find(|l| l.id == current_lang_id)
-                        .map(|l| l.name.to_string())
+                        .map(|l| l.name)
                         .unwrap_or_else(|| current_lang_id.to_string())
                 };
 
@@ -2164,7 +2164,7 @@ impl Dialog {
                                                     .flex()
                                                     .flex_col()
                                                     .gap_0p5()
-                                                    .children(zee_core::i18n::AVAILABLE_LANGUAGES.iter().map(|lang| {
+                                                    .children(zee_core::i18n::I18n::all_available_languages().into_iter().map(|lang| {
                                                         let is_active = if lang.id == "auto" {
                                                             current_lang_id == "auto"
                                                         } else {
@@ -2173,9 +2173,9 @@ impl Dialog {
                                                         let label = if lang.id == "auto" {
                                                             self.i18n.get("dialog.settings.language_auto").to_string()
                                                         } else {
-                                                            lang.name.to_string()
+                                                            lang.name
                                                         };
-                                                        let l_id = lang.id.to_string();
+                                                        let l_id = lang.id;
 
                                                         div()
                                                             .h(px(28.0))
@@ -3266,6 +3266,9 @@ impl Dialog {
                                                 let type_label = match manifest.plugin_type {
                                                     zee_core::plugin::PluginType::Lua => "Lua",
                                                     zee_core::plugin::PluginType::Wasm => "WASM",
+                                                    zee_core::plugin::PluginType::Theme => "Theme",
+                                                    zee_core::plugin::PluginType::Syntax => "Syntax",
+                                                    zee_core::plugin::PluginType::Locale => "Locale",
                                                 };
                                                 let u_label = uninstall_label.clone();
                                                 
@@ -3722,6 +3725,9 @@ impl Dialog {
                                                     let type_label = match reg_p.plugin_type {
                                                         zee_core::plugin::PluginType::Lua => "Lua",
                                                         zee_core::plugin::PluginType::Wasm => "WASM",
+                                                        zee_core::plugin::PluginType::Theme => "Theme",
+                                                        zee_core::plugin::PluginType::Syntax => "Syntax",
+                                                        zee_core::plugin::PluginType::Locale => "Locale",
                                                     };
                                                     let inst_label = install_online_label.clone();
                                                     

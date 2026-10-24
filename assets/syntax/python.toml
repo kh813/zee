@@ -1,6 +1,7 @@
 [meta]
 name = "Python"
 extensions = ["py"]
+line_comment = "#"
 
 [[rule]]
 token = "keyword"

@@ -47,6 +47,7 @@ pub enum Action {
     Find,
     Replace,
     SelectAll,
+    ToggleComment,
     FormatDocument,
     SortLines,
     PluginCommand(String),

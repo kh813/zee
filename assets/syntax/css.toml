@@ -1,6 +1,7 @@
 [meta]
 name = "CSS"
 extensions = ["css"]
+block_comment = ["/*", "*/"]
 
 [[rule]]
 token = "keyword"

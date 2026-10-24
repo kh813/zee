@@ -9,6 +9,12 @@ pub struct LanguageInfo {
     pub name: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageItem {
+    pub id: String,
+    pub name: String,
+}
+
 pub const AVAILABLE_LANGUAGES: &[LanguageInfo] = &[
     LanguageInfo { id: "auto", name: "Auto" },
     LanguageInfo { id: "en", name: "English" },
@@ -110,7 +116,7 @@ impl I18n {
     pub fn normalize_lang(lang: &str) -> String {
         let cleaned = lang.split('.').next().unwrap_or(lang).replace('_', "-");
         let lower = cleaned.to_lowercase();
-        if lower.starts_with("ja") {
+        if lower.starts_with("ja") || lower.ends_with("-ja") || lower.ends_with("_ja") || lower.contains("-ja-") {
             "ja".to_string()
         } else if lower.starts_with("zh-tw") || lower.starts_with("zh-hk") || lower.starts_with("zh-hant") {
             "zh-TW".to_string()
@@ -140,13 +146,20 @@ impl I18n {
         if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("auto") {
             Self::normalize_lang(detect_system_locale())
         } else {
+            // Check if there is an exact custom locale file in locales_dir
+            if let Some(path) = Self::locale_file_path(trimmed) {
+                if path.exists() {
+                    return trimmed.to_string();
+                }
+            }
             Self::normalize_lang(trimmed)
         }
     }
 
     pub fn load(lang: &str) -> Self {
         let norm = Self::resolve_lang(lang);
-        let mut strings = match norm.as_str() {
+        let base_norm = Self::normalize_lang(&norm);
+        let mut strings = match base_norm.as_str() {
             "ja" => Self::get_ja_defaults(),
             "zh-CN" => Self::get_zh_cn_defaults(),
             "zh-TW" => Self::get_zh_tw_defaults(),
@@ -161,19 +174,35 @@ impl I18n {
         };
         
         // Always load English as absolute base fallback
-        if norm != "en" {
+        if base_norm != "en" {
             let en = Self::get_en_defaults();
             for (k, v) in en {
                 strings.entry(k).or_insert(v);
             }
         }
 
-        if let Some(path) = Self::locale_file_path(&norm) {
+        // 1. If base_norm has a custom locale file, load it
+        if let Some(path) = Self::locale_file_path(&base_norm) {
             if path.exists() {
-                if let Ok(content) = fs::read_to_string(path) {
+                if let Ok(content) = fs::read_to_string(&path) {
                     if let Ok(custom) = Self::parse_locale_toml(&content) {
                         for (k, v) in custom {
                             strings.insert(k, v);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. If norm is a specific custom locale different from base_norm, load it
+        if norm != base_norm {
+            if let Some(path) = Self::locale_file_path(&norm) {
+                if path.exists() {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        if let Ok(custom) = Self::parse_locale_toml(&content) {
+                            for (k, v) in custom {
+                                strings.insert(k, v);
+                            }
                         }
                     }
                 }
@@ -220,6 +249,7 @@ impl I18n {
         m.insert("menu.edit.find".to_string(), "Find…".to_string());
         m.insert("menu.edit.replace".to_string(), "Replace…".to_string());
         m.insert("menu.edit.select_all".to_string(), "Select All".to_string());
+        m.insert("menu.edit.toggle_comment".to_string(), "Toggle Line Comment".to_string());
         m.insert("menu.edit.format_document".to_string(), "Format Document (Plugin)".to_string());
         m.insert("menu.edit.sort_lines".to_string(), "Sort Lines (Plugin)".to_string());
         m.insert("menu.edit.to_uppercase".to_string(), "Transform to UPPERCASE".to_string());
@@ -484,6 +514,7 @@ impl I18n {
         m.insert("menu.edit.find".to_string(), "検索…".to_string());
         m.insert("menu.edit.replace".to_string(), "置換…".to_string());
         m.insert("menu.edit.select_all".to_string(), "すべて選択".to_string());
+        m.insert("menu.edit.toggle_comment".to_string(), "コメント切り替え".to_string());
         m.insert("menu.edit.format_document".to_string(), "ドキュメント整形 (プラグイン)".to_string());
         m.insert("menu.edit.sort_lines".to_string(), "行の並び替え (プラグイン)".to_string());
         m.insert("menu.edit.to_uppercase".to_string(), "大文字に変換".to_string());
@@ -1219,11 +1250,54 @@ impl I18n {
         self.strings.get(key).map(|s| s.as_str()).unwrap_or(key)
     }
 
-    fn locale_file_path(lang: &str) -> Option<PathBuf> {
-        Config::config_dir().map(|dir| dir.join("locales").join(format!("{}.toml", lang)))
+    pub fn locale_file_path(lang: &str) -> Option<PathBuf> {
+        Config::locales_dir().map(|dir| dir.join(format!("{}.toml", lang)))
     }
 
-    fn parse_locale_toml(content: &str) -> anyhow::Result<HashMap<String, String>> {
+    pub fn all_available_languages() -> Vec<LanguageItem> {
+        let mut list: Vec<LanguageItem> = AVAILABLE_LANGUAGES
+            .iter()
+            .map(|l| LanguageItem {
+                id: l.id.to_string(),
+                name: l.name.to_string(),
+            })
+            .collect();
+
+        if let Some(locales_dir) = Config::locales_dir() {
+            if locales_dir.exists() {
+                if let Ok(entries) = fs::read_dir(locales_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("toml") {
+                            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                                if !list.iter().any(|item| item.id.eq_ignore_ascii_case(stem)) {
+                                    let name = if let Ok(content) = fs::read_to_string(&path) {
+                                        if let Ok(map) = Self::parse_locale_toml(&content) {
+                                            map.get("meta.name")
+                                                .cloned()
+                                                .or_else(|| map.get("language.name").cloned())
+                                                .unwrap_or_else(|| stem.to_string())
+                                        } else {
+                                            stem.to_string()
+                                        }
+                                    } else {
+                                        stem.to_string()
+                                    };
+                                    list.push(LanguageItem {
+                                        id: stem.to_string(),
+                                        name,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        list
+    }
+
+    pub fn parse_locale_toml(content: &str) -> anyhow::Result<HashMap<String, String>> {
         use toml_span::parse;
         let value = parse(content).map_err(|e| anyhow::anyhow!("failed to parse locale TOML: {:?}", e))?;
         let mut map = HashMap::new();

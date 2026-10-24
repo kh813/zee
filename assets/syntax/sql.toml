@@ -1,6 +1,7 @@
 [meta]
 name = "SQL"
 extensions = ["sql"]
+line_comment = "--"
 
 [[rule]]
 token = "keyword"

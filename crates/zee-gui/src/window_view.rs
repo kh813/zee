@@ -788,6 +788,15 @@ impl WindowView {
         });
     }
 
+    fn handle_toggle_comment(&mut self, _: &crate::app::ToggleComment, _window: &mut Window, cx: &mut Context<Self>) {
+        self.workspace.update(cx, |w, cx| {
+            if let Some(editor) = w.active_editor_mut() {
+                editor.toggle_comment();
+            }
+            cx.notify();
+        });
+    }
+
     fn handle_format_document(&mut self, _: &crate::app::FormatDocument, _window: &mut Window, cx: &mut Context<Self>) {
         self.workspace.update(cx, |w, cx| {
             w.apply_plugin_transform("format_json");
@@ -1462,6 +1471,7 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_copy))
             .on_action(cx.listener(Self::handle_paste))
             .on_action(cx.listener(Self::handle_select_all))
+            .on_action(cx.listener(Self::handle_toggle_comment))
             .on_action(cx.listener(Self::handle_format_document))
             .on_action(cx.listener(Self::handle_sort_lines))
             .on_action(cx.listener(Self::handle_find))
@@ -1912,7 +1922,7 @@ impl WindowView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut menu = div().flex().flex_col();
-        for lang in zee_core::i18n::AVAILABLE_LANGUAGES {
+        for lang in zee_core::i18n::I18n::all_available_languages() {
             let is_current = if lang.id == "auto" {
                 self.config.language == "auto" || self.config.language.is_empty()
             } else {
@@ -1921,13 +1931,13 @@ impl WindowView {
             let label = if lang.id == "auto" {
                 self.i18n.get("dialog.settings.language_auto").to_string()
             } else {
-                lang.name.to_string()
+                lang.name
             };
             menu = menu.child(self.render_submenu_item(
                 label,
                 None,
                 is_current,
-                crate::app::SetLanguage { id: lang.id.to_string() },
+                crate::app::SetLanguage { id: lang.id },
                 fg,
                 hover_bg,
                 muted_fg,
@@ -2000,6 +2010,7 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.edit.replace").to_string(), Some("Ctrl+H"), false, Replace {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.edit.select_all").to_string(), Some("Ctrl+A"), false, SelectAll {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.toggle_comment").to_string(), Some("Ctrl+/"), false, crate::app::ToggleComment {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.edit.format_document").to_string(), None, false, crate::app::FormatDocument {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.edit.sort_lines").to_string(), None, false, crate::app::SortLines {}, fg, hover_bg, muted_fg, cx))

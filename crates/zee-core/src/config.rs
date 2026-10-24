@@ -5,6 +5,8 @@ use std::sync::RwLock;
 use anyhow::{Result, Context};
 
 static CUSTOM_CONFIG_DIR: RwLock<Option<PathBuf>> = RwLock::new(None);
+#[cfg(test)]
+pub(crate) static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -213,6 +215,10 @@ impl Config {
         Self::config_dir().map(|dir| dir.join("syntax"))
     }
 
+    pub fn locales_dir() -> Option<PathBuf> {
+        Self::config_dir().map(|dir| dir.join("locales"))
+    }
+
     pub fn write_key(key: &str, value: &str) -> Result<()> {
         let path = Self::config_file_path().context("Could not determine config path")?;
         let dir = path.parent().context("Could not determine config directory")?;
@@ -349,6 +355,11 @@ pub fn export_backup_from_dir(config_dir: &Path, dest_path: &Path, include_plugi
     collect_files_recursive(&syntax_dir, config_dir, &mut syntax_files)?;
     report.syntax_count = syntax_files.len();
     files_to_pack.extend(syntax_files);
+
+    let locales_dir = config_dir.join("locales");
+    let mut locale_files = Vec::new();
+    collect_files_recursive(&locales_dir, config_dir, &mut locale_files)?;
+    files_to_pack.extend(locale_files);
 
     if include_plugins {
         let plugins_dir = config_dir.join("plugins");
@@ -592,8 +603,6 @@ mod tests {
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
-
-    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_config_plugin_registries() {

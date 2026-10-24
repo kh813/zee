@@ -197,7 +197,7 @@ impl Editor {
     }
 
     pub fn detect_syntax_with_content(path: &Path, content: Option<&str>) -> Option<crate::syntax::SyntaxHighlighter> {
-        let syntax_defs = crate::syntax::SyntaxDefinition::builtins();
+        let syntax_defs = crate::syntax::SyntaxDefinition::load_all();
 
         // 1. Check file extension (e.g. .sh, .bash, .py, .rs)
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
@@ -1465,6 +1465,181 @@ impl Editor {
         }
     }
 
+    pub fn toggle_comment(&mut self) -> bool {
+        use crate::syntax::CommentSyntax;
+
+        let comment_syntax = self.syntax_highlighter.as_ref()
+            .and_then(|h| h.def.meta.comment_syntax())
+            .or_else(|| {
+                self.path.as_deref().and_then(Self::detect_syntax).and_then(|h| h.def.meta.comment_syntax())
+            });
+
+        let comment_syntax = match comment_syntax {
+            Some(s) => s,
+            None => return false,
+        };
+
+        let orig_cursor = self.cursor;
+        let (start_line, end_line) = match self.selection {
+            Some(ref range) if range.start < range.end => {
+                let s_line = self.rope.char_to_line(range.start);
+                let mut e_line = self.rope.char_to_line(range.end);
+                if e_line > s_line && range.end == self.rope.line_to_char(e_line) {
+                    e_line -= 1;
+                }
+                (s_line, e_line)
+            }
+            _ => {
+                let cur = self.rope.char_to_line(self.cursor);
+                (cur, cur)
+            }
+        };
+
+        if start_line >= self.rope.len_lines() {
+            return false;
+        }
+
+        let lines: Vec<String> = (start_line..=end_line)
+            .map(|l| self.rope.line(l).to_string())
+            .collect();
+
+        if lines.is_empty() {
+            return false;
+        }
+
+        let old_single_line_len = lines[0].chars().count();
+
+        let new_lines: Vec<String> = match comment_syntax {
+            CommentSyntax::Line(ref prefix) => {
+                let non_empty_lines: Vec<&String> = lines.iter()
+                    .filter(|l| !l.trim().is_empty())
+                    .collect();
+
+                let all_commented = !non_empty_lines.is_empty() && non_empty_lines.iter().all(|l| {
+                    l.trim_start().starts_with(prefix.as_str())
+                });
+
+                if all_commented {
+                    // Uncomment
+                    lines.into_iter().map(|line| {
+                        let indent_len = line.chars().take_while(|c| c.is_whitespace() && *c != '\r' && *c != '\n').map(|c| c.len_utf8()).sum::<usize>();
+                        let (indent, rest) = line.split_at(indent_len);
+                        if rest.starts_with(prefix.as_str()) {
+                            let mut after = &rest[prefix.len()..];
+                            if after.starts_with(' ') {
+                                after = &after[1..];
+                            }
+                            format!("{}{}", indent, after)
+                        } else {
+                            line
+                        }
+                    }).collect()
+                } else {
+                    // Comment
+                    let min_indent = if non_empty_lines.is_empty() {
+                        0
+                    } else {
+                        non_empty_lines.iter().map(|l| {
+                            l.chars().take_while(|c| c.is_whitespace() && *c != '\r' && *c != '\n').count()
+                        }).min().unwrap_or(0)
+                    };
+
+                    lines.into_iter().map(|line| {
+                        if line.trim().is_empty() {
+                            if start_line == end_line {
+                                let line_ending = if line.ends_with("\r\n") { "\r\n" } else if line.ends_with('\n') { "\n" } else { "" };
+                                format!("{} {}", prefix, line_ending)
+                            } else {
+                                line
+                            }
+                        } else {
+                            let indent_chars = line.chars().take_while(|c| c.is_whitespace() && *c != '\r' && *c != '\n').count();
+                            let insert_at_chars = min_indent.min(indent_chars);
+                            let byte_idx = line.char_indices().nth(insert_at_chars).map(|(i, _)| i).unwrap_or(0);
+                            let sep = if prefix.ends_with(' ') { "" } else { " " };
+                            format!("{}{}{}{}", &line[..byte_idx], prefix, sep, &line[byte_idx..])
+                        }
+                    }).collect()
+                }
+            }
+            CommentSyntax::Block(ref start_tag, ref end_tag) => {
+                let non_empty_lines: Vec<&String> = lines.iter()
+                    .filter(|l| !l.trim().is_empty())
+                    .collect();
+
+                let all_commented = !non_empty_lines.is_empty() && non_empty_lines.iter().all(|l| {
+                    let trimmed = l.trim();
+                    trimmed.starts_with(start_tag.as_str()) && trimmed.ends_with(end_tag.as_str())
+                });
+
+                if all_commented {
+                    // Uncomment
+                    lines.into_iter().map(|line| {
+                        let line_ending = if line.ends_with("\r\n") { "\r\n" } else if line.ends_with('\n') { "\n" } else { "" };
+                        let content = line.trim_end_matches(['\r', '\n']);
+                        let indent_len = content.chars().take_while(|c| c.is_whitespace()).map(|c| c.len_utf8()).sum::<usize>();
+                        let (indent, rest) = content.split_at(indent_len);
+                        if rest.starts_with(start_tag.as_str()) && rest.ends_with(end_tag.as_str()) {
+                            let mut inner = &rest[start_tag.len()..rest.len() - end_tag.len()];
+                            if inner.starts_with(' ') { inner = &inner[1..]; }
+                            if inner.ends_with(' ') { inner = &inner[..inner.len() - 1]; }
+                            format!("{}{}{}", indent, inner, line_ending)
+                        } else {
+                            line
+                        }
+                    }).collect()
+                } else {
+                    // Comment
+                    lines.into_iter().map(|line| {
+                        let line_ending = if line.ends_with("\r\n") { "\r\n" } else if line.ends_with('\n') { "\n" } else { "" };
+                        let content = line.trim_end_matches(['\r', '\n']);
+                        if content.trim().is_empty() {
+                            line
+                        } else {
+                            let indent_len = content.chars().take_while(|c| c.is_whitespace()).map(|c| c.len_utf8()).sum::<usize>();
+                            let (indent, rest) = content.split_at(indent_len);
+                            format!("{}{} {} {}{}", indent, start_tag, rest, end_tag, line_ending)
+                        }
+                    }).collect()
+                }
+            }
+        };
+
+        let start_char = self.rope.line_to_char(start_line);
+        let end_char = if end_line + 1 < self.rope.len_lines() {
+            self.rope.line_to_char(end_line + 1)
+        } else {
+            self.rope.len_chars()
+        };
+
+        let had_selection = self.selection.is_some();
+        let new_text = new_lines.join("");
+        self.replace(start_char..end_char, &new_text);
+
+        if had_selection {
+            let new_end_char = start_char + new_text.chars().count();
+            self.selection_anchor = Some(start_char);
+            self.cursor = new_end_char;
+            self.selection = Some(start_char..new_end_char);
+        } else {
+            let (_, orig_col) = self.char_to_line_col(orig_cursor);
+            let new_line_str = self.rope.line(start_line).to_string();
+            let new_single_line_len = new_line_str.chars().count();
+            let max_col = new_line_str.trim_end_matches(['\r', '\n']).chars().count();
+            let delta = new_single_line_len as isize - old_single_line_len as isize;
+            let new_col = if delta >= 0 {
+                orig_col + delta as usize
+            } else {
+                orig_col.saturating_sub((-delta) as usize)
+            };
+            self.cursor = self.line_col_to_char(start_line, new_col.min(max_col));
+            self.selection = None;
+            self.selection_anchor = None;
+        }
+
+        true
+    }
+
     pub fn select_word(&mut self, pos: usize) {
         let range = self.find_word_bounds(pos);
         self.selection_anchor = Some(range.start);
@@ -2562,13 +2737,18 @@ mod tests {
     fn test_syntax_detection_markdown() {
         let temp_dir = std::env::temp_dir();
         let md_file = temp_dir.join("test_led_syntax.md");
-        std::fs::write(&md_file, "# Heading\n`code`\n**bold**\n").unwrap();
+        std::fs::write(&md_file, "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6\n`code`\n**bold**\n").unwrap();
 
         let editor = Editor::from_file(&md_file).unwrap();
         assert!(editor.syntax_highlighter.is_some());
-        assert_eq!(editor.line_tokens.len(), 4);
-        // First line should have Heading keyword token
-        assert!(!editor.line_tokens[0].as_ref().unwrap().is_empty());
+        assert_eq!(editor.line_tokens.len(), 9);
+        // Verify Heading1 through Heading6 tokens
+        assert_eq!(editor.line_tokens[0].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading1);
+        assert_eq!(editor.line_tokens[1].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading2);
+        assert_eq!(editor.line_tokens[2].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading3);
+        assert_eq!(editor.line_tokens[3].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading4);
+        assert_eq!(editor.line_tokens[4].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading5);
+        assert_eq!(editor.line_tokens[5].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading6);
         let _ = std::fs::remove_file(&md_file);
     }
 
@@ -3683,6 +3863,68 @@ mod tests {
         assert_eq!(editor.get_char_at_v_px(0, 0..9, 125.0, ascii_px, cjk_px, 4), 8); // 5th ＠ left half (120..130)
         assert_eq!(editor.get_char_at_v_px(0, 0..9, 135.0, ascii_px, cjk_px, 4), 9); // 5th ＠ right half (130..140), rounds to end of line
         assert_eq!(editor.get_char_at_v_px(0, 0..9, 200.0, ascii_px, cjk_px, 4), 9); // past line end
+    }
+
+    #[test]
+    fn test_toggle_comment_python_and_undo() {
+        let syntaxes = crate::syntax::SyntaxDefinition::load_all();
+        let py_def = syntaxes.into_iter().find(|s| s.meta.name.eq_ignore_ascii_case("python")).unwrap();
+        let hl = crate::syntax::SyntaxHighlighter::new(py_def).unwrap();
+
+        let mut editor = Editor::new();
+        editor.update_syntax(Some(hl));
+        editor.insert(0, "def foo():\n    x = 1\n    return x\n");
+        editor.cursor = 0; // line 0
+
+        // Single line toggle comment
+        assert!(editor.toggle_comment());
+        assert_eq!(editor.rope.to_string(), "# def foo():\n    x = 1\n    return x\n");
+
+        // Single line toggle uncomment
+        assert!(editor.toggle_comment());
+        assert_eq!(editor.rope.to_string(), "def foo():\n    x = 1\n    return x\n");
+
+        // Multi-line selection toggle comment
+        let line1_start = editor.rope.line_to_char(1);
+        let line2_end = editor.rope.line_to_char(3); // start of line 3
+        editor.selection = Some(line1_start..line2_end);
+        assert!(editor.toggle_comment());
+        assert_eq!(editor.rope.to_string(), "def foo():\n    # x = 1\n    # return x\n");
+
+        // Multi-line selection toggle uncomment
+        assert!(editor.toggle_comment());
+        assert_eq!(editor.rope.to_string(), "def foo():\n    x = 1\n    return x\n");
+
+        // Test Undo
+        editor.undo();
+        assert_eq!(editor.rope.to_string(), "def foo():\n    # x = 1\n    # return x\n");
+        editor.undo();
+        assert_eq!(editor.rope.to_string(), "def foo():\n    x = 1\n    return x\n");
+    }
+
+    #[test]
+    fn test_toggle_comment_rust() {
+        let syntaxes = crate::syntax::SyntaxDefinition::load_all();
+        let rs_def = syntaxes.into_iter().find(|s| s.meta.name.eq_ignore_ascii_case("rust")).unwrap();
+        let hl = crate::syntax::SyntaxHighlighter::new(rs_def).unwrap();
+
+        let mut editor = Editor::new();
+        editor.update_syntax(Some(hl));
+        editor.insert(0, "    let a = 10;\n    let b = 20;\n");
+        editor.cursor = 4; // line 0
+
+        assert!(editor.toggle_comment());
+        assert_eq!(editor.rope.to_string(), "    // let a = 10;\n    let b = 20;\n");
+        assert!(editor.toggle_comment());
+        assert_eq!(editor.rope.to_string(), "    let a = 10;\n    let b = 20;\n");
+    }
+
+    #[test]
+    fn test_toggle_comment_unknown_syntax_returns_false() {
+        let mut editor = Editor::new();
+        editor.insert(0, "plain text line\n");
+        assert!(!editor.toggle_comment());
+        assert_eq!(editor.rope.to_string(), "plain text line\n");
     }
 }
 

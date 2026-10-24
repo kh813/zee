@@ -1,6 +1,7 @@
 [meta]
 name = "Shell"
 extensions = ["sh", "bash", "zsh", "ksh", "csh", "tcsh", "command", "bashrc", "zshrc", "bash_profile", "profile", "zprofile"]
+line_comment = "#"
 
 [[rule]]
 token = "keyword"

@@ -163,6 +163,7 @@ In the desktop GUI, hold the `Alt` key (`Option` on macOS) while dragging the mo
 | Copy / コピー | `⌘C` | `Ctrl+C` |
 | Paste / 貼り付け | `⌘V` | `Ctrl+V` |
 | Select All / すべて選択 | `⌘A` | `Ctrl+A` |
+| Toggle Comment / コメント切り替え | `⌘/` | `Ctrl+/` |
 | Find / 検索 | `⌘F` | `Ctrl+F` |
 | Find & Replace / 置換 | `⌘R` / `⌘Shift+F` | `Ctrl+R` / `Ctrl+Shift+F` |
 
@@ -258,19 +259,31 @@ line_height = 20.0
 
 ---
 
-## 5. Custom Themes & Syntaxes / テーマとシンタックスのカスタマイズ
+## 5. Custom Themes, Syntaxes & Locales / テーマ・シンタックス・言語パックのカスタマイズ
 
-- **Custom Themes / カスタムテーマ**:  
-  Place `.toml` theme files in `~/.config/zee/themes/`. Themes appear instantly in the Settings dropdown.  
-  *`~/.config/zee/themes/` に `.toml` テーマを配置すると、設定画面に自動反映されます。*
-- **Theme Behavior (GUI vs CLI) / GUI版とCLI版でのテーマ適用**:  
-  - **GUI version**: The editor area, tabs, and panels reflect the chosen theme, while the top menu bar always conforms to the **native OS standard design** (Windows/Linux dynamically matches system Light/Dark appearance; macOS uses native NSMenuBar).  
-    *GUI版ではエディタ本体やタブ・パネルにテーマが適用され、メニューバーはOS標準デザイン（Windows/LinuxではOSのライト／ダーク設定に自動連動、macOSはネイティブメニュー）に統一されます。*
-  - **CLI (TUI) version**: The entire terminal display including the menu bar is drawn using the theme's custom palette (`[ui] menu_bar_bg`).  
-    *CLI版ではターミナル全体がエディタテーマで統一され、メニューバーも選択したテーマの色で描画されます。*
-- **Custom Syntax Highlighting / カスタムシンタックス**:  
-  Place `.toml` syntax definition files in `~/.config/zee/syntaxes/`. Supports regex patterns, keyword lists, and comments.  
-  *`~/.config/zee/syntaxes/` に定義ファイルを配置することで、独自言語のハイライトを追加できます。*
+Zee allows you to customize and extend color schemes (themes), syntax definitions, and menu language translations simply by placing TOML files in your configuration folder or installing them via the in-app **Plugin Manager**.  
+*Zee では、設定フォルダに TOML ファイルを配置するか、アプリ内の「プラグイン管理（Plugin Manager）」からインストールすることで、テーマ、シンタックス定義、言語パックを自由にカスタマイズ・追加できます。*
+
+### Configuration Paths / 配置フォルダ
+- **macOS / Linux**: `~/.config/zee/`
+- **Windows**: `%APPDATA%\zee\`
+
+| Resource / 種別 | Directory / 配置先 | Auto-Override Rule / 上書き・優先順位ルール |
+| :--- | :--- | :--- |
+| **Themes / テーマ** | `themes/<id>.toml` | Matching `name` overrides built-in themes. New themes appear in Settings dropdown. |
+| **Syntaxes / シンタックス** | `syntax/<id>.toml` | Placing e.g. `syntax/python.toml` (or matching `name = "Python"`) **automatically overrides the built-in syntax definition**. Custom definitions automatically apply to matching file extensions. |
+| **Locales / 言語パック** | `locales/<id>.toml` | Matching code (e.g. `ja.toml`) overrides built-in UI text. New locale files (e.g. `eo.toml`, `custom-ja.toml`) appear directly in the **Language** menu. |
+
+### Automatic Overrides / デフォルトの上書き仕様
+- **Syntax Highlighting (e.g. Python)**:  
+  If you place `~/.config/zee/syntax/python.toml` (with `[meta] name = "Python"`), Zee **automatically replaces the default built-in Python highlighting** with your custom rules upon launch. All `.py` files immediately use your customized highlighting without changing any settings.
+  *`~/.config/zee/syntax/python.toml` を配置すると、内蔵の Python ハイライト定義が自動的に上書きされ、次回以降開く `.py` ファイルに即座に反映されます。*
+- **Themes**:  
+  Placing a theme with a new name (e.g. `name = "Nord Custom"`) allows you to select it from **Theme** in the menu or Settings (`⌘,` / `Ctrl+,`). Once selected, it is saved to `config.toml` and remains your default theme.
+  *新しいテーマを作成し設定画面から選択すると、`config.toml` に保存され次回以降もデフォルトとして適用されます。*
+
+For complete TOML schemas, token lists, color keys, and copy-pasteable examples, please refer to the [Plugin Development & Customization Guide](docs/plugin_development_guide.md#10-静的リソース拡張テーマシンタックス言語パック).  
+*詳細なTOML定義スキーマ、利用可能なトークン一覧、カラー定義項目、設定例については [プラグイン・カスタマイズ開発ガイド (docs/plugin_development_guide.md)](docs/plugin_development_guide.md#10-静的リソース拡張テーマシンタックス言語パック) をご覧ください。*
 
 ---
 

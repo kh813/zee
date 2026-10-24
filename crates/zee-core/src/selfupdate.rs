@@ -1678,7 +1678,7 @@ mod tests {
 
     #[test]
     fn test_real_world_release_assets_contract() {
-        for version in &["v0.2.15", "v0.2.16", "v0.2.17", "v0.2.18", "v0.2.19", "v0.2.20", "v0.2.21", "v0.2.22", "v0.2.23", "v1.0.0"] {
+        for version in &["v0.2.15", "v0.2.16", "v0.2.17", "v0.2.18", "v0.2.19", "v0.2.20", "v0.2.21", "v0.2.22", "v0.2.23", "v0.2.24", "v1.0.0"] {
             let assets = vec![
                 ReleaseAsset { name: "SHA256SUMS.txt".to_string(), browser_download_url: "https://...".into(), size: 284 },
                 ReleaseAsset { name: format!("zee-cli-{}-linux-x64.zip", version), browser_download_url: "https://...".into(), size: 10_000_000 },
@@ -1702,6 +1702,7 @@ mod tests {
 
     #[test]
     fn test_update_check_cache_lifecycle() {
+        let _lock = crate::config::TEST_MUTEX.lock().unwrap();
         let temp_dir = std::env::temp_dir().join(format!("zee-test-update-cache-{}", std::process::id()));
         let _ = fs::create_dir_all(&temp_dir);
         crate::config::Config::set_custom_config_dir(Some(temp_dir.clone()));

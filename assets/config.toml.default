@@ -148,3 +148,18 @@ line_height = 19.0
 # Type    : float
 # Default : 13.0
 ui_font_size = 13.0
+
+
+# Custom Keybinding Overrides
+# You can customize or override shortcut keys for actions:
+# Action names: "fuzzy_finder", "project_search", "open", "save", "save_as",
+#               "new_tab", "close_tab", "undo", "redo", "cut", "copy", "paste",
+#               "find", "replace", "select_all", "toggle_comment", "format_document",
+#               "sort_lines", "convert_tabs_to_spaces", "convert_spaces_to_tabs",
+#               "toggle_sidebar", "toggle_vi_mode", "go_to_line", "quit"
+#
+# [keybindings]
+# "ctrl-p" = "fuzzy_finder"
+# "ctrl-shift-f" = "project_search"
+# "ctrl-s" = "save"
+

@@ -228,6 +228,7 @@ impl I18n {
         m.insert("menu.file.open_templates_folder".to_string(), "Open Templates Folder".to_string());
         m.insert("menu.file.open".to_string(), "Open…".to_string());
         m.insert("menu.file.open_folder".to_string(), "Open Folder…".to_string());
+        m.insert("menu.file.fuzzy_finder".to_string(), "Quick Open…".to_string());
         m.insert("menu.file.open_gdrive".to_string(), "Open from Google Drive…".to_string());
         m.insert("menu.file.open_recent".to_string(), "Open Recent".to_string());
         m.insert("menu.file.clear_recent".to_string(), "Clear Recent".to_string());
@@ -248,8 +249,11 @@ impl I18n {
         m.insert("menu.edit.paste".to_string(), "Paste".to_string());
         m.insert("menu.edit.find".to_string(), "Find…".to_string());
         m.insert("menu.edit.replace".to_string(), "Replace…".to_string());
+        m.insert("menu.edit.project_search".to_string(), "Find in Files…".to_string());
         m.insert("menu.edit.select_all".to_string(), "Select All".to_string());
         m.insert("menu.edit.toggle_comment".to_string(), "Toggle Line Comment".to_string());
+        m.insert("menu.edit.convert_tabs_to_spaces".to_string(), "Convert Tabs to Spaces".to_string());
+        m.insert("menu.edit.convert_spaces_to_tabs".to_string(), "Convert Spaces to Tabs".to_string());
         m.insert("menu.edit.format_document".to_string(), "Format Document (Plugin)".to_string());
         m.insert("menu.edit.sort_lines".to_string(), "Sort Lines (Plugin)".to_string());
         m.insert("menu.edit.to_uppercase".to_string(), "Transform to UPPERCASE".to_string());
@@ -493,6 +497,7 @@ impl I18n {
         m.insert("menu.file.open_templates_folder".to_string(), "テンプレートフォルダを開く".to_string());
         m.insert("menu.file.open".to_string(), "開く…".to_string());
         m.insert("menu.file.open_folder".to_string(), "フォルダを開く…".to_string());
+        m.insert("menu.file.fuzzy_finder".to_string(), "クイックオープン…".to_string());
         m.insert("menu.file.open_gdrive".to_string(), "Google ドライブから開く…".to_string());
         m.insert("menu.file.open_recent".to_string(), "最近開いたファイル".to_string());
         m.insert("menu.file.clear_recent".to_string(), "履歴を消去".to_string());
@@ -513,8 +518,11 @@ impl I18n {
         m.insert("menu.edit.paste".to_string(), "貼り付け".to_string());
         m.insert("menu.edit.find".to_string(), "検索…".to_string());
         m.insert("menu.edit.replace".to_string(), "置換…".to_string());
+        m.insert("menu.edit.project_search".to_string(), "プロジェクト横断検索…".to_string());
         m.insert("menu.edit.select_all".to_string(), "すべて選択".to_string());
         m.insert("menu.edit.toggle_comment".to_string(), "コメント切り替え".to_string());
+        m.insert("menu.edit.convert_tabs_to_spaces".to_string(), "タブをスペースに変換".to_string());
+        m.insert("menu.edit.convert_spaces_to_tabs".to_string(), "スペースをタブに変換".to_string());
         m.insert("menu.edit.format_document".to_string(), "ドキュメント整形 (プラグイン)".to_string());
         m.insert("menu.edit.sort_lines".to_string(), "行の並び替え (プラグイン)".to_string());
         m.insert("menu.edit.to_uppercase".to_string(), "大文字に変換".to_string());

@@ -55,6 +55,17 @@ Whether launching the GUI app on a Mac/Windows workstation or editing over SSH o
   - Dotfiles & hidden file toggle (`👁` button or `h` key).
   - Multi-language symbol outline: Markdown, Rust, Python, Go, JSON, YAML, Shell, HTML, CSS.
   - *フォルダツリーと関数/見出しのアウトライン表示。ファイルの新規作成・名前変更・削除や隠しファイル切り替えに対応。*
+- **Fuzzy Finder & Project Search / クイックオープン & プロジェクト全体検索**:
+  - `Ctrl+P` / `Cmd+P`: Fast workspace fuzzy file finder.
+  - `Ctrl+Shift+F` / `Cmd+Shift+F`: Instant workspace-wide search (grep) across all project files with direct jump to matching line and column.
+  - *`Ctrl+P` によるワークスペース全ファイルの高速あいまい検索と、`Ctrl+Shift+F` によるプロジェクト全域のキーワード一括検索・該当行ジャンプ。*
+- **Smart Auto-Indentation & Tab ⇄ Space Conversion / 自動インデント & タブスペース相互変換**:
+  - Automatically maintains indentation on Enter, including smart block expansion for `{`, `(`, `[`, and `:`.
+  - Convert indentation between tabs and spaces with a single click (`Edit > Convert Tabs to Spaces / Convert Spaces to Tabs`).
+  - *Enter時の自動インデント継続および波括弧などの展開。タブとスペースの相互変換コマンドを標準搭載。*
+- **Keybinding Customization / キーバインドの自由カスタマイズ**:
+  - Customize and override any keyboard shortcuts via `[keybindings]` in `config.toml` (e.g. `"ctrl-p" = "fuzzy_finder"`).
+  - *`config.toml` の `[keybindings]` セクションから、好みのショートカットキーへ自由にカスタマイズ・上書き可能。*
 - **Starter File Templates / 新規作成テンプレート**:
   - Scaffold new files via `File > New from Template` (Rust, Python, Go, HTML5, Markdown, Shell).
   - Macro interpolation (`{filename}`, `{date}`, `{year}`, `{author}`, `{cursor}`).
@@ -183,6 +194,11 @@ sidebar = false               # 起動時にサイドバーを開く
 sidebar_position = "right"    # サイドバー位置 ("right" または "left")
 font_size = 13.0              # GUI フォントサイズ
 line_height = 20.0            # GUI 行の高さ
+
+[keybindings]
+# "ctrl-p" = "fuzzy_finder"
+# "ctrl-shift-f" = "project_search"
+# "ctrl-s" = "save"
 ```
 
 ---

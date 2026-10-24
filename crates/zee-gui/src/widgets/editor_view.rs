@@ -977,10 +977,7 @@ impl EditorView {
                     }
                 }
                 "enter" => {
-                    if let Some(range) = editor.selection.clone() {
-                        editor.delete(range);
-                    }
-                    editor.insert(editor.cursor, "\n");
+                    editor.insert_newline_with_auto_indent(tab_size, expand_tab);
                 }
                 "escape" => {
                     editor.selection = None;

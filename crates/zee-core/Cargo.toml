@@ -1,6 +1,6 @@
 [package]
 name = "zee-core"
-version = "0.2.24"
+version = "0.3.0"
 edition = "2021"
 
 
@@ -21,6 +21,7 @@ wasmi         = { workspace = true }
 wasmtime      = { workspace = true }
 ureq          = { version = "2.10", features = ["json"] }
 flate2        = "1.0"
+walkdir       = { workspace = true }
 tar           = "0.4"
 zip           = { version = "2.2", default-features = false, features = ["deflate"] }
 mlua          = { version = "0.9", features = ["lua54", "vendored"] }

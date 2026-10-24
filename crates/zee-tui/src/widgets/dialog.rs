@@ -1,7 +1,7 @@
 use crate::renderer::{Renderer, Cell};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind, MouseButton};
 use crossterm::style::Color;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::fs;
 use std::time::SystemTime;
 use chrono::{DateTime, Local};
@@ -27,6 +27,7 @@ pub trait Dialog {
 #[derive(Debug, Clone)]
 pub enum Action {
     ConfirmPath(PathBuf),
+    OpenFileAt { path: PathBuf, line: usize, col: usize },
     ConfirmLine(usize),
     Confirm,
     Save,
@@ -2322,6 +2323,453 @@ impl Dialog for GoToLineDialog {
         let label_len: u16 = format!("{}: ", self.i18n_goto).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
         let text_len: u16 = self.input_text.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
         Some((2 + label_len + text_len, 2))
+    }
+}
+
+pub struct FuzzyFinderDialog {
+    pub root_path: PathBuf,
+    pub input_text: String,
+    pub all_files: Vec<PathBuf>,
+    pub filtered_files: Vec<PathBuf>,
+    pub selected_index: usize,
+    pub scroll_offset: usize,
+    pub i18n_title: String,
+    pub i18n_placeholder: String,
+}
+
+impl FuzzyFinderDialog {
+    pub fn new(root: &Path, i18n: &zee_core::I18n) -> Self {
+        let all_files = zee_core::fuzzy::index_workspace_files(root, 5000);
+        let filtered_files = zee_core::fuzzy::filter_and_rank_files("", &all_files)
+            .into_iter()
+            .take(50)
+            .map(|(p, _)| p.clone())
+            .collect();
+
+        Self {
+            root_path: root.to_path_buf(),
+            input_text: String::new(),
+            all_files,
+            filtered_files,
+            selected_index: 0,
+            scroll_offset: 0,
+            i18n_title: i18n.get("dialog.fuzzy_finder").to_string(),
+            i18n_placeholder: i18n.get("dialog.fuzzy_finder_placeholder").to_string(),
+        }
+    }
+
+    fn update_search(&mut self) {
+        self.filtered_files = zee_core::fuzzy::filter_and_rank_files(&self.input_text, &self.all_files)
+            .into_iter()
+            .take(50)
+            .map(|(p, _)| p.clone())
+            .collect();
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+    }
+}
+
+impl Dialog for FuzzyFinderDialog {
+    fn title(&self) -> &str {
+        &self.i18n_title
+    }
+
+    fn dimensions(&self) -> (u16, u16) {
+        (70, 18)
+    }
+
+    fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
+        render_base_dialog(renderer, theme, self.title(), x, y, w, h);
+
+        let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
+        let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let input_bg = to_ct_color(theme.ui.panel_bg, theme);
+        let input_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let muted_fg = to_ct_color(theme.editor.line_number, theme);
+        let border_fg = to_ct_color(theme.ui.status_bar_bg, theme);
+        let sel_bg = to_ct_color(theme.editor.selection, theme);
+        let accent_fg = to_ct_color(theme.syntax.keyword.unwrap_or(theme.editor.cursor), theme);
+
+        // Input line at y + 2
+        let prefix = " > ";
+        let mut cur_x = x + 2;
+        let ly = y + 2;
+        for c in prefix.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            renderer.set_cell(cur_x, ly, Cell { ch: c, bg: dialog_bg, fg: accent_fg, width: cw as u8, ..Default::default() });
+            cur_x += cw;
+        }
+
+        let input_x = cur_x;
+        let input_w = (x + w - 3).saturating_sub(input_x);
+        for dx in 0..input_w {
+            renderer.set_cell(input_x + dx, ly, Cell { ch: ' ', bg: input_bg, ..Default::default() });
+        }
+
+        if self.input_text.is_empty() {
+            let mut cur_tx = input_x;
+            for c in self.i18n_placeholder.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_tx + cw <= input_x + input_w {
+                    renderer.set_cell(cur_tx, ly, Cell { ch: c, bg: input_bg, fg: muted_fg, width: cw as u8, ..Default::default() });
+                    cur_tx += cw;
+                }
+            }
+        } else {
+            let mut cur_tx = input_x;
+            for c in self.input_text.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_tx + cw <= input_x + input_w {
+                    renderer.set_cell(cur_tx, ly, Cell { ch: c, bg: input_bg, fg: input_fg, width: cw as u8, ..Default::default() });
+                    cur_tx += cw;
+                }
+            }
+        }
+
+        // Separator at y + 3
+        for dx in 1..w - 1 {
+            renderer.set_cell(x + dx, y + 3, Cell { ch: '─', fg: border_fg, bg: dialog_bg, ..Default::default() });
+        }
+
+        // List items from y + 4 to y + h - 2
+        let list_y = y + 4;
+        let max_rows = (h.saturating_sub(6)) as usize;
+
+        let visible_files = if self.filtered_files.is_empty() {
+            let empty_msg = if self.input_text.is_empty() { "No files found" } else { "No matches found" };
+            let mut cur_mx = x + 3;
+            for c in empty_msg.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_mx + cw < x + w - 2 {
+                    renderer.set_cell(cur_mx, list_y + 1, Cell { ch: c, bg: dialog_bg, fg: muted_fg, width: cw as u8, ..Default::default() });
+                    cur_mx += cw;
+                }
+            }
+            &[][..]
+        } else {
+            let start = self.scroll_offset.min(self.filtered_files.len().saturating_sub(1));
+            let end = (start + max_rows).min(self.filtered_files.len());
+            &self.filtered_files[start..end]
+        };
+
+        for (idx, path) in visible_files.iter().enumerate() {
+            let item_idx = self.scroll_offset + idx;
+            let is_sel = item_idx == self.selected_index;
+            let row_y = list_y + idx as u16;
+            let row_bg = if is_sel { sel_bg } else { dialog_bg };
+
+            for dx in 1..w - 1 {
+                renderer.set_cell(x + dx, row_y, Cell { ch: ' ', bg: row_bg, ..Default::default() });
+            }
+
+            let rel_path = path.strip_prefix(&self.root_path).unwrap_or(path);
+            let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| rel_path.to_string_lossy().to_string());
+            let parent = rel_path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+
+            let mut cur_rx = x + 2;
+            let name_fg = if is_sel { accent_fg } else { dialog_fg };
+            for c in file_name.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_rx + cw < x + w - 2 {
+                    renderer.set_cell(cur_rx, row_y, Cell { ch: c, bg: row_bg, fg: name_fg, width: cw as u8, ..Default::default() });
+                    cur_rx += cw;
+                }
+            }
+
+            if !parent.is_empty() {
+                cur_rx += 1;
+                for c in format!("({})", parent).chars() {
+                    let cw = c.width().unwrap_or(0) as u16;
+                    if cur_rx + cw < x + w - 2 {
+                        renderer.set_cell(cur_rx, row_y, Cell { ch: c, bg: row_bg, fg: muted_fg, width: cw as u8, ..Default::default() });
+                        cur_rx += cw;
+                    }
+                }
+            }
+        }
+
+        // Footer at y + h - 1
+        let count_str = format!(" {} files ", self.filtered_files.len());
+        let count_x = x + w.saturating_sub(count_str.len() as u16 + 2);
+        let mut cur_cx = count_x;
+        for c in count_str.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            if cur_cx + cw < x + w - 1 {
+                renderer.set_cell(cur_cx, y + h - 1, Cell { ch: c, bg: dialog_bg, fg: muted_fg, width: cw as u8, ..Default::default() });
+                cur_cx += cw;
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> DialogResult<Action> {
+        let max_rows = 12usize;
+        match key.code {
+            KeyCode::Esc => DialogResult::Cancel,
+            KeyCode::Up | KeyCode::Char('p') if key.code == KeyCode::Up || key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.selected_index = self.selected_index.saturating_sub(1);
+                if self.selected_index < self.scroll_offset {
+                    self.scroll_offset = self.selected_index;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Down | KeyCode::Char('n') if key.code == KeyCode::Down || key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if !self.filtered_files.is_empty() {
+                    self.selected_index = (self.selected_index + 1).min(self.filtered_files.len() - 1);
+                    if self.selected_index >= self.scroll_offset + max_rows {
+                        self.scroll_offset = self.selected_index.saturating_sub(max_rows - 1);
+                    }
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Enter => {
+                if let Some(path) = self.filtered_files.get(self.selected_index).cloned() {
+                    DialogResult::Ok(Action::ConfirmPath(path))
+                } else {
+                    DialogResult::Cancel
+                }
+            }
+            KeyCode::Backspace => {
+                self.input_text.pop();
+                self.update_search();
+                DialogResult::Pending
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+                self.input_text.push(c);
+                self.update_search();
+                DialogResult::Pending
+            }
+            _ => DialogResult::Pending,
+        }
+    }
+
+    fn handle_mouse(&mut self, _mouse: MouseEvent, _x: u16, _y: u16, _w: u16, _h: u16) -> DialogResult<Action> {
+        DialogResult::Pending
+    }
+
+    fn cursor_pos(&self) -> Option<(u16, u16)> {
+        let prefix_len = 3u16; // " > "
+        let text_len: u16 = self.input_text.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        Some((2 + prefix_len + text_len, 2))
+    }
+}
+
+pub struct ProjectSearchDialog {
+    pub root_path: PathBuf,
+    pub input_text: String,
+    pub matches: Vec<zee_core::search::ProjectSearchMatch>,
+    pub selected_index: usize,
+    pub scroll_offset: usize,
+    pub i18n_title: String,
+    pub i18n_placeholder: String,
+}
+
+impl ProjectSearchDialog {
+    pub fn new(root: &Path, i18n: &zee_core::I18n) -> Self {
+        Self {
+            root_path: root.to_path_buf(),
+            input_text: String::new(),
+            matches: Vec::new(),
+            selected_index: 0,
+            scroll_offset: 0,
+            i18n_title: i18n.get("dialog.project_search").to_string(),
+            i18n_placeholder: i18n.get("dialog.project_search_placeholder").to_string(),
+        }
+    }
+
+    fn update_search(&mut self) {
+        if self.input_text.is_empty() {
+            self.matches.clear();
+        } else {
+            let q = zee_core::search::SearchQuery {
+                pattern: self.input_text.clone(),
+                flags: Default::default(),
+            };
+            self.matches = zee_core::search::search_project(&self.root_path, &q, 100);
+        }
+        self.selected_index = 0;
+        self.scroll_offset = 0;
+    }
+}
+
+impl Dialog for ProjectSearchDialog {
+    fn title(&self) -> &str {
+        &self.i18n_title
+    }
+
+    fn dimensions(&self) -> (u16, u16) {
+        (76, 20)
+    }
+
+    fn render(&self, renderer: &mut Renderer, theme: &zee_core::theme::Theme, x: u16, y: u16, w: u16, h: u16) {
+        render_base_dialog(renderer, theme, self.title(), x, y, w, h);
+
+        let dialog_bg = to_ct_color(theme.ui.dialog_bg, theme);
+        let dialog_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let input_bg = to_ct_color(theme.ui.panel_bg, theme);
+        let input_fg = to_ct_color(theme.ui.panel_fg, theme);
+        let muted_fg = to_ct_color(theme.editor.line_number, theme);
+        let border_fg = to_ct_color(theme.ui.status_bar_bg, theme);
+        let sel_bg = to_ct_color(theme.editor.selection, theme);
+        let accent_fg = to_ct_color(theme.syntax.keyword.unwrap_or(theme.editor.cursor), theme);
+
+        // Input line at y + 2
+        let prefix = " > ";
+        let mut cur_x = x + 2;
+        let ly = y + 2;
+        for c in prefix.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            renderer.set_cell(cur_x, ly, Cell { ch: c, bg: dialog_bg, fg: accent_fg, width: cw as u8, ..Default::default() });
+            cur_x += cw;
+        }
+
+        let input_x = cur_x;
+        let input_w = (x + w - 3).saturating_sub(input_x);
+        for dx in 0..input_w {
+            renderer.set_cell(input_x + dx, ly, Cell { ch: ' ', bg: input_bg, ..Default::default() });
+        }
+
+        if self.input_text.is_empty() {
+            let mut cur_tx = input_x;
+            for c in self.i18n_placeholder.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_tx + cw <= input_x + input_w {
+                    renderer.set_cell(cur_tx, ly, Cell { ch: c, bg: input_bg, fg: muted_fg, width: cw as u8, ..Default::default() });
+                    cur_tx += cw;
+                }
+            }
+        } else {
+            let mut cur_tx = input_x;
+            for c in self.input_text.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_tx + cw <= input_x + input_w {
+                    renderer.set_cell(cur_tx, ly, Cell { ch: c, bg: input_bg, fg: input_fg, width: cw as u8, ..Default::default() });
+                    cur_tx += cw;
+                }
+            }
+        }
+
+        // Separator at y + 3
+        for dx in 1..w - 1 {
+            renderer.set_cell(x + dx, y + 3, Cell { ch: '─', fg: border_fg, bg: dialog_bg, ..Default::default() });
+        }
+
+        // List items from y + 4 to y + h - 2
+        let list_y = y + 4;
+        let max_rows = (h.saturating_sub(6)) as usize;
+
+        let visible_matches = if self.matches.is_empty() {
+            let empty_msg = if self.input_text.is_empty() { "Type query to search" } else { "No matches found" };
+            let mut cur_mx = x + 3;
+            for c in empty_msg.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_mx + cw < x + w - 2 {
+                    renderer.set_cell(cur_mx, list_y + 1, Cell { ch: c, bg: dialog_bg, fg: muted_fg, width: cw as u8, ..Default::default() });
+                    cur_mx += cw;
+                }
+            }
+            &[][..]
+        } else {
+            let start = self.scroll_offset.min(self.matches.len().saturating_sub(1));
+            let end = (start + max_rows).min(self.matches.len());
+            &self.matches[start..end]
+        };
+
+        for (idx, m) in visible_matches.iter().enumerate() {
+            let item_idx = self.scroll_offset + idx;
+            let is_sel = item_idx == self.selected_index;
+            let row_y = list_y + idx as u16;
+            let row_bg = if is_sel { sel_bg } else { dialog_bg };
+
+            for dx in 1..w - 1 {
+                renderer.set_cell(x + dx, row_y, Cell { ch: ' ', bg: row_bg, ..Default::default() });
+            }
+
+            let loc_str = format!("{}:{}: ", m.rel_path, m.line_number);
+            let mut cur_rx = x + 2;
+            let loc_fg = if is_sel { accent_fg } else { to_ct_color(theme.syntax.type_name.unwrap_or(theme.editor.foreground), theme) };
+            for c in loc_str.chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_rx + cw < x + w - 2 {
+                    renderer.set_cell(cur_rx, row_y, Cell { ch: c, bg: row_bg, fg: loc_fg, width: cw as u8, ..Default::default() });
+                    cur_rx += cw;
+                }
+            }
+
+            for c in m.line_text.trim().chars() {
+                let cw = c.width().unwrap_or(0) as u16;
+                if cur_rx + cw < x + w - 2 {
+                    renderer.set_cell(cur_rx, row_y, Cell { ch: c, bg: row_bg, fg: dialog_fg, width: cw as u8, ..Default::default() });
+                    cur_rx += cw;
+                }
+            }
+        }
+
+        // Footer at y + h - 1
+        let count_str = format!(" {} matches ", self.matches.len());
+        let count_x = x + w.saturating_sub(count_str.len() as u16 + 2);
+        let mut cur_cx = count_x;
+        for c in count_str.chars() {
+            let cw = c.width().unwrap_or(0) as u16;
+            if cur_cx + cw < x + w - 1 {
+                renderer.set_cell(cur_cx, y + h - 1, Cell { ch: c, bg: dialog_bg, fg: muted_fg, width: cw as u8, ..Default::default() });
+                cur_cx += cw;
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> DialogResult<Action> {
+        let max_rows = 14usize;
+        match key.code {
+            KeyCode::Esc => DialogResult::Cancel,
+            KeyCode::Up | KeyCode::Char('p') if key.code == KeyCode::Up || key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.selected_index = self.selected_index.saturating_sub(1);
+                if self.selected_index < self.scroll_offset {
+                    self.scroll_offset = self.selected_index;
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Down | KeyCode::Char('n') if key.code == KeyCode::Down || key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if !self.matches.is_empty() {
+                    self.selected_index = (self.selected_index + 1).min(self.matches.len() - 1);
+                    if self.selected_index >= self.scroll_offset + max_rows {
+                        self.scroll_offset = self.selected_index.saturating_sub(max_rows - 1);
+                    }
+                }
+                DialogResult::Pending
+            }
+            KeyCode::Enter => {
+                if let Some(m) = self.matches.get(self.selected_index).cloned() {
+                    DialogResult::Ok(Action::OpenFileAt {
+                        path: m.path,
+                        line: m.line_number,
+                        col: m.col,
+                    })
+                } else {
+                    DialogResult::Cancel
+                }
+            }
+            KeyCode::Backspace => {
+                self.input_text.pop();
+                self.update_search();
+                DialogResult::Pending
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT) => {
+                self.input_text.push(c);
+                self.update_search();
+                DialogResult::Pending
+            }
+            _ => DialogResult::Pending,
+        }
+    }
+
+    fn handle_mouse(&mut self, _mouse: MouseEvent, _x: u16, _y: u16, _w: u16, _h: u16) -> DialogResult<Action> {
+        DialogResult::Pending
+    }
+
+    fn cursor_pos(&self) -> Option<(u16, u16)> {
+        let prefix_len = 3u16; // " > "
+        let text_len: u16 = self.input_text.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        Some((2 + prefix_len + text_len, 2))
     }
 }
 

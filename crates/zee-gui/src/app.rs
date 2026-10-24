@@ -50,7 +50,9 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-r", Replace {}, None),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-f", Replace {}, None),
+        KeyBinding::new("cmd-shift-f", ProjectSearch {}, None),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-p", FuzzyFinder {}, None),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-h", About {}, None),
         #[cfg(target_os = "macos")]
@@ -122,7 +124,9 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-r", Replace {}, None),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-shift-f", Replace {}, None),
+        KeyBinding::new("ctrl-shift-f", ProjectSearch {}, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-p", FuzzyFinder {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-h", About {}, None),
         #[cfg(not(target_os = "macos"))]
@@ -162,6 +166,48 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-alt-r", RefreshFileTree {}, None),
     ]);
+
+    // Custom keybindings from config.toml [keybindings]
+    for (key, action_str) in &config.keybindings {
+        let action_name = action_str.trim().to_lowercase().replace([' ', '-'], "_");
+        let binding = match action_name.as_str() {
+            "fuzzy_finder" | "quick_open" => Some(KeyBinding::new(key.as_str(), FuzzyFinder {}, None)),
+            "project_search" | "find_in_files" => Some(KeyBinding::new(key.as_str(), ProjectSearch {}, None)),
+            "convert_tabs_to_spaces" => Some(KeyBinding::new(key.as_str(), ConvertTabsToSpaces {}, None)),
+            "convert_spaces_to_tabs" => Some(KeyBinding::new(key.as_str(), ConvertSpacesToTabs {}, None)),
+            "new_tab" => Some(KeyBinding::new(key.as_str(), NewTab {}, None)),
+            "new_window" => Some(KeyBinding::new(key.as_str(), NewWindow {}, None)),
+            "open" => Some(KeyBinding::new(key.as_str(), Open {}, None)),
+            "open_folder" => Some(KeyBinding::new(key.as_str(), OpenFolder {}, None)),
+            "save" => Some(KeyBinding::new(key.as_str(), Save {}, None)),
+            "save_as" => Some(KeyBinding::new(key.as_str(), SaveAs {}, None)),
+            "close_tab" => Some(KeyBinding::new(key.as_str(), CloseTab {}, None)),
+            "quit" => Some(KeyBinding::new(key.as_str(), Quit {}, None)),
+            "undo" => Some(KeyBinding::new(key.as_str(), Undo {}, None)),
+            "redo" => Some(KeyBinding::new(key.as_str(), Redo {}, None)),
+            "cut" => Some(KeyBinding::new(key.as_str(), Cut {}, None)),
+            "copy" => Some(KeyBinding::new(key.as_str(), Copy {}, None)),
+            "paste" => Some(KeyBinding::new(key.as_str(), Paste {}, None)),
+            "find" => Some(KeyBinding::new(key.as_str(), Find {}, None)),
+            "replace" => Some(KeyBinding::new(key.as_str(), Replace {}, None)),
+            "select_all" => Some(KeyBinding::new(key.as_str(), SelectAll {}, None)),
+            "toggle_comment" => Some(KeyBinding::new(key.as_str(), ToggleComment {}, None)),
+            "next_tab" => Some(KeyBinding::new(key.as_str(), NextTab {}, None)),
+            "prev_tab" => Some(KeyBinding::new(key.as_str(), PrevTab {}, None)),
+            "toggle_sidebar" => Some(KeyBinding::new(key.as_str(), ToggleSidebar {}, None)),
+            "toggle_files" => Some(KeyBinding::new(key.as_str(), ToggleFiles {}, None)),
+            "toggle_outline" => Some(KeyBinding::new(key.as_str(), ToggleOutline {}, None)),
+            "refresh_files" => Some(KeyBinding::new(key.as_str(), RefreshFileTree {}, None)),
+            "go_to_line" => Some(KeyBinding::new(key.as_str(), GoToLine {}, None)),
+            "zoom_in" => Some(KeyBinding::new(key.as_str(), ZoomIn {}, None)),
+            "zoom_out" => Some(KeyBinding::new(key.as_str(), ZoomOut {}, None)),
+            "reset_zoom" => Some(KeyBinding::new(key.as_str(), ResetZoom {}, None)),
+            _ => None,
+        };
+        if let Some(b) = binding {
+            app.bind_keys(vec![b]);
+        }
+    }
 
     // App-level action handlers to handle actions when no window is open or globally
     let config_new_tab = config.clone();
@@ -913,6 +959,7 @@ pub fn build_native_menus(
                     MenuItem::action(i18n.get("menu.file.new_window"), NewWindow {}),
                     MenuItem::action(i18n.get("menu.file.open"), Open {}),
                     MenuItem::action(i18n.get("menu.file.open_folder"), OpenFolder {}),
+                    MenuItem::action(i18n.get("menu.file.fuzzy_finder"), FuzzyFinder {}),
                     MenuItem::action(i18n.get("menu.file.open_gdrive"), OpenGoogleDrive {}),
                     MenuItem::submenu(Menu {
                         name: i18n.get("menu.file.open_recent").into(),
@@ -956,8 +1003,12 @@ pub fn build_native_menus(
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.edit.find"), Find {}),
                 MenuItem::action(i18n.get("menu.edit.replace"), Replace {}),
+                MenuItem::action(i18n.get("menu.edit.project_search"), ProjectSearch {}),
                 MenuItem::action(i18n.get("menu.edit.select_all"), SelectAll {}),
                 MenuItem::action(i18n.get("menu.edit.toggle_comment"), ToggleComment {}),
+                MenuItem::separator(),
+                MenuItem::action(i18n.get("menu.edit.convert_tabs_to_spaces"), ConvertTabsToSpaces {}),
+                MenuItem::action(i18n.get("menu.edit.convert_spaces_to_tabs"), ConvertSpacesToTabs {}),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.edit.format_document"), FormatDocument {}),
                 MenuItem::action(i18n.get("menu.edit.sort_lines"), SortLines {}),
@@ -1043,13 +1094,14 @@ pub fn build_native_menus(
 
 actions!(zee, [
     // App/File
-    About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, OpenGoogleDrive, Save, SaveAs, CloseTab,
+    About, CheckForUpdates, OpenSettings, Quit, Exit, New, NewTab, NewWindow, Open, OpenFolder, OpenGoogleDrive, FuzzyFinder, Save, SaveAs, CloseTab,
     ReloadFile, ClearRecent,
     ToggleTrimTrailingWhitespace, ToggleEnsureFinalNewline,
     ExportConfig, ExportAll, ImportConfig, ManagePlugins, OpenPluginsFolder, OpenTemplatesFolder,
 
     // Edit
-    Undo, Redo, Cut, Copy, Paste, Find, Replace, SelectAll, ToggleComment,
+    Undo, Redo, Cut, Copy, Paste, Find, Replace, ProjectSearch, SelectAll, ToggleComment,
+    ConvertTabsToSpaces, ConvertSpacesToTabs,
     FormatDocument, SortLines,
     // Tabs
     NextTab, PrevTab,

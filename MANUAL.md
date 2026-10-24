@@ -146,6 +146,7 @@ In the desktop GUI, hold the `Alt` key (`Option` on macOS) while dragging the mo
 | New Tab / 新規タブ | `⌘T` | `Ctrl+T` |
 | New Window / 新規ウィンドウ (GUI) | `⌘N` | `Ctrl+N` |
 | Open File / ファイルを開く | `⌘O` | `Ctrl+O` |
+| Quick Open (Fuzzy Finder) / クイックオープン | `⌘P` | `Ctrl+P` |
 | Open Recent / 最近開いたファイル | `File > Open Recent` | `File > Open Recent` |
 | Reload File / ファイル再読み込み | `⌘Shift+R` | `Ctrl+Shift+R` |
 | Save / 保存 | `⌘S` | `Ctrl+S` |
@@ -165,7 +166,10 @@ In the desktop GUI, hold the `Alt` key (`Option` on macOS) while dragging the mo
 | Select All / すべて選択 | `⌘A` | `Ctrl+A` |
 | Toggle Comment / コメント切り替え | `⌘/` | `Ctrl+/` |
 | Find / 検索 | `⌘F` | `Ctrl+F` |
-| Find & Replace / 置換 | `⌘R` / `⌘Shift+F` | `Ctrl+R` / `Ctrl+Shift+F` |
+| Replace / 置換 | `⌘R` | `Ctrl+R` |
+| Find in Files (Project Search) / プロジェクト全体検索 | `⌘Shift+F` | `Ctrl+Shift+F` |
+| Convert Tabs to Spaces / タブをスペースに変換 | `Edit > Convert Tabs to Spaces` | `Edit > Convert Tabs to Spaces` |
+| Convert Spaces to Tabs / スペースをタブに変換 | `Edit > Convert Spaces to Tabs` | `Edit > Convert Spaces to Tabs` |
 
 ### View & Window Navigation / 表示・ナビゲーション
 
@@ -255,6 +259,13 @@ sidebar_position = "right"
 # Font size and line height for GUI editor / GUIフォントサイズ
 font_size = 13.0
 line_height = 20.0
+
+# Keybinding Overrides / キーバインドの自由カスタマイズ
+[keybindings]
+# "ctrl-p" = "fuzzy_finder"
+# "ctrl-shift-f" = "project_search"
+# "ctrl-s" = "save"
+# "alt-d" = "toggle_sidebar"
 ```
 
 ---

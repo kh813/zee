@@ -1465,6 +1465,76 @@ impl Editor {
         }
     }
 
+    pub fn convert_tabs_to_spaces(&mut self, tab_size: usize) {
+        let spaces = " ".repeat(tab_size.max(1));
+        self.transform_selection_or_buffer(|text| text.replace('\t', &spaces));
+    }
+
+    pub fn convert_spaces_to_tabs(&mut self, tab_size: usize) {
+        let spaces = " ".repeat(tab_size.max(1));
+        self.transform_selection_or_buffer(|text| text.replace(&spaces, "\t"));
+    }
+
+    pub fn insert_newline_with_auto_indent(&mut self, tab_size: usize, expand_tab: bool) {
+        if let Some(range) = self.selection.clone() {
+            self.delete(range);
+        }
+
+        if self.rope.len_lines() == 0 {
+            self.insert(self.cursor, "\n");
+            return;
+        }
+
+        let cur_line_idx = self.rope.char_to_line(self.cursor);
+        let line_start_char = self.rope.line_to_char(cur_line_idx);
+        let cur_line_str = self.rope.line(cur_line_idx).to_string();
+        let col = self.cursor.saturating_sub(line_start_char);
+
+        let before_cursor: String = cur_line_str.chars().take(col).collect();
+        let after_cursor: String = cur_line_str.chars().skip(col).collect();
+
+        let base_indent: String = cur_line_str
+            .chars()
+            .take_while(|c| (*c == ' ' || *c == '\t') && *c != '\r' && *c != '\n')
+            .collect();
+
+        let one_indent_unit = if expand_tab {
+            " ".repeat(tab_size.max(1))
+        } else {
+            "\t".to_string()
+        };
+
+        let trimmed_before = before_cursor.trim_end();
+        let trimmed_after = after_cursor.trim_start();
+
+        // Case 1: Cursor is between matching brackets: {} or () or []
+        let is_bracket_pair = (trimmed_before.ends_with('{') && trimmed_after.starts_with('}'))
+            || (trimmed_before.ends_with('(') && trimmed_after.starts_with(')'))
+            || (trimmed_before.ends_with('[') && trimmed_after.starts_with(']'));
+
+        if is_bracket_pair {
+            let to_insert = format!("\n{}{}\n{}", base_indent, one_indent_unit, base_indent);
+            self.insert(self.cursor, &to_insert);
+            self.cursor = line_start_char + before_cursor.chars().count() + 1 + base_indent.chars().count() + one_indent_unit.chars().count();
+            return;
+        }
+
+        // Case 2: Block opener: {, (, [, or :
+        let opens_block = trimmed_before.ends_with('{')
+            || trimmed_before.ends_with('(')
+            || trimmed_before.ends_with('[')
+            || trimmed_before.ends_with(':');
+
+        let next_indent = if opens_block {
+            format!("{}{}", base_indent, one_indent_unit)
+        } else {
+            base_indent
+        };
+
+        let to_insert = format!("\n{}", next_indent);
+        self.insert(self.cursor, &to_insert);
+    }
+
     pub fn toggle_comment(&mut self) -> bool {
         use crate::syntax::CommentSyntax;
 
@@ -3925,6 +3995,43 @@ mod tests {
         editor.insert(0, "plain text line\n");
         assert!(!editor.toggle_comment());
         assert_eq!(editor.rope.to_string(), "plain text line\n");
+    }
+
+    #[test]
+    fn test_auto_indent_continuation() {
+        let mut editor = Editor::new();
+        editor.insert(0, "    line one");
+        editor.cursor = editor.rope.len_chars();
+        editor.insert_newline_with_auto_indent(4, true);
+        assert_eq!(editor.rope.to_string(), "    line one\n    ");
+    }
+
+    #[test]
+    fn test_auto_indent_block_opener() {
+        let mut editor = Editor::new();
+        editor.insert(0, "    def foo():");
+        editor.cursor = editor.rope.len_chars();
+        editor.insert_newline_with_auto_indent(4, true);
+        assert_eq!(editor.rope.to_string(), "    def foo():\n        ");
+    }
+
+    #[test]
+    fn test_auto_indent_between_brackets() {
+        let mut editor = Editor::new();
+        editor.insert(0, "    fn test() {}");
+        editor.cursor = 15; // right between { and }
+        editor.insert_newline_with_auto_indent(4, true);
+        assert_eq!(editor.rope.to_string(), "    fn test() {\n        \n    }");
+    }
+
+    #[test]
+    fn test_tab_and_space_conversion() {
+        let mut editor = Editor::new();
+        editor.insert(0, "\t\tlet x = 1;\n");
+        editor.convert_tabs_to_spaces(4);
+        assert_eq!(editor.rope.to_string(), "        let x = 1;\n");
+        editor.convert_spaces_to_tabs(4);
+        assert_eq!(editor.rope.to_string(), "\t\tlet x = 1;\n");
     }
 }
 

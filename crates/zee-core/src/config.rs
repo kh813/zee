@@ -37,6 +37,9 @@ pub struct Config {
     // Update channel
     #[serde(default)]
     pub include_prerelease: bool,
+    // Custom user keybindings (shortcut string -> action name)
+    #[serde(default)]
+    pub keybindings: std::collections::HashMap<String, String>,
 }
 
 pub fn default_plugin_registries() -> Vec<String> {
@@ -67,11 +70,17 @@ impl Default for Config {
             gdrive_client_id: None,
             gdrive_client_secret: None,
             include_prerelease: false,
+            keybindings: std::collections::HashMap::new(),
         }
     }
 }
 
 impl Config {
+    pub fn get_keybinding_action(&self, key: &str) -> Option<crate::Action> {
+        let normalized_key = key.trim().to_lowercase();
+        self.keybindings.get(&normalized_key)
+            .and_then(|action_name| crate::Action::from_name(action_name))
+    }
     pub fn load() -> Self {
         let mut config = Config::default();
         if let Some(path) = Config::config_file_path() {

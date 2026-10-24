@@ -15,6 +15,7 @@ pub mod recent;
 pub mod template;
 pub mod gdrive;
 pub mod single_instance;
+pub mod fuzzy;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -25,6 +26,7 @@ pub enum Action {
     Open,
     OpenFolder,
     OpenGoogleDrive,
+    FuzzyFinder,
     ReloadFile,
     OpenRecent(std::path::PathBuf),
     ClearRecent,
@@ -46,8 +48,11 @@ pub enum Action {
     Paste,
     Find,
     Replace,
+    ProjectSearch,
     SelectAll,
     ToggleComment,
+    ConvertTabsToSpaces,
+    ConvertSpacesToTabs,
     FormatDocument,
     SortLines,
     PluginCommand(String),
@@ -78,6 +83,44 @@ pub enum Action {
     OpenSettings,
 
     NoOp,
+}
+
+impl Action {
+    pub fn from_name(s: &str) -> Option<Self> {
+        let normalized = s.trim().to_lowercase().replace([' ', '-'], "_");
+        match normalized.as_str() {
+            "new" => Some(Action::New),
+            "open" => Some(Action::Open),
+            "open_folder" => Some(Action::OpenFolder),
+            "fuzzy_finder" | "quick_open" => Some(Action::FuzzyFinder),
+            "project_search" | "find_in_files" => Some(Action::ProjectSearch),
+            "save" => Some(Action::Save),
+            "save_as" => Some(Action::SaveAs),
+            "close" => Some(Action::Close),
+            "exit" | "quit" => Some(Action::Exit),
+            "undo" => Some(Action::Undo),
+            "redo" => Some(Action::Redo),
+            "cut" => Some(Action::Cut),
+            "copy" => Some(Action::Copy),
+            "paste" => Some(Action::Paste),
+            "find" => Some(Action::Find),
+            "replace" => Some(Action::Replace),
+            "select_all" => Some(Action::SelectAll),
+            "toggle_comment" => Some(Action::ToggleComment),
+            "convert_tabs_to_spaces" => Some(Action::ConvertTabsToSpaces),
+            "convert_spaces_to_tabs" => Some(Action::ConvertSpacesToTabs),
+            "format_document" => Some(Action::FormatDocument),
+            "sort_lines" => Some(Action::SortLines),
+            "goto_line" | "go_to_line" => Some(Action::GoToLine),
+            "toggle_sidebar" => Some(Action::ToggleSidebar),
+            "toggle_vi_mode" => Some(Action::ToggleViMode),
+            "toggle_line_numbers" => Some(Action::ToggleLineNumbers),
+            "toggle_word_wrap" => Some(Action::ToggleWordWrap),
+            "open_settings" | "settings" | "preferences" => Some(Action::OpenSettings),
+            "about" => Some(Action::About),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -520,6 +520,7 @@ impl App {
             },
             MenuItem::Action { label: i18n.get("menu.file.open").to_string(), action: Action::Open, shortcut: Some("Ctrl+O".to_string()) },
             MenuItem::Action { label: i18n.get("menu.file.open_folder").to_string(), action: Action::OpenFolder, shortcut: Some("Ctrl+Shift+O".to_string()) },
+            MenuItem::Action { label: i18n.get("menu.file.fuzzy_finder").to_string(), action: Action::FuzzyFinder, shortcut: Some("Ctrl+P".to_string()) },
             MenuItem::Action { label: i18n.get("menu.file.open_gdrive").to_string(), action: Action::OpenGoogleDrive, shortcut: None },
             MenuItem::Separator,
             MenuItem::Action { label: i18n.get("menu.file.reload").to_string(), action: Action::ReloadFile, shortcut: Some("Ctrl+Shift+R".to_string()) },
@@ -640,12 +641,16 @@ impl App {
                 MenuItem::Separator,
                 MenuItem::Action { label: i18n.get("menu.edit.find").to_string(), action: Action::Find, shortcut: Some("Ctrl+F".to_string()) },
                 MenuItem::Action { label: i18n.get("menu.edit.replace").to_string(), action: Action::Replace, shortcut: Some("Ctrl+R".to_string()) },
+                MenuItem::Action { label: i18n.get("menu.edit.project_search").to_string(), action: Action::ProjectSearch, shortcut: Some("Ctrl+Shift+F".to_string()) },
                 MenuItem::Separator,
                 MenuItem::Action { label: i18n.get("menu.edit.select_all").to_string(), action: Action::SelectAll, shortcut: Some("Ctrl+A".to_string()) },
                 MenuItem::Action { label: i18n.get("menu.edit.toggle_comment").to_string(), action: Action::ToggleComment, shortcut: Some("Ctrl+/".to_string()) },
                 MenuItem::Separator,
                 MenuItem::Action { label: i18n.get("menu.edit.format_document").to_string(), action: Action::FormatDocument, shortcut: None },
                 MenuItem::Action { label: i18n.get("menu.edit.sort_lines").to_string(), action: Action::SortLines, shortcut: None },
+                MenuItem::Separator,
+                MenuItem::Action { label: i18n.get("menu.edit.convert_tabs_to_spaces").to_string(), action: Action::ConvertTabsToSpaces, shortcut: None },
+                MenuItem::Action { label: i18n.get("menu.edit.convert_spaces_to_tabs").to_string(), action: Action::ConvertSpacesToTabs, shortcut: None },
             ]),
             Menu::new(i18n.get("menu.view"), vec![
                 MenuItem::Action { label: i18n.get("menu.view.go_to_line").to_string(), action: Action::GoToLine, shortcut: Some("Ctrl+G".to_string()) },
@@ -1035,12 +1040,52 @@ impl App {
             return;
         }
 
+        // Custom keybinding overrides from config.toml [keybindings]
+        if self.focus != Focus::Dialog {
+            let mut key_str = String::new();
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                key_str.push_str("ctrl-");
+            }
+            if key.modifiers.contains(KeyModifiers::ALT) {
+                key_str.push_str("alt-");
+            }
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                key_str.push_str("shift-");
+            }
+            let key_code_str = match key.code {
+                KeyCode::Char(c) => Some(c.to_lowercase().to_string()),
+                KeyCode::F(n) => Some(format!("f{}", n)),
+                KeyCode::Esc => Some("escape".to_string()),
+                KeyCode::Enter => Some("enter".to_string()),
+                KeyCode::Tab => Some("tab".to_string()),
+                KeyCode::Backspace => Some("backspace".to_string()),
+                KeyCode::Delete => Some("delete".to_string()),
+                KeyCode::Up => Some("up".to_string()),
+                KeyCode::Down => Some("down".to_string()),
+                KeyCode::Left => Some("left".to_string()),
+                KeyCode::Right => Some("right".to_string()),
+                KeyCode::PageUp => Some("pageup".to_string()),
+                KeyCode::PageDown => Some("pagedown".to_string()),
+                KeyCode::Home => Some("home".to_string()),
+                KeyCode::End => Some("end".to_string()),
+                _ => None,
+            };
+            if let Some(code_s) = key_code_str {
+                key_str.push_str(&code_s);
+                if let Some(custom_action) = self.config.get_keybinding_action(&key_str) {
+                    self.perform_action(custom_action);
+                    return;
+                }
+            }
+        }
+
         // Global shortcuts (Ctrl+...) only if not in a dialog
         if self.focus != Focus::Dialog && key.modifiers == KeyModifiers::CONTROL {
             match key.code {
                 KeyCode::Char('q') => { self.perform_action(Action::Exit); return; }
                 KeyCode::Char('t') | KeyCode::Char('n') => { self.perform_action(Action::New); return; }
                 KeyCode::Char('o') => { self.perform_action(Action::Open); return; }
+                KeyCode::Char('p') => { self.perform_action(Action::FuzzyFinder); return; }
                 KeyCode::Char('s') => { self.perform_action(Action::Save); return; }
                 KeyCode::Char('w') => { self.perform_action(Action::Close); return; }
                 KeyCode::Char('z') => { self.perform_action(Action::Undo); return; }
@@ -1084,7 +1129,7 @@ impl App {
         if self.focus != Focus::Dialog && key.modifiers == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
             match key.code {
                 KeyCode::Char('O') | KeyCode::Char('o') => { self.perform_action(Action::OpenFolder); return; }
-                KeyCode::Char('F') | KeyCode::Char('f') => { self.perform_action(Action::Replace); return; }
+                KeyCode::Char('F') | KeyCode::Char('f') => { self.perform_action(Action::ProjectSearch); return; }
                 KeyCode::Char('S') | KeyCode::Char('s') => { self.perform_action(Action::SaveAs); return; }
                 KeyCode::Char('R') | KeyCode::Char('r') => { self.perform_action(Action::ReloadFile); return; }
                 KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('[') | KeyCode::Char('{') => {
@@ -3155,10 +3200,7 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
-                    if let Some(selection) = buffer.selection.take() {
-                        buffer.delete(selection);
-                    }
-                    buffer.insert(buffer.cursor, "\n");
+                    buffer.insert_newline_with_auto_indent(self.config.tab_size, self.config.expand_tab);
                 }
             }
             KeyCode::Tab => {
@@ -3475,8 +3517,28 @@ impl App {
                                 self.focus = Focus::Dialog;
                                 return;
                             }
+                            PendingOp::None => {
+                                self.open_path(&path);
+                            }
                             _ => {}
                         }
+                    }
+                    dialog::Action::OpenFileAt { path, line, col } => {
+                        self.current_dialog = None;
+                        self.pending_op = PendingOp::None;
+                        self.focus = Focus::Editor;
+                        if self.open_path(&path) {
+                            if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                let target_line = line.saturating_sub(1).min(buffer.line_count().saturating_sub(1));
+                                let line_start = buffer.rope.line_to_char(target_line);
+                                let line_len = buffer.rope.line(target_line).len_chars().saturating_sub(1);
+                                buffer.cursor = line_start + col.min(line_len);
+                                buffer.selection = None;
+                                buffer.selection_anchor = None;
+                                self.ensure_cursor_visible();
+                            }
+                        }
+                        return;
                     }
                     dialog::Action::ConfirmLine(line) => {
                         if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
@@ -4392,6 +4454,30 @@ impl App {
                 self.focus = Focus::Dialog;
                 self.pending_op = PendingOp::None;
                 self.current_dialog = Some(Box::new(dialog::GoToLineDialog::new(&self.i18n)));
+            }
+            Action::FuzzyFinder => {
+                self.focus = Focus::Dialog;
+                self.pending_op = PendingOp::None;
+                self.current_dialog = Some(Box::new(dialog::FuzzyFinderDialog::new(&self.sidebar.file_tree.root_path, &self.i18n)));
+            }
+            Action::ProjectSearch => {
+                self.focus = Focus::Dialog;
+                self.pending_op = PendingOp::None;
+                self.current_dialog = Some(Box::new(dialog::ProjectSearchDialog::new(&self.sidebar.file_tree.root_path, &self.i18n)));
+            }
+            Action::ConvertTabsToSpaces => {
+                let tab_size = self.config.tab_size;
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.convert_tabs_to_spaces(tab_size);
+                    self.recompute_layout();
+                }
+            }
+            Action::ConvertSpacesToTabs => {
+                let tab_size = self.config.tab_size;
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.convert_spaces_to_tabs(tab_size);
+                    self.recompute_layout();
+                }
             }
             Action::Exit => {
                 if let Some((idx, buffer)) = self.buffers.iter().enumerate().find(|(_, b)| b.is_modified()) {
@@ -6515,10 +6601,11 @@ mod tests {
         app.handle_key(make_key(KeyCode::Esc));
         assert_eq!(app.focus, Focus::Editor);
 
-        // Open Replace panel with Ctrl+Shift+F
+        // Open Project Search dialog with Ctrl+Shift+F
         app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL | KeyModifiers::SHIFT));
-        assert_eq!(app.focus, Focus::Panel);
-        assert!(app.find_panel.is_replace_mode);
+        assert_eq!(app.focus, Focus::Dialog);
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.focus, Focus::Editor);
 
         // Open Replace panel with Ctrl+R
         app.handle_key(make_ctrl_key(KeyCode::Char('r')));
@@ -8398,6 +8485,95 @@ mod tests {
         // Verify UpdateDialog is now open
         assert!(app.current_dialog.is_some(), "Clicking update badge must open UpdateDialog");
         assert_eq!(app.focus, Focus::Dialog);
+    }
+
+    #[test]
+    fn test_fuzzy_finder_and_project_search_workflows() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        assert_eq!(app.focus, Focus::Editor);
+
+        // 1. Ctrl+P opens Fuzzy Finder dialog
+        app.handle_key(make_ctrl_key(KeyCode::Char('p')));
+        assert_eq!(app.focus, Focus::Dialog);
+        assert!(app.current_dialog.is_some());
+
+        // Cancel with Esc
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.focus, Focus::Editor);
+        assert!(app.current_dialog.is_none());
+
+        // 2. Action::ProjectSearch opens Project Search dialog
+        app.perform_action(Action::ProjectSearch);
+        assert_eq!(app.focus, Focus::Dialog);
+        assert!(app.current_dialog.is_some());
+
+        // Type search query
+        app.handle_key(make_key(KeyCode::Char('m')));
+        app.handle_key(make_key(KeyCode::Char('a')));
+        app.handle_key(make_key(KeyCode::Char('i')));
+        app.handle_key(make_key(KeyCode::Char('n')));
+
+        // Cancel with Esc
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.focus, Focus::Editor);
+        assert!(app.current_dialog.is_none());
+    }
+
+    #[test]
+    fn test_custom_keybinding_overrides() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        // Add a custom keybinding override
+        app.config.keybindings.insert("ctrl-k".to_string(), "fuzzy_finder".to_string());
+
+        // Ctrl+K should now trigger fuzzy_finder and open dialog
+        app.handle_key(make_ctrl_key(KeyCode::Char('k')));
+        assert_eq!(app.focus, Focus::Dialog);
+        assert!(app.current_dialog.is_some());
+
+        // Cancel
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.focus, Focus::Editor);
+    }
+
+    #[test]
+    fn test_auto_indent_on_enter_in_tui() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.tab_size = 4;
+        app.config.expand_tab = true;
+
+        // Type "    fn test() {"
+        let input = "    fn test() {";
+        for c in input.chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+
+        // Press Enter
+        app.handle_key(make_key(KeyCode::Enter));
+
+        // The auto-indent should add continuation indent + 1 level (4 spaces + 4 spaces = 8 spaces)
+        let buffer = &app.buffers[app.active_buffer];
+        let text = buffer.rope.to_string();
+        assert!(text.contains("    fn test() {\n        "), "Auto-indent should indent block opener: {:?}", text);
+    }
+
+    #[test]
+    fn test_tab_spaces_conversion_actions_in_tui() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.tab_size = 4;
+
+        if let Some(buf) = app.buffers.get_mut(app.active_buffer) {
+            buf.insert(0, "\t\thello\n\tworld");
+        }
+
+        // Convert tabs to spaces
+        app.perform_action(Action::ConvertTabsToSpaces);
+        let text = app.buffers[app.active_buffer].rope.to_string();
+        assert_eq!(text, "        hello\n    world");
+
+        // Convert spaces to tabs
+        app.perform_action(Action::ConvertSpacesToTabs);
+        let text2 = app.buffers[app.active_buffer].rope.to_string();
+        assert_eq!(text2, "\t\thello\n\tworld");
     }
 }
 

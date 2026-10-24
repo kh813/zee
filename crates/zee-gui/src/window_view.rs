@@ -1110,6 +1110,34 @@ impl WindowView {
         self.show_dialog(DialogType::GoToLine, Some(window), cx);
     }
 
+    fn handle_fuzzy_finder(&mut self, _: &FuzzyFinder, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_dialog(DialogType::FuzzyFinder, Some(window), cx);
+    }
+
+    fn handle_project_search(&mut self, _: &ProjectSearch, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_dialog(DialogType::ProjectSearch, Some(window), cx);
+    }
+
+    fn handle_convert_tabs_to_spaces(&mut self, _: &ConvertTabsToSpaces, _window: &mut Window, cx: &mut Context<Self>) {
+        let tab_size = self.workspace.read(cx).config.tab_size;
+        self.workspace.update(cx, |w, cx| {
+            if let Some(editor) = w.active_editor_mut() {
+                editor.convert_tabs_to_spaces(tab_size);
+                cx.notify();
+            }
+        });
+    }
+
+    fn handle_convert_spaces_to_tabs(&mut self, _: &ConvertSpacesToTabs, _window: &mut Window, cx: &mut Context<Self>) {
+        let tab_size = self.workspace.read(cx).config.tab_size;
+        self.workspace.update(cx, |w, cx| {
+            if let Some(editor) = w.active_editor_mut() {
+                editor.convert_spaces_to_tabs(tab_size);
+                cx.notify();
+            }
+        });
+    }
+
     fn handle_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         self.show_dialog(DialogType::Settings, Some(window), cx);
     }
@@ -1503,6 +1531,10 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_set_syntax))
             .on_action(cx.listener(Self::handle_set_language))
             .on_action(cx.listener(Self::handle_go_to_line))
+            .on_action(cx.listener(Self::handle_fuzzy_finder))
+            .on_action(cx.listener(Self::handle_project_search))
+            .on_action(cx.listener(Self::handle_convert_tabs_to_spaces))
+            .on_action(cx.listener(Self::handle_convert_spaces_to_tabs))
             .on_action(cx.listener(Self::handle_open_settings))
             .on_action(cx.listener(Self::handle_export_config))
             .on_action(cx.listener(Self::handle_export_all))
@@ -1957,6 +1989,7 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.file.new_window").to_string(), Some("Ctrl+N"), false, NewWindow {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open").to_string(), Some("Ctrl+O"), false, Open {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open_folder").to_string(), Some("Ctrl+Shift+O"), false, OpenFolder {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.fuzzy_finder").to_string(), Some("Ctrl+P"), false, FuzzyFinder {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.file.open_gdrive").to_string(), None, false, OpenGoogleDrive {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.file.reload").to_string(), Some("Ctrl+Shift+R"), false, ReloadFile {}, fg, hover_bg, muted_fg, cx))
@@ -2008,12 +2041,16 @@ impl WindowView {
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.edit.find").to_string(), Some("Ctrl+F"), false, Find {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.edit.replace").to_string(), Some("Ctrl+H"), false, Replace {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.project_search").to_string(), Some("Ctrl+Shift+F"), false, ProjectSearch {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.edit.select_all").to_string(), Some("Ctrl+A"), false, SelectAll {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.edit.toggle_comment").to_string(), Some("Ctrl+/"), false, crate::app::ToggleComment {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.edit.format_document").to_string(), None, false, crate::app::FormatDocument {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.edit.sort_lines").to_string(), None, false, crate::app::SortLines {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_sep(border))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.convert_tabs_to_spaces").to_string(), None, false, crate::app::ConvertTabsToSpaces {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.convert_spaces_to_tabs").to_string(), None, false, crate::app::ConvertSpacesToTabs {}, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_view_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {

@@ -303,37 +303,37 @@ world plugin {
   - [x] Selection highlight, gutter border, and line padding refinements
 
 ## Phase 18: Project Management & Navigation
-- [ ] **File Explorer (Side Bar)**:
-  - [ ] Implement directory scanning in `zee-core`
-  - [ ] Create `FileTreeView` in GUI / `SideBar` in TUI
-  - [ ] Add `Alt+1` shortcut to toggle side bar focus
-- [ ] **Fuzzy Finder (`Ctrl+P`)**:
-  - [ ] Implement fast file indexing and fuzzy matching logic
-  - [ ] Create searchable list dialog for both TUI and GUI
-- [ ] **Recently Opened Files**:
-  - [ ] Persist file history in `config.toml` or separate state file
-  - [ ] Add `File > Recent Files` submenu
-- [ ] **Project-wide Search (`Ctrl+Shift+F`)**:
-  - [ ] Basic "grep" functionality across the current workspace directory
+- [x] **File Explorer (Side Bar)**:
+  - [x] Implement directory scanning in `zee-core`
+  - [x] Create `FileTreeView` in GUI / `SideBar` in TUI
+  - [x] Add `Alt+1` shortcut to toggle side bar focus
+- [x] **Fuzzy Finder (`Ctrl+P` / `Cmd+P`)**:
+  - [x] Implement fast file indexing and fuzzy matching logic
+  - [x] Create searchable list dialog for both TUI and GUI
+- [x] **Recently Opened Files**:
+  - [x] Persist file history in `config.toml` or separate state file
+  - [x] Add `File > Recent Files` submenu
+- [x] **Project-wide Search (`Ctrl+Shift+F` / `Cmd+Shift+F`)**:
+  - [x] Basic "grep" functionality across the current workspace directory with instant jump to match location
 
 ## Phase 19: Advanced Editing & Visuals
-- [ ] **Bracket Matching**:
-  - [ ] Highlight corresponding `()`, `[]`, `{}` pairs
-- [ ] **Auto-indentation**:
-  - [ ] Maintain indentation level on newline
-  - [ ] Language-specific indentation rules (e.g., after `{`)
-- [ ] **Comment Toggle (`Ctrl+/`)**:
-  - [ ] Support single-line and block comment toggling based on syntax
-- [ ] **Soft Tabs / Tab Conversion**:
-  - [ ] Option to use spaces instead of tabs
-  - [ ] "Convert Tabs to Spaces" action
+- [x] **Bracket Matching**:
+  - [x] Highlight corresponding `()`, `[]`, `{}` pairs
+- [x] **Auto-indentation**:
+  - [x] Maintain indentation level on newline
+  - [x] Language-specific / syntax indentation continuation and block opener expansion (`{`, `(`, `[`, `:`)
+- [x] **Comment Toggle (`Ctrl+/` / `Cmd+/`)**:
+  - [x] Support single-line and block comment toggling based on syntax
+- [x] **Soft Tabs / Tab Conversion**:
+  - [x] Option to use spaces instead of tabs
+  - [x] "Convert Tabs to Spaces" and "Convert Spaces to Tabs" actions
 
 ## Phase 20: Settings & Ecosystem
-- [ ] **Settings Dialog (UI-based Configuration)**:
-  - [ ] Visual editor for `config.toml` settings
-  - [ ] Live preview for theme and font changes
-- [ ] **Keybinding Customization**:
-  - [ ] Allow users to override default shortcuts in `config.toml`
+- [x] **Settings Dialog (UI-based Configuration)**:
+  - [x] Visual editor for `config.toml` settings
+  - [x] Live preview for theme and font changes
+- [x] **Keybinding Customization**:
+  - [x] Allow users to override default shortcuts in `config.toml` `[keybindings]`
 - [x] **CI/CD & Compilation (GitHub Actions)**:
   - [x] Multi-platform compilation workflow (`release.yml`) for TUI (`zee`) and GUI (`zee-gui`) across macOS, Linux, and Windows
   - [x] Artifact upload and release packaging for tagged releases

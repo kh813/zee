@@ -25,6 +25,8 @@ pub enum DialogType {
     About,
     Update,
     GoToLine,
+    FuzzyFinder,
+    ProjectSearch,
     #[allow(dead_code)]
     OpenFile,
     #[allow(dead_code)]
@@ -89,6 +91,15 @@ pub struct Dialog {
     gdrive_setup_active_input: usize, // 0 for client_id, 1 for client_secret
     gdrive_info_message: Option<String>,
     gdrive_pending_reload: bool,
+    // FuzzyFinder state
+    fuzzy_workspace_files: Vec<std::path::PathBuf>,
+    fuzzy_filtered_files: Vec<std::path::PathBuf>,
+    fuzzy_selected_idx: usize,
+    fuzzy_scroll_handle: ScrollHandle,
+    // ProjectSearch state
+    project_search_matches: Vec<zee_core::search::ProjectSearchMatch>,
+    project_search_selected_idx: usize,
+    project_search_scroll_handle: ScrollHandle,
 }
 
 #[derive(Clone)]
@@ -128,6 +139,18 @@ impl Dialog {
 
         let is_update = matches!(dialog_type, DialogType::Update);
 
+        let mut fuzzy_workspace_files = Vec::new();
+        let mut fuzzy_filtered_files = Vec::new();
+        if matches!(dialog_type, DialogType::FuzzyFinder) {
+            let root = workspace.read(cx).file_tree.root_path.clone();
+            fuzzy_workspace_files = zee_core::fuzzy::index_workspace_files(&root, 5000);
+            fuzzy_filtered_files = zee_core::fuzzy::filter_and_rank_files("", &fuzzy_workspace_files)
+                .into_iter()
+                .take(50)
+                .map(|(p, _)| p.clone())
+                .collect();
+        }
+
         let mut this = Self {
             workspace,
             i18n,
@@ -163,6 +186,13 @@ impl Dialog {
             gdrive_setup_active_input: 0,
             gdrive_info_message: None,
             gdrive_pending_reload: false,
+            fuzzy_workspace_files,
+            fuzzy_filtered_files,
+            fuzzy_selected_idx: 0,
+            fuzzy_scroll_handle: ScrollHandle::new(),
+            project_search_matches: Vec::new(),
+            project_search_selected_idx: 0,
+            project_search_scroll_handle: ScrollHandle::new(),
         };
         this.refresh_files();
         if is_update {
@@ -183,6 +213,8 @@ impl Dialog {
             DialogType::PluginManager => (720.0, 680.0),
             DialogType::Settings => (620.0, 660.0),
             DialogType::GoogleDrive => (640.0, 660.0),
+            DialogType::FuzzyFinder => (650.0, 480.0),
+            DialogType::ProjectSearch => (720.0, 520.0),
             _ => (460.0, 580.0),
         }
     }
@@ -594,6 +626,27 @@ impl Dialog {
                 }
                 cx.notify();
             }
+            DialogType::FuzzyFinder => {
+                self.input_text.push_str(trimmed);
+                self.fuzzy_filtered_files = zee_core::fuzzy::filter_and_rank_files(&self.input_text, &self.fuzzy_workspace_files)
+                    .into_iter()
+                    .take(50)
+                    .map(|(p, _)| p.clone())
+                    .collect();
+                self.fuzzy_selected_idx = 0;
+                cx.notify();
+            }
+            DialogType::ProjectSearch => {
+                self.input_text.push_str(trimmed);
+                let root = self.workspace.read(cx).file_tree.root_path.clone();
+                let q = zee_core::search::SearchQuery {
+                    pattern: self.input_text.clone(),
+                    flags: Default::default(),
+                };
+                self.project_search_matches = zee_core::search::search_project(&root, &q, 100);
+                self.project_search_selected_idx = 0;
+                cx.notify();
+            }
             _ => {
                 self.input_text.push_str(trimmed);
                 cx.notify();
@@ -880,6 +933,10 @@ impl Dialog {
                         self.gdrive_selected_idx = self.gdrive_selected_idx.saturating_sub(1);
                         self.gdrive_error = None;
                     }
+                } else if matches!(self.dialog_type, DialogType::FuzzyFinder) {
+                    self.fuzzy_selected_idx = self.fuzzy_selected_idx.saturating_sub(1);
+                } else if matches!(self.dialog_type, DialogType::ProjectSearch) {
+                    self.project_search_selected_idx = self.project_search_selected_idx.saturating_sub(1);
                 }
             }
             "down" => {
@@ -893,6 +950,14 @@ impl Dialog {
                     } else if !self.gdrive_items.is_empty() {
                         self.gdrive_selected_idx = (self.gdrive_selected_idx + 1).min(self.gdrive_items.len() - 1);
                         self.gdrive_error = None;
+                    }
+                } else if matches!(self.dialog_type, DialogType::FuzzyFinder) {
+                    if !self.fuzzy_filtered_files.is_empty() {
+                        self.fuzzy_selected_idx = (self.fuzzy_selected_idx + 1).min(self.fuzzy_filtered_files.len() - 1);
+                    }
+                } else if matches!(self.dialog_type, DialogType::ProjectSearch) {
+                    if !self.project_search_matches.is_empty() {
+                        self.project_search_selected_idx = (self.project_search_selected_idx + 1).min(self.project_search_matches.len() - 1);
                     }
                 }
             }
@@ -928,6 +993,23 @@ impl Dialog {
                         self.gdrive_current_folder_id = self.gdrive_folder_stack.last().and_then(|(id, _)| id.clone());
                         self.load_gdrive_files(cx);
                     }
+                } else if matches!(self.dialog_type, DialogType::FuzzyFinder) {
+                    self.input_text.pop();
+                    self.fuzzy_filtered_files = zee_core::fuzzy::filter_and_rank_files(&self.input_text, &self.fuzzy_workspace_files)
+                        .into_iter()
+                        .take(50)
+                        .map(|(p, _)| p.clone())
+                        .collect();
+                    self.fuzzy_selected_idx = 0;
+                } else if matches!(self.dialog_type, DialogType::ProjectSearch) {
+                    self.input_text.pop();
+                    let root = self.workspace.read(cx).file_tree.root_path.clone();
+                    let q = zee_core::search::SearchQuery {
+                        pattern: self.input_text.clone(),
+                        flags: Default::default(),
+                    };
+                    self.project_search_matches = zee_core::search::search_project(&root, &q, 100);
+                    self.project_search_selected_idx = 0;
                 } else {
                     self.input_text.pop();
                 }
@@ -1007,6 +1089,23 @@ impl Dialog {
                         self.gdrive_search_query.push_str(k);
                         self.load_gdrive_files(cx);
                     }
+                } else if matches!(self.dialog_type, DialogType::FuzzyFinder) {
+                    self.input_text.push_str(k);
+                    self.fuzzy_filtered_files = zee_core::fuzzy::filter_and_rank_files(&self.input_text, &self.fuzzy_workspace_files)
+                        .into_iter()
+                        .take(50)
+                        .map(|(p, _)| p.clone())
+                        .collect();
+                    self.fuzzy_selected_idx = 0;
+                } else if matches!(self.dialog_type, DialogType::ProjectSearch) {
+                    self.input_text.push_str(k);
+                    let root = self.workspace.read(cx).file_tree.root_path.clone();
+                    let q = zee_core::search::SearchQuery {
+                        pattern: self.input_text.clone(),
+                        flags: Default::default(),
+                    };
+                    self.project_search_matches = zee_core::search::search_project(&root, &q, 100);
+                    self.project_search_selected_idx = 0;
                 } else {
                     self.input_text.push_str(k);
                 }
@@ -1025,6 +1124,29 @@ impl Dialog {
                         if let Some(editor) = w.active_editor_mut() {
                             editor.cursor = editor.rope.line_to_char(line.saturating_sub(1));
                             editor.selection = None;
+                        }
+                    });
+                }
+            }
+            DialogType::FuzzyFinder => {
+                if let Some(path) = self.fuzzy_filtered_files.get(self.fuzzy_selected_idx).cloned() {
+                    self.workspace.update(cx, |w, cx| {
+                        if let Ok(editor) = zee_core::buffer::Editor::from_file(&path) {
+                            w.add_editor(editor);
+                            w.update_outline();
+                            cx.notify();
+                        }
+                    });
+                }
+            }
+            DialogType::ProjectSearch => {
+                if let Some(m) = self.project_search_matches.get(self.project_search_selected_idx).cloned() {
+                    self.workspace.update(cx, |w, cx| {
+                        if let Ok(editor) = zee_core::buffer::Editor::from_file(&m.path) {
+                            w.add_editor(editor);
+                            w.jump_to_line_col(m.line_number.saturating_sub(1), m.col);
+                            w.update_outline();
+                            cx.notify();
                         }
                     });
                 }
@@ -1595,6 +1717,8 @@ impl Dialog {
                             )
                     )
             }
+            DialogType::FuzzyFinder => self.render_fuzzy_finder(cx),
+            DialogType::ProjectSearch => self.render_project_search(cx),
             DialogType::OpenFile | DialogType::SaveAs => {
                 let title = if matches!(self.dialog_type, DialogType::OpenFile) {
                     self.i18n.get("dialog.open_file")
@@ -5173,6 +5297,339 @@ impl Dialog {
         } else {
             format!("{:.1} MB", size as f32 / (1024.0 * 1024.0))
         }
+    }
+
+    fn render_fuzzy_finder(&self, cx: &mut Context<Self>) -> Div {
+        let workspace = self.workspace.read(cx);
+        let theme = &workspace.theme;
+        let fg = led_color_to_gpui(theme.editor.foreground);
+        let accent = led_color_to_gpui(theme.syntax.keyword.unwrap_or(theme.editor.cursor));
+        let button_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.1);
+        let button_hover = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.2);
+        let border_color = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
+        let input_bg = led_color_to_gpui(theme.editor.background);
+        let root = &workspace.file_tree.root_path;
+
+        let mut list = div()
+            .id("fuzzy-list")
+            .track_scroll(&self.fuzzy_scroll_handle)
+            .w_full()
+            .h(px(320.0))
+            .overflow_y_scroll()
+            .bg(input_bg)
+            .border_1()
+            .border_color(border_color)
+            .rounded_md()
+            .p_1()
+            .flex()
+            .flex_col()
+            .gap_0p5();
+
+        if self.fuzzy_filtered_files.is_empty() {
+            list = list.child(
+                div()
+                    .p_4()
+                    .flex()
+                    .justify_center()
+                    .text_color(with_alpha(fg, 0.45))
+                    .text_size(px(13.0))
+                    .child(if self.input_text.is_empty() { "No files in workspace" } else { "No matching files" })
+            );
+        } else {
+            for (i, path) in self.fuzzy_filtered_files.iter().enumerate() {
+                let is_selected = i == self.fuzzy_selected_idx;
+                let rel_path = path.strip_prefix(root).unwrap_or(path);
+                let file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| rel_path.to_string_lossy().to_string());
+                let parent_dir = rel_path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+
+                let item_bg = if is_selected {
+                    with_alpha(accent, 0.2)
+                } else {
+                    gpui::rgba(0x00000000)
+                };
+
+                let item = div()
+                    .id(ElementId::NamedInteger("fuzzy-item".into(), i as u64))
+                    .w_full()
+                    .px_2p5()
+                    .py_1p5()
+                    .rounded_sm()
+                    .bg(item_bg)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(button_hover))
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                        this.fuzzy_selected_idx = i;
+                        this.confirm(cx);
+                    }))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(if is_selected { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                                    .text_color(if is_selected { accent } else { fg })
+                                    .child(file_name)
+                            )
+                            .child(
+                                if !parent_dir.is_empty() {
+                                    div()
+                                        .text_size(px(11.5))
+                                        .text_color(with_alpha(fg, 0.45))
+                                        .child(parent_dir)
+                                } else {
+                                    div()
+                                }
+                            )
+                    );
+                list = list.child(item);
+            }
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(15.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(self.i18n.get("dialog.fuzzy_finder").to_string())
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(with_alpha(fg, 0.5))
+                            .child(format!("{} files", self.fuzzy_filtered_files.len()))
+                    )
+            )
+            .child(
+                div()
+                    .h(px(34.0))
+                    .bg(input_bg)
+                    .border_1()
+                    .border_color(border_color)
+                    .rounded_md()
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .child(
+                        if self.input_text.is_empty() {
+                            div()
+                                .text_color(with_alpha(fg, 0.45))
+                                .text_size(px(13.0))
+                                .child(self.i18n.get("dialog.fuzzy_finder_placeholder").to_string())
+                        } else {
+                            div()
+                                .text_size(px(13.0))
+                                .child(self.input_text.clone())
+                        }
+                    )
+            )
+            .child(list)
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .mt_1()
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(with_alpha(fg, 0.45))
+                            .child("↑↓ to navigate · Enter to open · Esc to cancel")
+                    )
+                    .child(
+                        div()
+                            .h(px(28.0))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .bg(button_bg)
+                            .text_size(px(12.0))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(button_hover))
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                            .child(self.i18n.get("dialog.cancel").to_string())
+                    )
+            )
+    }
+
+    fn render_project_search(&self, cx: &mut Context<Self>) -> Div {
+        let workspace = self.workspace.read(cx);
+        let theme = &workspace.theme;
+        let fg = led_color_to_gpui(theme.editor.foreground);
+        let accent = led_color_to_gpui(theme.syntax.keyword.unwrap_or(theme.editor.cursor));
+        let button_bg = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.1);
+        let button_hover = with_alpha(led_color_to_gpui(theme.ui.status_bar_fg), 0.2);
+        let border_color = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
+        let input_bg = led_color_to_gpui(theme.editor.background);
+
+        let mut list = div()
+            .id("project-search-list")
+            .track_scroll(&self.project_search_scroll_handle)
+            .w_full()
+            .h(px(350.0))
+            .overflow_y_scroll()
+            .bg(input_bg)
+            .border_1()
+            .border_color(border_color)
+            .rounded_md()
+            .p_1()
+            .flex()
+            .flex_col()
+            .gap_0p5();
+
+        if self.input_text.is_empty() {
+            list = list.child(
+                div()
+                    .p_4()
+                    .flex()
+                    .justify_center()
+                    .text_color(with_alpha(fg, 0.45))
+                    .text_size(px(13.0))
+                    .child(self.i18n.get("dialog.project_search_placeholder").to_string())
+            );
+        } else if self.project_search_matches.is_empty() {
+            list = list.child(
+                div()
+                    .p_4()
+                    .flex()
+                    .justify_center()
+                    .text_color(with_alpha(fg, 0.45))
+                    .text_size(px(13.0))
+                    .child("No matches found")
+            );
+        } else {
+            for (i, m) in self.project_search_matches.iter().enumerate() {
+                let is_selected = i == self.project_search_selected_idx;
+                let loc_str = format!("{}:{}:{}", m.rel_path, m.line_number, m.col + 1);
+
+                let item_bg = if is_selected {
+                    with_alpha(accent, 0.2)
+                } else {
+                    gpui::rgba(0x00000000)
+                };
+
+                let item = div()
+                    .id(ElementId::NamedInteger("search-item".into(), i as u64))
+                    .w_full()
+                    .px_2p5()
+                    .py_1p5()
+                    .rounded_sm()
+                    .bg(item_bg)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(button_hover))
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                        this.project_search_selected_idx = i;
+                        this.confirm(cx);
+                    }))
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(if is_selected { FontWeight::SEMIBOLD } else { FontWeight::NORMAL })
+                            .text_color(if is_selected { accent } else { with_alpha(fg, 0.8) })
+                            .child(loc_str)
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.5))
+                            .text_color(fg)
+                            .child(m.line_text.trim().to_string())
+                    );
+                list = list.child(item);
+            }
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_size(px(15.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(self.i18n.get("dialog.project_search").to_string())
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(with_alpha(fg, 0.5))
+                            .child(format!("{} matches", self.project_search_matches.len()))
+                    )
+            )
+            .child(
+                div()
+                    .h(px(34.0))
+                    .bg(input_bg)
+                    .border_1()
+                    .border_color(border_color)
+                    .rounded_md()
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .child(
+                        if self.input_text.is_empty() {
+                            div()
+                                .text_color(with_alpha(fg, 0.45))
+                                .text_size(px(13.0))
+                                .child(self.i18n.get("dialog.project_search_placeholder").to_string())
+                        } else {
+                            div()
+                                .text_size(px(13.0))
+                                .child(self.input_text.clone())
+                        }
+                    )
+            )
+            .child(list)
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .mt_1()
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .text_color(with_alpha(fg, 0.45))
+                            .child("↑↓ to navigate · Enter to jump · Esc to cancel")
+                    )
+                    .child(
+                        div()
+                            .h(px(28.0))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .bg(button_bg)
+                            .text_size(px(12.0))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(button_hover))
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close(cx)))
+                            .child(self.i18n.get("dialog.cancel").to_string())
+                    )
+            )
     }
 }
 

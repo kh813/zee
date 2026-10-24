@@ -318,6 +318,7 @@ impl Theme {
                 heading4: Some(Color::Ansi(3)),    // Yellow / Orange
                 heading5: Some(Color::Ansi(11)),   // Bright Yellow / Amber
                 heading6: Some(Color::Ansi(8)),    // Gray / Slate
+                inline_code: Some(Color::Ansi(13)), // Bright Magenta / Pink
             },
         }
     }
@@ -387,6 +388,8 @@ pub struct SyntaxColors {
     pub heading5: Option<Color>,
     #[serde(default)]
     pub heading6: Option<Color>,
+    #[serde(default)]
+    pub inline_code: Option<Color>,
 }
 
 impl Default for Theme {
@@ -440,10 +443,11 @@ impl Default for Theme {
                 error: Some(Color::Rgb(247, 118, 142)),
                 heading1: Some(Color::Rgb(122, 162, 247)),
                 heading2: Some(Color::Rgb(187, 154, 247)),
-                heading3: Some(Color::Rgb(255, 83, 112)),
+                heading3: Some(Color::Rgb(255, 51, 85)),
                 heading4: Some(Color::Rgb(255, 158, 100)),
                 heading5: Some(Color::Rgb(241, 207, 84)),
                 heading6: Some(Color::Rgb(86, 95, 137)),
+                inline_code: Some(Color::Rgb(245, 194, 231)),
             },
         }
     }

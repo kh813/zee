@@ -23,6 +23,7 @@ pub enum TokenType {
     Heading4,
     Heading5,
     Heading6,
+    InlineCode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

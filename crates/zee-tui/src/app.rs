@@ -405,6 +405,7 @@ impl App {
             zee_core::syntax::TokenType::Heading4 => theme.syntax.heading4.or(theme.syntax.constant),
             zee_core::syntax::TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
             zee_core::syntax::TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
+            zee_core::syntax::TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
         };
         self.to_ct_color(color.unwrap_or(theme.editor.foreground))
     }
@@ -5955,7 +5956,7 @@ impl App {
 
         let mut token_colors = std::collections::HashMap::new();
         use zee_core::syntax::TokenType::*;
-        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6] {
+        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode] {
             token_colors.insert(t, self.get_token_color(t));
         }
 

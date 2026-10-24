@@ -209,6 +209,7 @@ impl EditorView {
             TokenType::Heading4 => theme.syntax.heading4.or(theme.syntax.constant),
             TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
             TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
+            TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
         };
         led_color_to_gpui(color.unwrap_or(theme.editor.foreground))
     }

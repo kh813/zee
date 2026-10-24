@@ -2819,6 +2819,8 @@ mod tests {
         assert_eq!(editor.line_tokens[3].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading4);
         assert_eq!(editor.line_tokens[4].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading5);
         assert_eq!(editor.line_tokens[5].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading6);
+        // Verify inline code token (inline_code)
+        assert_eq!(editor.line_tokens[6].as_ref().unwrap()[0].token, crate::syntax::TokenType::InlineCode);
         // Verify code block tokens (keyword)
         assert_eq!(editor.line_tokens[8].as_ref().unwrap()[0].token, crate::syntax::TokenType::Keyword);
         let _ = std::fs::remove_file(&md_file);

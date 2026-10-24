@@ -2807,11 +2807,11 @@ mod tests {
     fn test_syntax_detection_markdown() {
         let temp_dir = std::env::temp_dir();
         let md_file = temp_dir.join("test_led_syntax.md");
-        std::fs::write(&md_file, "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6\n`code`\n**bold**\n").unwrap();
+        std::fs::write(&md_file, "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6\n`code`\n**bold**\n```\nlet x = 1;\n```\n").unwrap();
 
         let editor = Editor::from_file(&md_file).unwrap();
         assert!(editor.syntax_highlighter.is_some());
-        assert_eq!(editor.line_tokens.len(), 9);
+        assert_eq!(editor.line_tokens.len(), 12);
         // Verify Heading1 through Heading6 tokens
         assert_eq!(editor.line_tokens[0].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading1);
         assert_eq!(editor.line_tokens[1].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading2);
@@ -2819,6 +2819,8 @@ mod tests {
         assert_eq!(editor.line_tokens[3].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading4);
         assert_eq!(editor.line_tokens[4].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading5);
         assert_eq!(editor.line_tokens[5].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading6);
+        // Verify code block tokens (keyword)
+        assert_eq!(editor.line_tokens[8].as_ref().unwrap()[0].token, crate::syntax::TokenType::Keyword);
         let _ = std::fs::remove_file(&md_file);
     }
 

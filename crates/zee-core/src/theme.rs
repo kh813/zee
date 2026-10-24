@@ -440,9 +440,9 @@ impl Default for Theme {
                 error: Some(Color::Rgb(247, 118, 142)),
                 heading1: Some(Color::Rgb(122, 162, 247)),
                 heading2: Some(Color::Rgb(187, 154, 247)),
-                heading3: Some(Color::Rgb(247, 118, 142)),
+                heading3: Some(Color::Rgb(255, 83, 112)),
                 heading4: Some(Color::Rgb(255, 158, 100)),
-                heading5: Some(Color::Rgb(224, 175, 104)),
+                heading5: Some(Color::Rgb(241, 207, 84)),
                 heading6: Some(Color::Rgb(86, 95, 137)),
             },
         }

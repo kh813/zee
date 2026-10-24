@@ -40,7 +40,7 @@ token = "string"
 pattern = "`[^`]+`"
 
 [[rule]]
-token = "constant"
+token = "keyword"
 start = "```"
 end = "```"
 

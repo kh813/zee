@@ -1757,15 +1757,55 @@ new = "Nova"
     fn test_git_easy_plugin_real_load() {
         let mut pm = PluginManager::new();
         let plugin_dir = PathBuf::from("/Users/hiroshi/dev/zee-plugins/plugins/git-easy");
-        pm.load_plugin_dir(&plugin_dir).expect("Failed to load git-easy plugin");
+        if plugin_dir.exists() {
+            pm.load_plugin_dir(&plugin_dir).expect("Failed to load git-easy plugin");
+            let manifests = pm.all_manifests();
+            let ge = manifests.iter().find(|m| m.id == "git-easy").expect("git-easy manifest not found");
+            assert_eq!(ge.name, "Git Easy");
+            assert_eq!(ge.version, "20261025.1");
+            assert_eq!(ge.capabilities.commands.len(), 9);
+            assert!(pm.has_git_easy());
+            assert!(ge.capabilities.commands.contains(&"git_easy_snapshot".to_string()));
+        } else {
+            // Self-contained test for CI / environments without local dev checkout
+            let temp_dir = std::env::temp_dir().join(format!("zee_test_git_easy_{}", std::process::id()));
+            let _ = fs::remove_dir_all(&temp_dir);
+            fs::create_dir_all(&temp_dir).unwrap();
 
-        let manifests = pm.all_manifests();
-        let ge = manifests.iter().find(|m| m.id == "git-easy").expect("git-easy manifest not found");
-        assert_eq!(ge.name, "Git Easy");
-        assert_eq!(ge.version, "20261025.1");
-        assert_eq!(ge.capabilities.commands.len(), 9);
-        assert!(pm.has_git_easy());
-        assert!(ge.capabilities.commands.contains(&"git_easy_snapshot".to_string()));
+            let plugin_toml = r#"
+id = "git-easy"
+name = "Git Easy"
+version = "20261025.1"
+description = "Git operations for markdown notes"
+type = "lua"
+
+[capabilities]
+commands = [
+    "git_easy_snapshot",
+    "git_easy_new_draft",
+    "git_easy_merge_draft",
+    "git_easy_switch_draft",
+    "git_easy_restore_latest",
+    "git_easy_add_file",
+    "git_easy_ignore_file",
+    "git_easy_history",
+    "git_easy_status"
+]
+"#;
+            fs::write(temp_dir.join("plugin.toml"), plugin_toml).unwrap();
+            fs::write(temp_dir.join("init.lua"), "local M = {}\nreturn M").unwrap();
+            pm.load_plugin_dir(&temp_dir).expect("Failed to load mock git-easy plugin");
+
+            let manifests = pm.all_manifests();
+            let ge = manifests.iter().find(|m| m.id == "git-easy").expect("git-easy manifest not found");
+            assert_eq!(ge.name, "Git Easy");
+            assert_eq!(ge.version, "20261025.1");
+            assert_eq!(ge.capabilities.commands.len(), 9);
+            assert!(pm.has_git_easy());
+            assert!(ge.capabilities.commands.contains(&"git_easy_snapshot".to_string()));
+
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
     }
 }
 

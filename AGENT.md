@@ -105,3 +105,24 @@ This script sequentially runs:
      ```
 - This guarantees that release packages are never distributed with undetected cross-platform compilation or test failures.
 
+---
+
+## 6. GitHub Actions Failure Resolution Policy (CIエラー発生時の対応原則)
+
+When any GitHub Actions workflow (CI or Release) fails:
+
+1. **Verify Exact Failure Logs (ログの確認)**:
+   - Immediately inspect the failure details using `gh run view <run-id> --log-failed`.
+   - Identify the exact root cause, failed OS target (Ubuntu / macOS / Windows), step, and specific test failure. Never re-trigger workflows or guess blindly without reviewing the logs.
+2. **Fix & Resolve Locally First (ローカルでの修正と改善)**:
+   - Investigate whether the failure stems from platform assumptions (e.g., hardcoded absolute paths, missing CI files, platform-specific line endings or dependencies).
+   - Implement the fix and ensure tests are self-contained and hermetic.
+3. **Enforce Local Verification Gate (ローカル検証でエラーが出ない状態にする)**:
+   - Before pushing or re-triggering CI, **strictly run the multi-platform verification locally**:
+     ```bash
+     ./scripts/verify-all-targets.sh
+     ```
+   - Ensure 100% of the tests and checks pass locally across all 3 platforms (macOS, Windows cross-check, Linux container).
+4. **Push & Execute GitHub Actions (GitHub Actions の実行)**:
+   - Only after local verification has completely succeeded, commit the fixes, push to GitHub, and monitor the workflow to completion.
+

@@ -3198,13 +3198,31 @@ impl Dialog {
                             )
                             .child(
                                 div()
+                                    .flex()
+                                    .items_center()
                                     .flex_grow()
                                     .text_size(px(12.5))
-                                    .text_color(if self.plugin_search_query.is_empty() { with_alpha(fg, 0.45) } else { fg })
                                     .child(if self.plugin_search_query.is_empty() {
-                                        self.i18n.get("dialog.plugin.search_placeholder").to_string()
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .text_color(fg)
+                                                    .child("|")
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(with_alpha(fg, 0.45))
+                                                    .child(self.i18n.get("dialog.plugin.search_placeholder").to_string())
+                                            )
+                                            .into_any_element()
                                     } else {
-                                        format!("{}|", self.plugin_search_query)
+                                        div()
+                                            .text_color(fg)
+                                            .child(format!("{}|", self.plugin_search_query))
+                                            .into_any_element()
                                     })
                             )
                             .children(if !self.plugin_search_query.is_empty() {
@@ -3681,8 +3699,19 @@ impl Dialog {
                                                         .text_size(px(11.5))
                                                         .child(if input_val.is_empty() {
                                                             div()
-                                                                .text_color(with_alpha(fg, 0.4))
-                                                                .child(format!("{} |", placeholder))
+                                                                .flex()
+                                                                .items_center()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .text_color(fg)
+                                                                        .child("|")
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_color(with_alpha(fg, 0.4))
+                                                                        .child(placeholder)
+                                                                )
                                                                 .into_any_element()
                                                         } else {
                                                             div()

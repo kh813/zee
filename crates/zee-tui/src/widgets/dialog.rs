@@ -1422,6 +1422,16 @@ impl Dialog for PluginManagerDialog {
         }
         DialogResult::Pending
     }
+
+    fn cursor_pos(&self) -> Option<(u16, u16)> {
+        if self.input_focused {
+            let label_len = 10u16; // "Search: [ "
+            let text_len: u16 = self.search_query.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+            Some((2 + label_len + text_len, 2))
+        } else {
+            None
+        }
+    }
 }
 
 pub struct SaveAsDialog {

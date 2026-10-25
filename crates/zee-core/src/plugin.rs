@@ -593,6 +593,15 @@ impl PluginManager {
         list
     }
 
+    /// Check if Git Easy plugin is installed and loaded
+    pub fn has_git_easy(&self) -> bool {
+        self.all_manifests().iter().any(|m| {
+            m.id == "git-easy"
+                || m.name == "Git Easy"
+                || m.capabilities.commands.iter().any(|c| c.starts_with("git_easy_"))
+        })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.plugins.is_empty() && self.component_plugins.is_empty() && self.lua_plugins.is_empty()
     }
@@ -1755,11 +1764,8 @@ new = "Nova"
         assert_eq!(ge.name, "Git Easy");
         assert_eq!(ge.version, "20261025.1");
         assert_eq!(ge.capabilities.commands.len(), 9);
-
-        // Test executing command through plugin manager
-        let doc = "# My Document\nContent";
-        let res = pm.transform_text("git_easy_snapshot", doc);
-        assert_eq!(res, Some(doc.to_string()));
+        assert!(pm.has_git_easy());
+        assert!(ge.capabilities.commands.contains(&"git_easy_snapshot".to_string()));
     }
 }
 

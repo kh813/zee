@@ -100,6 +100,8 @@ pub struct Dialog {
     project_search_matches: Vec<zee_core::search::ProjectSearchMatch>,
     project_search_selected_idx: usize,
     project_search_scroll_handle: ScrollHandle,
+    cursor_blink_visible: bool,
+    plugin_restart_prompt: Option<String>,
 }
 
 #[derive(Clone)]
@@ -193,6 +195,8 @@ impl Dialog {
             project_search_matches: Vec::new(),
             project_search_selected_idx: 0,
             project_search_scroll_handle: ScrollHandle::new(),
+            cursor_blink_visible: true,
+            plugin_restart_prompt: None,
         };
         this.refresh_files();
         if is_update {
@@ -205,6 +209,27 @@ impl Dialog {
                 this.gdrive_show_setup = true;
             }
         }
+
+        let dialog_handle = cx.entity().downgrade();
+        cx.spawn(move |_, cx: &mut AsyncApp| {
+            let cx = cx.clone();
+            async move {
+                loop {
+                    smol::Timer::after(std::time::Duration::from_millis(530)).await;
+                    let Ok(cont) = dialog_handle.update(&mut cx.clone(), |this, cx| {
+                        this.cursor_blink_visible = !this.cursor_blink_visible;
+                        cx.notify();
+                        true
+                    }) else {
+                        break;
+                    };
+                    if !cont {
+                        break;
+                    }
+                }
+            }
+        }).detach();
+
         this
     }
 
@@ -382,17 +407,24 @@ impl Dialog {
             let cx = cx.clone();
             async move {
                 let id_clone = plugin_id.clone();
+                let plugin_id_for_install = id_clone.clone();
                 let res = std::thread::spawn(move || {
-                    zee_core::plugin::PluginManager::install_from_registry(&id_clone, None, Some(&sources))
+                    zee_core::plugin::PluginManager::install_from_registry(&plugin_id_for_install, None, Some(&sources))
                 }).join().unwrap_or_else(|_| Err(anyhow::anyhow!("Plugin install thread panicked")));
 
                 let _ = this.update(&mut cx.clone(), |this, cx| {
                     this.registry_loading = false;
                     if let Ok(()) = res {
+                        this.plugin_restart_prompt = Some(id_clone);
                         workspace.update(cx, |w, cx| {
                             w.reload_plugins();
                             cx.notify();
                         });
+                        #[cfg(target_os = "macos")]
+                        {
+                            let pm = &workspace.read(cx).plugin_manager;
+                            cx.set_menus(crate::app::build_native_menus(&this.i18n, &workspace.read(cx).config, Some(pm)));
+                        }
                     } else if let Err(e) = res {
                         this.registry_error = Some(e.to_string());
                     }
@@ -400,6 +432,46 @@ impl Dialog {
                 });
             }
         }).detach();
+    }
+
+    pub fn restart_zee(&self, cx: &mut Context<Self>) {
+        let session = {
+            let ws = self.workspace.read(cx);
+            let mut files = Vec::new();
+            for editor in &ws.editors {
+                let unsaved_content = if editor.is_modified() || editor.path.is_none() {
+                    Some(editor.rope.to_string())
+                } else {
+                    None
+                };
+                files.push(zee_core::session::SessionEditorState {
+                    path: editor.path.clone(),
+                    cursor: editor.cursor,
+                    scroll_row: editor.scroll_row,
+                    is_modified: editor.is_modified(),
+                    unsaved_content,
+                });
+            }
+            let sidebar_tab = match ws.sidebar_tab {
+                crate::workspace::SidebarTab::Files => "files".to_string(),
+                crate::workspace::SidebarTab::Outline => "outline".to_string(),
+            };
+            zee_core::session::UpdateSession {
+                files,
+                active_index: ws.active_editor_index,
+                root_folder: Some(ws.file_tree.root_path.clone()),
+                expanded_folders: ws.file_tree.expanded_paths(),
+                sidebar_visible: ws.sidebar_visible,
+                sidebar_tab,
+            }
+        };
+        let _ = session.save();
+
+        if let Ok(exe) = std::env::current_exe() {
+            let _ = zee_core::selfupdate::relaunch_gui(&exe);
+        }
+        cx.dispatch_action(&crate::app::Quit {});
+        std::process::exit(0);
     }
 
     fn render_plugin_scrollbar(
@@ -898,6 +970,7 @@ impl Dialog {
     }
 
     fn handle_keydown(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        self.cursor_blink_visible = true;
         match event.keystroke.key.as_str() {
             "tab" => {
                 if matches!(self.dialog_type, DialogType::UnsavedChanges { .. }) {
@@ -1015,15 +1088,20 @@ impl Dialog {
                 }
             }
             "enter" => {
-                if matches!(self.dialog_type, DialogType::PluginManager) && self.plugin_show_add_repo {
-                    let url = std::mem::take(&mut self.plugin_new_repo_url);
-                    self.plugin_show_add_repo = false;
-                    if !url.trim().is_empty() {
-                        self.workspace.update(cx, |w, _| {
-                            let _ = w.config.add_plugin_registry(&url);
-                        });
-                        self.fetch_online_plugins(cx);
+                if matches!(self.dialog_type, DialogType::PluginManager) {
+                    if self.plugin_show_add_repo {
+                        let url = std::mem::take(&mut self.plugin_new_repo_url);
+                        self.plugin_show_add_repo = false;
+                        if !url.trim().is_empty() {
+                            self.workspace.update(cx, |w, _| {
+                                let _ = w.config.add_plugin_registry(&url);
+                            });
+                            self.fetch_online_plugins(cx);
+                        }
                     }
+                    // For PluginManager, hitting Enter in search query or during Japanese IME conversion
+                    // must never close the dialog!
+                    return;
                 } else if matches!(self.dialog_type, DialogType::GoogleDrive) {
                     if self.gdrive_show_setup {
                         self.save_gdrive_setup_and_connect(cx);
@@ -3178,6 +3256,74 @@ impl Dialog {
                                     .child(self.i18n.get("dialog.plugin.tab_registry").to_string())
                             )
                     )
+                    .children(self.plugin_restart_prompt.as_ref().map(|_p_id| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_3()
+                            .py_2()
+                            .bg(with_alpha(accent, 0.12))
+                            .border_1()
+                            .border_color(with_alpha(accent, 0.35))
+                            .rounded_md()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_size(px(13.5))
+                                            .child("💡")
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .text_color(fg)
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child(self.i18n.get("dialog.plugin.restart_prompt").to_string())
+                                    )
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .px_2p5()
+                                            .py_1()
+                                            .rounded_sm()
+                                            .bg(accent)
+                                            .text_color(gpui::rgb(0xffffff))
+                                            .text_size(px(11.5))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.85))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.restart_zee(cx);
+                                            }))
+                                            .child(self.i18n.get("dialog.plugin.restart_now").to_string())
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_1()
+                                            .rounded_sm()
+                                            .bg(with_alpha(fg, 0.08))
+                                            .text_color(with_alpha(fg, 0.75))
+                                            .text_size(px(11.5))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(with_alpha(fg, 0.15)))
+                                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                                this.plugin_restart_prompt = None;
+                                                cx.notify();
+                                            }))
+                                            .child(self.i18n.get("dialog.plugin.restart_later").to_string())
+                                    )
+                            )
+                    }))
                     .child(
                         // Search bar
                         div()
@@ -3196,7 +3342,12 @@ impl Dialog {
                                     .text_color(with_alpha(fg, 0.5))
                                     .child("🔍")
                             )
-                            .child(
+                            .child({
+                                let cursor_color = if self.cursor_blink_visible {
+                                    fg
+                                } else {
+                                    gpui::rgba(0x00000000)
+                                };
                                 div()
                                     .flex()
                                     .items_center()
@@ -3209,7 +3360,7 @@ impl Dialog {
                                             .gap_1()
                                             .child(
                                                 div()
-                                                    .text_color(fg)
+                                                    .text_color(cursor_color)
                                                     .child("|")
                                             )
                                             .child(
@@ -3220,11 +3371,21 @@ impl Dialog {
                                             .into_any_element()
                                     } else {
                                         div()
-                                            .text_color(fg)
-                                            .child(format!("{}|", self.plugin_search_query))
+                                            .flex()
+                                            .items_center()
+                                            .child(
+                                                div()
+                                                    .text_color(fg)
+                                                    .child(self.plugin_search_query.clone())
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(cursor_color)
+                                                    .child("|")
+                                            )
                                             .into_any_element()
                                     })
-                            )
+                            })
                             .children(if !self.plugin_search_query.is_empty() {
                                 Some(
                                     div()

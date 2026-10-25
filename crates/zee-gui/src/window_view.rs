@@ -1661,18 +1661,21 @@ impl WindowView {
             let hover_bg = colors.hover_bg;
             let muted_fg = colors.muted_fg;
 
+            let has_git = self.workspace.read(cx).plugin_manager.has_git_easy();
             let left_pos = match idx {
                 0 => px(8.0),
                 1 => px(48.0),
                 2 => px(90.0),
-                3 => px(136.0),
-                _ => px(196.0),
+                5 => px(136.0), // Git
+                3 => if has_git { px(180.0) } else { px(136.0) }, // Plugins
+                _ => if has_git { px(240.0) } else { px(196.0) }, // Help
             };
 
             let menu_content = match idx {
                 0 => self.render_file_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
                 1 => self.render_edit_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
                 2 => self.render_view_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
+                5 => self.render_git_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
                 3 => self.render_plugins_menu(fg, hover_bg, muted_fg, border, cx).into_any_element(),
                 _ => self.render_help_menu(fg, hover_bg, muted_fg, cx).into_any_element(),
             };
@@ -2075,6 +2078,23 @@ impl WindowView {
             .child(self.render_submenu_trigger(SubmenuId::Language, 268.0, self.i18n.get("menu.view.language").to_string(), fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.app.preferences").to_string(), Some("Ctrl+,"), false, OpenSettings {}, fg, hover_bg, muted_fg, cx))
+    }
+
+    fn render_git_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .child(self.render_menu_item(self.i18n.get("menu.git.snapshot").to_string(), None, false, ExecutePluginCommand { command: "git_easy_snapshot".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.new_draft").to_string(), None, false, ExecutePluginCommand { command: "git_easy_new_draft".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.merge_draft").to_string(), None, false, ExecutePluginCommand { command: "git_easy_merge_draft".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.switch_draft").to_string(), None, false, ExecutePluginCommand { command: "git_easy_switch_draft".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.restore_latest").to_string(), None, false, ExecutePluginCommand { command: "git_easy_restore_latest".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_sep(border))
+            .child(self.render_menu_item(self.i18n.get("menu.git.add_file").to_string(), None, false, ExecutePluginCommand { command: "git_easy_add_file".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.ignore_file").to_string(), None, false, ExecutePluginCommand { command: "git_easy_ignore_file".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_sep(border))
+            .child(self.render_menu_item(self.i18n.get("menu.git.history").to_string(), None, false, ExecutePluginCommand { command: "git_easy_history".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.status").to_string(), None, false, ExecutePluginCommand { command: "git_easy_status".to_string() }, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_plugins_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {

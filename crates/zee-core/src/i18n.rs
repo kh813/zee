@@ -428,6 +428,20 @@ impl I18n {
         m.insert("dialog.plugin.search_placeholder".to_string(), "Search plugins by name, description, ID…".to_string());
         m.insert("dialog.plugin.no_search_results".to_string(), "No plugins match the search criteria.".to_string());
         m.insert("dialog.plugin.clear_search".to_string(), "Clear search".to_string());
+        m.insert("dialog.plugin.restart_prompt".to_string(), "Plugin installed. Restart Zee to refresh the menu?".to_string());
+        m.insert("dialog.plugin.restart_now".to_string(), "Restart Now".to_string());
+        m.insert("dialog.plugin.restart_later".to_string(), "Later".to_string());
+
+        m.insert("menu.git".to_string(), "Git".to_string());
+        m.insert("menu.git.snapshot".to_string(), "Take Snapshot".to_string());
+        m.insert("menu.git.new_draft".to_string(), "Create Draft Branch…".to_string());
+        m.insert("menu.git.merge_draft".to_string(), "Merge Draft into main".to_string());
+        m.insert("menu.git.switch_draft".to_string(), "Switch Draft Branch…".to_string());
+        m.insert("menu.git.restore_latest".to_string(), "Restore Latest Snapshot".to_string());
+        m.insert("menu.git.add_file".to_string(), "Add Current File to Git".to_string());
+        m.insert("menu.git.ignore_file".to_string(), "Add Current File to .gitignore".to_string());
+        m.insert("menu.git.history".to_string(), "Git History".to_string());
+        m.insert("menu.git.status".to_string(), "Git Status".to_string());
 
         m.insert("about.version".to_string(), "Version".to_string());
         m.insert("about.license".to_string(), "License".to_string());
@@ -697,6 +711,20 @@ impl I18n {
         m.insert("dialog.plugin.search_placeholder".to_string(), "プラグイン名、説明、IDで検索…".to_string());
         m.insert("dialog.plugin.no_search_results".to_string(), "検索条件に一致するプラグインは見つかりませんでした。".to_string());
         m.insert("dialog.plugin.clear_search".to_string(), "検索をクリア".to_string());
+        m.insert("dialog.plugin.restart_prompt".to_string(), "プラグインをインストールしました。メニューを反映するためにZeeを再起動しますか？".to_string());
+        m.insert("dialog.plugin.restart_now".to_string(), "今すぐ再起動".to_string());
+        m.insert("dialog.plugin.restart_later".to_string(), "後で".to_string());
+
+        m.insert("menu.git".to_string(), "Git".to_string());
+        m.insert("menu.git.snapshot".to_string(), "📸 スナップショット (Snapshot)".to_string());
+        m.insert("menu.git.new_draft".to_string(), "📝 ドラフトブランチ作成 (New Draft)…".to_string());
+        m.insert("menu.git.merge_draft".to_string(), "🔀 ドラフトをmainにマージ (Merge Draft)".to_string());
+        m.insert("menu.git.switch_draft".to_string(), "🔄 ドラフト切り替え (Switch Draft)…".to_string());
+        m.insert("menu.git.restore_latest".to_string(), "⏪ 最新スナップショットに復元 (Restore Latest)".to_string());
+        m.insert("menu.git.add_file".to_string(), "➕ 現在のファイルをGitに追加 (Add File)".to_string());
+        m.insert("menu.git.ignore_file".to_string(), "🚫 現在のファイルを.gitignoreに追加 (Ignore File)".to_string());
+        m.insert("menu.git.history".to_string(), "📜 変更履歴 (History)".to_string());
+        m.insert("menu.git.status".to_string(), "📊 状態確認 (Status)".to_string());
 
         m.insert("about.version".to_string(), "バージョン".to_string());
         m.insert("about.license".to_string(), "ライセンス".to_string());

@@ -782,6 +782,22 @@ impl Action for SetLanguage {
     fn name_for_type() -> &'static str { "SetLanguage" }
 }
 
+pub fn build_git_menu_items(i18n: &I18n) -> Vec<MenuItem> {
+    vec![
+        MenuItem::action(i18n.get("menu.git.snapshot"), ExecutePluginCommand { command: "git_easy_snapshot".to_string() }),
+        MenuItem::action(i18n.get("menu.git.new_draft"), ExecutePluginCommand { command: "git_easy_new_draft".to_string() }),
+        MenuItem::action(i18n.get("menu.git.merge_draft"), ExecutePluginCommand { command: "git_easy_merge_draft".to_string() }),
+        MenuItem::action(i18n.get("menu.git.switch_draft"), ExecutePluginCommand { command: "git_easy_switch_draft".to_string() }),
+        MenuItem::action(i18n.get("menu.git.restore_latest"), ExecutePluginCommand { command: "git_easy_restore_latest".to_string() }),
+        MenuItem::separator(),
+        MenuItem::action(i18n.get("menu.git.add_file"), ExecutePluginCommand { command: "git_easy_add_file".to_string() }),
+        MenuItem::action(i18n.get("menu.git.ignore_file"), ExecutePluginCommand { command: "git_easy_ignore_file".to_string() }),
+        MenuItem::separator(),
+        MenuItem::action(i18n.get("menu.git.history"), ExecutePluginCommand { command: "git_easy_history".to_string() }),
+        MenuItem::action(i18n.get("menu.git.status"), ExecutePluginCommand { command: "git_easy_status".to_string() }),
+    ]
+}
+
 #[cfg(target_os = "macos")]
 pub fn build_native_menus(
     i18n: &I18n,
@@ -903,7 +919,14 @@ pub fn build_native_menus(
         ));
     }
 
-    vec![
+    let has_git = if let Some(pm) = plugin_manager {
+        pm.has_git_easy()
+    } else {
+        let pm = zee_core::plugin::PluginManager::new();
+        pm.has_git_easy()
+    };
+
+    let mut menus = vec![
         Menu {
             name: "zee".into(),
             items: vec![
@@ -1068,28 +1091,39 @@ pub fn build_native_menus(
             ],
             disabled: false,
         },
-        Menu {
-            name: i18n.get("menu.tabs").into(),
-            items: vec![
-                MenuItem::action(i18n.get("menu.tabs.next"), NextTab {}),
-                MenuItem::action(i18n.get("menu.tabs.prev"), PrevTab {}),
-            ],
+    ];
+
+    if has_git {
+        menus.push(Menu {
+            name: i18n.get("menu.git").into(),
+            items: build_git_menu_items(i18n),
             disabled: false,
-        },
-        Menu {
-            name: i18n.get("menu.plugins").into(),
-            items: plugin_menu_items,
-            disabled: false,
-        },
-        Menu {
-            name: i18n.get("menu.help").into(),
-            items: vec![
-                MenuItem::action(i18n.get("menu.help.about"), About {}),
-                MenuItem::action(i18n.get("menu.help.check_for_updates"), CheckForUpdates {}),
-            ],
-            disabled: false,
-        }
-    ]
+        });
+    }
+
+    menus.push(Menu {
+        name: i18n.get("menu.tabs").into(),
+        items: vec![
+            MenuItem::action(i18n.get("menu.tabs.next"), NextTab {}),
+            MenuItem::action(i18n.get("menu.tabs.prev"), PrevTab {}),
+        ],
+        disabled: false,
+    });
+    menus.push(Menu {
+        name: i18n.get("menu.plugins").into(),
+        items: plugin_menu_items,
+        disabled: false,
+    });
+    menus.push(Menu {
+        name: i18n.get("menu.help").into(),
+        items: vec![
+            MenuItem::action(i18n.get("menu.help.about"), About {}),
+            MenuItem::action(i18n.get("menu.help.check_for_updates"), CheckForUpdates {}),
+        ],
+        disabled: false,
+    });
+
+    menus
 }
 
 actions!(zee, [

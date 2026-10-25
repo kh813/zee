@@ -133,13 +133,17 @@ impl Render for MenuBar {
         let hover_bg = colors.hover_bg;
         let active_bg = colors.active_bg;
 
-        let menu_titles = [
+        let has_git = self.workspace.read(cx).plugin_manager.has_git_easy();
+        let mut menu_titles = vec![
             (0, self.i18n.get("menu.file").to_string()),
             (1, self.i18n.get("menu.edit").to_string()),
             (2, self.i18n.get("menu.view").to_string()),
-            (3, self.i18n.get("menu.plugins").to_string()),
-            (4, self.i18n.get("menu.help").to_string()),
         ];
+        if has_git {
+            menu_titles.push((5, self.i18n.get("menu.git").to_string()));
+        }
+        menu_titles.push((3, self.i18n.get("menu.plugins").to_string()));
+        menu_titles.push((4, self.i18n.get("menu.help").to_string()));
 
         let mut bar = div()
             .w_full()

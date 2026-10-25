@@ -467,9 +467,8 @@ impl Dialog {
         };
         let _ = session.save();
 
-        if let Ok(exe) = std::env::current_exe() {
-            let _ = zee_core::selfupdate::relaunch_gui(&exe);
-        }
+        let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("zee"));
+        let _ = zee_core::selfupdate::relaunch_gui(&exe);
         cx.dispatch_action(&crate::app::Quit {});
         std::process::exit(0);
     }

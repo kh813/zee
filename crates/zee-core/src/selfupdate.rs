@@ -513,6 +513,7 @@ fn apply_macos_gui_bundle(zip_bytes: &[u8], current_exe: &Path) -> Result<()> {
 
     let staging_dir = tempfile_staging_dir("zee-update")?;
     let new_app_path = extract_zip_app_bundle(zip_bytes, &staging_dir)?;
+    #[cfg(unix)]
     let pid = std::process::id();
 
     // Spawn detached helper script to wait for the running app process to exit,
@@ -686,6 +687,7 @@ fn apply_unix_binary(archive_bytes: &[u8], current_exe: &Path, target_bin_name: 
         return Ok(());
     }
 
+    #[cfg(unix)]
     let pid = std::process::id();
     let relaunch_cmd = if is_gui { "open -n \"$EXE\" 2>/dev/null || \"$EXE\" &" } else { "" };
 
@@ -949,10 +951,13 @@ fn tempfile_staging_dir(prefix: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
-/// Relaunch the GUI application after an update.
+/// Relaunch the GUI application after an update or manual restart.
 pub fn relaunch_gui(current_exe: &Path) -> Result<()> {
     let resolved = resolve_current_executable().unwrap_or_else(|_| current_exe.to_path_buf());
     let current_exe = resolved.as_path();
+    #[cfg(unix)]
+    let pid = std::process::id();
+
     #[cfg(target_os = "macos")]
     {
         let mut app_bundle = None;
@@ -965,26 +970,63 @@ pub fn relaunch_gui(current_exe: &Path) -> Result<()> {
             cur = dir.parent();
         }
 
-        if let Some(app_path) = app_bundle {
-            Command::new("open")
-                .arg("-n")
-                .arg("-a")
-                .arg(app_path)
-                .spawn()
-                .context("Failed to relaunch macOS .app bundle")?;
+        // Wait for the calling process to exit before relaunching so that
+        // SingleInstanceLock and macOS LSMultipleInstancesProhibited do not abort the new process.
+        let script = if let Some(app_path) = app_bundle {
+            format!(
+                "for i in $(seq 1 60); do if ! kill -0 {pid} 2>/dev/null; then break; fi; sleep 0.05; done; sleep 0.1; open \"{app}\"",
+                pid = pid,
+                app = app_path.display()
+            )
         } else {
-            Command::new(current_exe)
-                .spawn()
-                .context("Failed to relaunch macOS GUI executable")?;
-        }
+            format!(
+                "for i in $(seq 1 60); do if ! kill -0 {pid} 2>/dev/null; then break; fi; sleep 0.05; done; sleep 0.1; \"{exe}\" &",
+                pid = pid,
+                exe = current_exe.display()
+            )
+        };
+
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("Failed to spawn background relaunch script on macOS")?;
         return Ok(());
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
-        Command::new(current_exe)
+        let exe_str = current_exe.display().to_string();
+        let cmd = format!("timeout /t 1 /nobreak >nul & start \"\" \"{}\"", exe_str);
+        Command::new("cmd")
+            .args(["/C", &cmd])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn()
-            .context("Failed to relaunch GUI executable")?;
+            .context("Failed to spawn background relaunch script on Windows")?;
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let script = format!(
+            "for i in $(seq 1 60); do if ! kill -0 {pid} 2>/dev/null; then break; fi; sleep 0.05; done; sleep 0.1; \"{exe}\" &",
+            pid = pid,
+            exe = current_exe.display()
+        );
+
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("Failed to spawn background relaunch script on Linux")?;
         Ok(())
     }
 }
@@ -1730,5 +1772,22 @@ mod tests {
 
         crate::config::Config::set_custom_config_dir(None);
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_relaunch_gui_execution_does_not_panic() {
+        // Point to a harmless path in temp dir
+        let temp_bin = std::env::temp_dir().join("test_relaunch_probe");
+        let _ = fs::write(&temp_bin, b"#!/bin/sh\nexit 0\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&temp_bin, fs::Permissions::from_mode(0o755));
+        }
+
+        // Test non-fatal call (spawns background loop waiting for current PID which won't exit in test)
+        let res = relaunch_gui(&temp_bin);
+        assert!(res.is_ok(), "relaunch_gui should succeed: {:?}", res);
+        let _ = fs::remove_file(&temp_bin);
     }
 }

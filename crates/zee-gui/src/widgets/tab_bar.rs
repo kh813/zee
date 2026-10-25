@@ -43,7 +43,8 @@ impl Render for TabBar {
         let border_color = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
         let hover_tab_bg = with_alpha(led_color_to_gpui(theme.ui.tab_active_bg), 0.4);
 
-        let bar = div()
+        #[allow(unused_mut)]
+        let mut bar = div()
             .h(px(36.0))
             .w_full()
             .flex()

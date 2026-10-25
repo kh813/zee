@@ -3598,8 +3598,25 @@ impl Dialog {
                                                                         div()
                                                                             .text_size(px(13.0))
                                                                             .font_weight(FontWeight::BOLD)
-                                                                            .child(manifest.name)
+                                                                            .child(manifest.name.clone())
                                                                     )
+                                                                    .children(if manifest.is_experimental() {
+                                                                        Some(
+                                                                            div()
+                                                                                .px_1p5()
+                                                                                .py_0p5()
+                                                                                .rounded_xs()
+                                                                                .bg(with_alpha(gpui::rgb(0xf59e0b), 0.15))
+                                                                                .border_1()
+                                                                                .border_color(with_alpha(gpui::rgb(0xf59e0b), 0.35))
+                                                                                .text_color(gpui::rgb(0xf59e0b))
+                                                                                .text_size(px(10.0))
+                                                                                .font_weight(FontWeight::BOLD)
+                                                                                .child("Experimental")
+                                                                        )
+                                                                    } else {
+                                                                        None
+                                                                    })
                                                                     .child(
                                                                         div()
                                                                             .px_1p5()
@@ -4070,6 +4087,23 @@ impl Dialog {
                                                                                 .font_weight(FontWeight::BOLD)
                                                                                 .child(reg_p.name.clone())
                                                                         )
+                                                                        .children(if reg_p.is_experimental() {
+                                                                            Some(
+                                                                                div()
+                                                                                .px_1p5()
+                                                                                .py_0p5()
+                                                                                .rounded_xs()
+                                                                                .bg(with_alpha(gpui::rgb(0xf59e0b), 0.15))
+                                                                                .border_1()
+                                                                                .border_color(with_alpha(gpui::rgb(0xf59e0b), 0.35))
+                                                                                .text_color(gpui::rgb(0xf59e0b))
+                                                                                .text_size(px(10.0))
+                                                                                .font_weight(FontWeight::BOLD)
+                                                                                .child("Experimental")
+                                                                            )
+                                                                        } else {
+                                                                            None
+                                                                        })
                                                                         .child(
                                                                             div()
                                                                                 .px_1p5()

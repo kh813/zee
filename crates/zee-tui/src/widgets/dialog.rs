@@ -1131,7 +1131,8 @@ impl Dialog for PluginManagerDialog {
                         zee_core::plugin::PluginType::Syntax => "Syntax",
                         zee_core::plugin::PluginType::Locale => "Locale",
                     };
-                    let name_str = format!("{} [{}] v{}", item.name, type_str, item.version);
+                    let exp_str = if item.is_experimental() { " [Exp]" } else { "" };
+                    let name_str = format!("{}{exp_str} [{}] v{}", item.name, type_str, item.version);
                     let mut cur_x = x + 3;
                     for c in name_str.chars() {
                         let cw = c.width().unwrap_or(1) as u16;
@@ -1199,10 +1200,11 @@ impl Dialog for PluginManagerDialog {
                         zee_core::plugin::PluginType::Syntax => "Syntax",
                         zee_core::plugin::PluginType::Locale => "Locale",
                     };
+                    let exp_str = if item.is_experimental() { " [Exp]" } else { "" };
                     let name_str = if has_update {
-                        format!("{} [{}] v{} ➔ v{}", item.name, type_str, installed_opt.unwrap().version, item.version)
+                        format!("{}{exp_str} [{}] v{} ➔ v{}", item.name, type_str, installed_opt.unwrap().version, item.version)
                     } else {
-                        format!("{} [{}] v{}", item.name, type_str, item.version)
+                        format!("{}{exp_str} [{}] v{}", item.name, type_str, item.version)
                     };
                     let mut cur_x = x + 3;
                     for c in name_str.chars() {
@@ -5036,6 +5038,7 @@ mod tests {
             homepage: None,
             languages: vec!["*".to_string()],
             capabilities: Default::default(),
+            ..Default::default()
         }];
 
         dialog.registry_plugins = vec![zee_core::plugin::RegistryPlugin {
@@ -5051,6 +5054,7 @@ mod tests {
             download_url: Some("https://example.com/git-easy".to_string()),
             languages: vec!["*".to_string()],
             capabilities: Default::default(),
+            ..Default::default()
         }];
 
         dialog.active_tab = 1; // Registry tab

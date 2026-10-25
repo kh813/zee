@@ -21,7 +21,7 @@ impl Default for PluginType {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub id: String,
     pub name: String,
@@ -39,6 +39,17 @@ pub struct PluginManifest {
     pub languages: Vec<String>,
     #[serde(default)]
     pub capabilities: PluginCapabilities,
+    #[serde(default)]
+    pub experimental: bool,
+}
+
+impl PluginManifest {
+    pub fn is_experimental(&self) -> bool {
+        self.experimental
+            || self.name.to_lowercase().contains("experimental")
+            || self.description.as_ref().map(|d| d.to_lowercase().contains("experimental")).unwrap_or(false)
+            || self.id == "git-easy"
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -356,7 +367,7 @@ impl LuaPlugin {
 
 pub const DEFAULT_REGISTRY_URL: &str = "https://raw.githubusercontent.com/kh813/zee-plugins/main/index.json";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RegistryPlugin {
     pub id: String,
     pub name: String,
@@ -379,6 +390,17 @@ pub struct RegistryPlugin {
     pub languages: Vec<String>,
     #[serde(default)]
     pub capabilities: PluginCapabilities,
+    #[serde(default)]
+    pub experimental: bool,
+}
+
+impl RegistryPlugin {
+    pub fn is_experimental(&self) -> bool {
+        self.experimental
+            || self.name.to_lowercase().contains("experimental")
+            || self.description.as_ref().map(|d| d.to_lowercase().contains("experimental")).unwrap_or(false)
+            || self.id == "git-easy"
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -487,6 +509,7 @@ impl PluginManager {
                                 homepage: None,
                                 languages: Vec::new(),
                                 capabilities: PluginCapabilities::default(),
+                                ..Default::default()
                             });
                         }
                     }
@@ -545,6 +568,7 @@ impl PluginManager {
                                 homepage: None,
                                 languages: exts,
                                 capabilities: PluginCapabilities::default(),
+                                ..Default::default()
                             });
                         }
                     }
@@ -583,6 +607,7 @@ impl PluginManager {
                                 homepage: None,
                                 languages: vec![stem.to_string()],
                                 capabilities: PluginCapabilities::default(),
+                                ..Default::default()
                             });
                         }
                     }
@@ -598,6 +623,7 @@ impl PluginManager {
         self.all_manifests().iter().any(|m| {
             m.id == "git-easy"
                 || m.name == "Git Easy"
+                || m.name.starts_with("Git Easy")
                 || m.capabilities.commands.iter().any(|c| c.starts_with("git_easy_"))
         })
     }
@@ -657,6 +683,7 @@ impl PluginManager {
                     outline_provider: true,
                     commands: Vec::new(),
                 },
+                ..Default::default()
             }
         };
 
@@ -708,6 +735,7 @@ impl PluginManager {
                 outline_provider: true,
                 commands: Vec::new(),
             },
+            ..Default::default()
         };
 
         let wasm_bytes = fs::read(path)?;
@@ -744,6 +772,7 @@ impl PluginManager {
                 outline_provider: false,
                 commands: Vec::new(),
             },
+            ..Default::default()
         };
 
         let plugin = LuaPlugin::load_from_str(manifest, &script)?;
@@ -1466,6 +1495,7 @@ commands = ["outline.refresh"]
                 outline_provider: false,
                 commands: vec!["custom_reverse".to_string(), "custom_shout".to_string()],
             },
+            ..Default::default()
         };
 
         let lua_script = r#"

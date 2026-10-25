@@ -936,6 +936,7 @@ mod tests {
                 homepage: None,
                 languages: Vec::new(),
                 capabilities: PluginCapabilities::default(),
+                ..Default::default()
             },
             PluginManifest {
                 id: "markdown-toc".to_string(),
@@ -948,6 +949,7 @@ mod tests {
                 homepage: None,
                 languages: Vec::new(),
                 capabilities: PluginCapabilities::default(),
+                ..Default::default()
             },
         ];
 

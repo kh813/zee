@@ -91,6 +91,7 @@ mod tests {
 
     #[test]
     fn test_single_instance_lock_mutual_exclusion() {
+        let _lock = crate::config::TEST_MUTEX.lock().unwrap();
         let lock1 = SingleInstanceLock::try_acquire("test_mutex_unique_abc123");
         assert!(lock1.is_some(), "First lock acquisition should succeed");
 

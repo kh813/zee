@@ -830,7 +830,7 @@ mod tests {
             let mut config = Config::default();
             config.language = "ja".to_string();
             let i18n_ja = I18n::load("ja");
-            let menus_ja = crate::app::build_native_menus(&i18n_ja, &config, None);
+            let menus_ja = crate::app::build_native_menus(&i18n_ja, &config, None, false);
 
             let offset_ja = if menus_ja.iter().any(|m| m.name.as_ref() == "Git") { 1 } else { 0 };
             assert_eq!(menus_ja[0].name.as_ref(), "zee");
@@ -845,7 +845,7 @@ mod tests {
             // English
             config.language = "en".to_string();
             let i18n_en = I18n::load("en");
-            let menus_en = crate::app::build_native_menus(&i18n_en, &config, None);
+            let menus_en = crate::app::build_native_menus(&i18n_en, &config, None, false);
             let offset_en = if menus_en.iter().any(|m| m.name.as_ref() == "Git") { 1 } else { 0 };
             assert_eq!(menus_en[0].name.as_ref(), "zee");
             assert_eq!(menus_en[1].name.as_ref(), "File");
@@ -868,7 +868,7 @@ mod tests {
         {
             use zee_core::i18n::I18n;
             let i18n = I18n::load("ja");
-            let menus = crate::app::build_native_menus(&i18n, &workspace.config, Some(&workspace.plugin_manager));
+            let menus = crate::app::build_native_menus(&i18n, &workspace.config, Some(&workspace.plugin_manager), false);
             let plugin_menu = menus.iter().find(|m| m.name.as_ref() == "プラグイン").expect("Plugin menu must exist");
             assert!(!plugin_menu.items.is_empty());
 
@@ -1216,7 +1216,7 @@ mod tests {
 
             // Scenario A: Default config ("terminal-default") -> Exactly one item with "✓ OS Default"
             let mut cfg = Config::default();
-            let menus = crate::app::build_native_menus(&i18n, &cfg, None);
+            let menus = crate::app::build_native_menus(&i18n, &cfg, None, false);
             let view_menu = menus.iter().find(|m| m.name.as_ref() == "View").expect("View menu exists");
             let theme_submenu = view_menu.items.iter().find_map(|item| {
                 // find the Theme submenu
@@ -1241,7 +1241,7 @@ mod tests {
 
             // Scenario B: Switch to "tokyo-night" -> Exactly one item with "✓ Tokyo Night"
             cfg.theme = "tokyo-night".to_string();
-            let menus_b = crate::app::build_native_menus(&i18n, &cfg, None);
+            let menus_b = crate::app::build_native_menus(&i18n, &cfg, None, false);
             let view_b = menus_b.iter().find(|m| m.name.as_ref() == "View").unwrap();
             let theme_sub_b = view_b.items.iter().find_map(|it| match it {
                 gpui::MenuItem::Submenu(s) if s.name.as_ref() == "Theme" => Some(s),
@@ -1256,7 +1256,7 @@ mod tests {
 
             // Scenario C: Switch to "Light" -> Exactly one item with "✓ Light"
             cfg.theme = "light".to_string();
-            let menus_c = crate::app::build_native_menus(&i18n, &cfg, None);
+            let menus_c = crate::app::build_native_menus(&i18n, &cfg, None, false);
             let view_c = menus_c.iter().find(|m| m.name.as_ref() == "View").unwrap();
             let theme_sub_c = view_c.items.iter().find_map(|it| match it {
                 gpui::MenuItem::Submenu(s) if s.name.as_ref() == "Theme" => Some(s),

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use gpui::*;
 use zee_core::config::Config;
 use zee_core::i18n::I18n;
@@ -122,11 +123,7 @@ impl WindowView {
                 menu_changed = true;
             }
             if menu_changed {
-                #[cfg(target_os = "macos")]
-                {
-                    let pm = &workspace.read(cx).plugin_manager;
-                    cx.set_menus(crate::app::build_native_menus(&this.i18n, &this.config, Some(pm)));
-                }
+                this.update_native_menus(cx);
             }
             cx.notify();
         }).detach();
@@ -146,8 +143,7 @@ impl WindowView {
                             w.theme = theme_to_use;
                             cx.notify();
                         });
-                        #[cfg(target_os = "macos")]
-                        cx.set_menus(crate::app::build_native_menus(&this.i18n, &this.config, Some(&this.workspace.read(cx).plugin_manager)));
+                        this.update_native_menus(cx);
                         cx.notify();
                     }
                 });
@@ -161,6 +157,7 @@ impl WindowView {
                         w.active_editor_index = *idx;
                         cx.notify();
                     });
+                    this.update_native_menus(cx);
                 }
                 TabBarEvent::New => {
                     this.workspace.update(cx, |w, cx| {
@@ -218,6 +215,9 @@ impl WindowView {
                         let _ = zee_core::config::Config::save_show_hidden(new_val);
                         cx.notify();
                     });
+                }
+                crate::widgets::sidebar_view::SidebarEvent::GitAction { command, path } => {
+                    this.execute_git_easy_command(command, Some(path.clone()), cx);
                 }
             }
         }).detach();
@@ -861,6 +861,24 @@ impl WindowView {
         cx.notify();
     }
 
+    #[allow(unused_variables)]
+    fn update_native_menus(&self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        {
+            let ws = self.workspace.read(cx);
+            let is_ignored = ws.active_editor()
+                .and_then(|e| e.path.as_ref())
+                .map(|p| zee_core::git::is_path_ignored(&ws.file_tree.root_path, p))
+                .unwrap_or(false);
+            cx.set_menus(crate::app::build_native_menus(
+                &self.i18n,
+                &self.config,
+                Some(&ws.plugin_manager),
+                is_ignored,
+            ));
+        }
+    }
+
     fn handle_toggle_line_numbers(&mut self, _: &ToggleLineNumbers, _window: &mut Window, cx: &mut Context<Self>) {
         self.config.line_numbers = !self.config.line_numbers;
         let line_numbers = self.config.line_numbers;
@@ -869,8 +887,7 @@ impl WindowView {
             w.config.line_numbers = line_numbers;
             cx.notify();
         });
-        #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
+        self.update_native_menus(cx);
         cx.notify();
     }
 
@@ -882,8 +899,7 @@ impl WindowView {
             w.config.word_wrap = word_wrap;
             cx.notify();
         });
-        #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
+        self.update_native_menus(cx);
         cx.notify();
     }
 
@@ -908,8 +924,7 @@ impl WindowView {
         self.editor.update(cx, |editor, cx| {
             editor.focus_handle.focus(window, cx);
         });
-        #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
+        self.update_native_menus(cx);
         cx.notify();
     }
 
@@ -921,8 +936,7 @@ impl WindowView {
             w.config.trim_trailing_whitespace = val;
             cx.notify();
         });
-        #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
+        self.update_native_menus(cx);
         cx.notify();
     }
 
@@ -934,8 +948,7 @@ impl WindowView {
             w.config.ensure_final_newline = val;
             cx.notify();
         });
-        #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
+        self.update_native_menus(cx);
         cx.notify();
     }
 
@@ -1101,8 +1114,7 @@ impl WindowView {
         
         self.config.theme = saved_key.clone();
         let _ = Config::write_key("theme", &saved_key);
-        #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
+        self.update_native_menus(cx);
         cx.notify();
     }
 
@@ -1269,8 +1281,7 @@ impl WindowView {
                     w.update_outline();
                     cx.notify();
                 });
-                #[cfg(target_os = "macos")]
-                cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
+                self.update_native_menus(cx);
                 cx.notify();
             }
         }
@@ -1279,8 +1290,7 @@ impl WindowView {
     fn handle_clear_recent(&mut self, _: &ClearRecent, _window: &mut Window, cx: &mut Context<Self>) {
         let mut recent = zee_core::recent::RecentFiles::load();
         recent.clear();
-        #[cfg(target_os = "macos")]
-        cx.set_menus(crate::app::build_native_menus(&self.i18n, &self.config, Some(&self.workspace.read(cx).plugin_manager)));
+        self.update_native_menus(cx);
         cx.notify();
     }
 
@@ -1381,10 +1391,269 @@ impl WindowView {
 
     fn handle_execute_plugin_command(&mut self, action: &ExecutePluginCommand, _window: &mut Window, cx: &mut Context<Self>) {
         let cmd = action.command.clone();
-        self.workspace.update(cx, |w, cx| {
-            w.apply_plugin_transform(&cmd);
-            cx.notify();
+        if cmd.starts_with("git_easy_") {
+            self.execute_git_easy_command(&cmd, None, cx);
+        } else {
+            self.workspace.update(cx, |w, cx| {
+                w.apply_plugin_transform(&cmd);
+                cx.notify();
+            });
+        }
+    }
+
+    fn execute_git_easy_command(&mut self, command: &str, target_path: Option<PathBuf>, cx: &mut Context<Self>) {
+        let root_path = self.workspace.read(cx).file_tree.root_path.clone();
+        let target_file = target_path.or_else(|| {
+            self.workspace.read(cx).active_editor().and_then(|e| e.path.clone())
         });
+        std::env::set_var("ZEE_WORKSPACE_ROOT", &root_path);
+
+        match command {
+            "git_easy_snapshot" => {
+                match zee_core::git::git_snapshot(&root_path, None) {
+                    Ok(msg) => {
+                        self.workspace.update(cx, |w, cx| {
+                            w.file_tree.refresh();
+                            cx.notify();
+                        });
+                        self.show_dialog(DialogType::Message {
+                            title: self.i18n.get("dialog.git.snapshot_success").to_string(),
+                            message: msg,
+                        }, None, cx);
+                    }
+                    Err(err) => {
+                        self.show_dialog(DialogType::Message {
+                            title: "Git Snapshot Error".to_string(),
+                            message: format!("{:#}", err),
+                        }, None, cx);
+                    }
+                }
+            }
+            "git_easy_new_draft" => {
+                match zee_core::git::git_new_draft(&root_path, None) {
+                    Ok(msg) => {
+                        self.workspace.update(cx, |w, cx| {
+                            w.file_tree.refresh();
+                            cx.notify();
+                        });
+                        self.update_native_menus(cx);
+                        self.show_dialog(DialogType::Message {
+                            title: self.i18n.get("menu.git.new_draft").to_string(),
+                            message: msg,
+                        }, None, cx);
+                    }
+                    Err(err) => {
+                        self.show_dialog(DialogType::Message {
+                            title: "Git Draft Error".to_string(),
+                            message: format!("{:#}", err),
+                        }, None, cx);
+                    }
+                }
+            }
+            "git_easy_merge_draft" => {
+                match zee_core::git::git_merge_draft(&root_path) {
+                    Ok(msg) => {
+                        self.workspace.update(cx, |w, cx| {
+                            w.file_tree.refresh();
+                            if let Some(editor) = w.active_editor_mut() {
+                                if let Some(path) = &editor.path {
+                                    if let Ok(new_buf) = Editor::from_file(path) {
+                                        *editor = new_buf;
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                        self.update_native_menus(cx);
+                        self.show_dialog(DialogType::Message {
+                            title: self.i18n.get("menu.git.merge_draft").to_string(),
+                            message: msg,
+                        }, None, cx);
+                    }
+                    Err(err) => {
+                        self.show_dialog(DialogType::Message {
+                            title: "Git Merge Error".to_string(),
+                            message: format!("{:#}", err),
+                        }, None, cx);
+                    }
+                }
+            }
+            "git_easy_switch_draft" => {
+                match zee_core::git::git_switch_draft(&root_path) {
+                    Ok(msg) => {
+                        self.workspace.update(cx, |w, cx| {
+                            w.file_tree.refresh();
+                            if let Some(editor) = w.active_editor_mut() {
+                                if let Some(path) = &editor.path {
+                                    if let Ok(new_buf) = Editor::from_file(path) {
+                                        *editor = new_buf;
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                        self.update_native_menus(cx);
+                        self.show_dialog(DialogType::Message {
+                            title: self.i18n.get("menu.git.switch_draft").to_string(),
+                            message: msg,
+                        }, None, cx);
+                    }
+                    Err(err) => {
+                        self.show_dialog(DialogType::Message {
+                            title: "Git Switch Error".to_string(),
+                            message: format!("{:#}", err),
+                        }, None, cx);
+                    }
+                }
+            }
+            "git_easy_restore_latest" => {
+                match zee_core::git::git_restore_latest(&root_path, target_file.as_deref()) {
+                    Ok(msg) => {
+                        self.workspace.update(cx, |w, cx| {
+                            w.file_tree.refresh();
+                            if let Some(editor) = w.active_editor_mut() {
+                                if let Some(path) = &editor.path {
+                                    if let Ok(new_buf) = Editor::from_file(path) {
+                                        *editor = new_buf;
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                        self.show_dialog(DialogType::Message {
+                            title: self.i18n.get("dialog.git.restore_success").to_string(),
+                            message: msg,
+                        }, None, cx);
+                    }
+                    Err(err) => {
+                        self.show_dialog(DialogType::Message {
+                            title: "Git Restore Error".to_string(),
+                            message: format!("{:#}", err),
+                        }, None, cx);
+                    }
+                }
+            }
+            "git_easy_add_file" => {
+                match zee_core::git::git_add(&root_path, target_file.as_deref()) {
+                    Ok(()) => {
+                        let name = target_file
+                            .as_ref()
+                            .map(|p| p.file_name().unwrap_or_default().to_string_lossy().to_string())
+                            .unwrap_or_else(|| "All files".to_string());
+                        self.workspace.update(cx, |w, cx| {
+                            w.file_tree.refresh();
+                            cx.notify();
+                        });
+                        self.show_dialog(DialogType::Message {
+                            title: self.i18n.get("menu.git.add_file").to_string(),
+                            message: format!("'{}' を Git の管理対象に追加しました。", name),
+                        }, None, cx);
+                    }
+                    Err(err) => {
+                        self.show_dialog(DialogType::Message {
+                            title: "Git Add Error".to_string(),
+                            message: format!("{:#}", err),
+                        }, None, cx);
+                    }
+                }
+            }
+            "git_easy_ignore_file" => {
+                if let Some(ref target) = target_file {
+                    match zee_core::git::add_to_gitignore(&root_path, target) {
+                        Ok(()) => {
+                            let name = target.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            self.workspace.update(cx, |w, cx| {
+                                w.file_tree.refresh();
+                                cx.notify();
+                            });
+                            self.update_native_menus(cx);
+                            self.show_dialog(DialogType::Message {
+                                title: self.i18n.get("menu.git.ignore_file").to_string(),
+                                message: format!("'{}' を .gitignore に追加しました。", name),
+                            }, None, cx);
+                        }
+                        Err(err) => {
+                            self.show_dialog(DialogType::Message {
+                                title: "Git Ignore Error".to_string(),
+                                message: format!("{:#}", err),
+                            }, None, cx);
+                        }
+                    }
+                } else {
+                    self.show_dialog(DialogType::Message {
+                        title: self.i18n.get("menu.git.ignore_file").to_string(),
+                        message: "対象のファイルが選択されていません。".to_string(),
+                    }, None, cx);
+                }
+            }
+            "git_easy_unignore_file" => {
+                if let Some(ref target) = target_file {
+                    match zee_core::git::remove_from_gitignore(&root_path, target) {
+                        Ok(()) => {
+                            let name = target.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            self.workspace.update(cx, |w, cx| {
+                                w.file_tree.refresh();
+                                cx.notify();
+                            });
+                            self.update_native_menus(cx);
+                            self.show_dialog(DialogType::Message {
+                                title: self.i18n.get("menu.git.unignore_file").to_string(),
+                                message: format!("'{}' を .gitignore から除外しました。", name),
+                            }, None, cx);
+                        }
+                        Err(err) => {
+                            self.show_dialog(DialogType::Message {
+                                title: "Git Unignore Error".to_string(),
+                                message: format!("{:#}", err),
+                            }, None, cx);
+                        }
+                    }
+                } else {
+                    self.show_dialog(DialogType::Message {
+                        title: self.i18n.get("menu.git.unignore_file").to_string(),
+                        message: "対象のファイルが選択されていません。".to_string(),
+                    }, None, cx);
+                }
+            }
+            "git_easy_history" => {
+                match zee_core::git::git_history(&root_path, 20) {
+                    Ok(hist) => {
+                        self.show_dialog(DialogType::Message {
+                            title: self.i18n.get("dialog.git.history_title").to_string(),
+                            message: hist,
+                        }, None, cx);
+                    }
+                    Err(err) => {
+                        self.show_dialog(DialogType::Message {
+                            title: "Git History Error".to_string(),
+                            message: format!("{:#}", err),
+                        }, None, cx);
+                    }
+                }
+            }
+            "git_easy_status" => {
+                match zee_core::git::git_status(&root_path) {
+                    Ok(st) => {
+                        self.show_dialog(DialogType::Message {
+                            title: self.i18n.get("dialog.git.status_title").to_string(),
+                            message: st,
+                        }, None, cx);
+                    }
+                    Err(err) => {
+                        self.show_dialog(DialogType::Message {
+                            title: "Git Status Error".to_string(),
+                            message: format!("{:#}", err),
+                        }, None, cx);
+                    }
+                }
+            }
+            _ => {
+                self.workspace.update(cx, |w, cx| {
+                    w.apply_plugin_transform(command);
+                    cx.notify();
+                });
+            }
+        }
     }
 
     fn handle_reopen_with_encoding(&mut self, action: &ReopenWithEncoding, _window: &mut Window, cx: &mut Context<Self>) {
@@ -2081,6 +2350,18 @@ impl WindowView {
     }
 
     fn render_git_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+        let ws = self.workspace.read(cx);
+        let is_ignored = ws.active_editor()
+            .and_then(|e| e.path.as_ref())
+            .map(|p| zee_core::git::is_path_ignored(&ws.file_tree.root_path, p))
+            .unwrap_or(false);
+
+        let (ignore_label, ignore_cmd) = if is_ignored {
+            (self.i18n.get("menu.git.unignore_file").to_string(), "git_easy_unignore_file".to_string())
+        } else {
+            (self.i18n.get("menu.git.ignore_file").to_string(), "git_easy_ignore_file".to_string())
+        };
+
         div()
             .flex()
             .flex_col()
@@ -2091,7 +2372,7 @@ impl WindowView {
             .child(self.render_menu_item(self.i18n.get("menu.git.restore_latest").to_string(), None, false, ExecutePluginCommand { command: "git_easy_restore_latest".to_string() }, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.git.add_file").to_string(), None, false, ExecutePluginCommand { command: "git_easy_add_file".to_string() }, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.git.ignore_file").to_string(), None, false, ExecutePluginCommand { command: "git_easy_ignore_file".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(ignore_label, None, false, ExecutePluginCommand { command: ignore_cmd }, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_menu_item(self.i18n.get("menu.git.history").to_string(), None, false, ExecutePluginCommand { command: "git_easy_history".to_string() }, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_item(self.i18n.get("menu.git.status").to_string(), None, false, ExecutePluginCommand { command: "git_easy_status".to_string() }, fg, hover_bg, muted_fg, cx))

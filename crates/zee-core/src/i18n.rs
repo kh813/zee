@@ -440,8 +440,20 @@ impl I18n {
         m.insert("menu.git.restore_latest".to_string(), "Restore Latest Snapshot".to_string());
         m.insert("menu.git.add_file".to_string(), "Add Current File to Git".to_string());
         m.insert("menu.git.ignore_file".to_string(), "Add Current File to .gitignore".to_string());
+        m.insert("menu.git.unignore_file".to_string(), "Remove Current File from .gitignore".to_string());
         m.insert("menu.git.history".to_string(), "Git History".to_string());
         m.insert("menu.git.status".to_string(), "Git Status".to_string());
+
+        m.insert("sidebar.git_snapshot".to_string(), "Snapshot (Commit)".to_string());
+        m.insert("sidebar.git_add".to_string(), "Add to Git".to_string());
+        m.insert("sidebar.git_ignore".to_string(), "Add to .gitignore".to_string());
+        m.insert("sidebar.git_unignore".to_string(), "Remove from .gitignore".to_string());
+        m.insert("sidebar.git_history".to_string(), "Git History".to_string());
+
+        m.insert("dialog.git.status_title".to_string(), "Git Status".to_string());
+        m.insert("dialog.git.history_title".to_string(), "Git History".to_string());
+        m.insert("dialog.git.snapshot_success".to_string(), "Snapshot successfully created.".to_string());
+        m.insert("dialog.git.restore_success".to_string(), "Restored to the latest snapshot.".to_string());
 
         m.insert("about.version".to_string(), "Version".to_string());
         m.insert("about.license".to_string(), "License".to_string());
@@ -723,8 +735,20 @@ impl I18n {
         m.insert("menu.git.restore_latest".to_string(), "⏪ 最新スナップショットに復元 (Restore Latest)".to_string());
         m.insert("menu.git.add_file".to_string(), "➕ 現在のファイルをGitに追加 (Add File)".to_string());
         m.insert("menu.git.ignore_file".to_string(), "🚫 現在のファイルを.gitignoreに追加 (Ignore File)".to_string());
+        m.insert("menu.git.unignore_file".to_string(), "🚫 現在のファイルを.gitignoreから除外 (Unignore File)".to_string());
         m.insert("menu.git.history".to_string(), "📜 変更履歴 (History)".to_string());
         m.insert("menu.git.status".to_string(), "📊 状態確認 (Status)".to_string());
+
+        m.insert("sidebar.git_snapshot".to_string(), "📸 スナップショット (Commit)".to_string());
+        m.insert("sidebar.git_add".to_string(), "➕ Gitに追加 (Add File)".to_string());
+        m.insert("sidebar.git_ignore".to_string(), "🚫 .gitignoreに追加 (Ignore File)".to_string());
+        m.insert("sidebar.git_unignore".to_string(), "✅ .gitignoreから除外 (Unignore File)".to_string());
+        m.insert("sidebar.git_history".to_string(), "📜 変更履歴 (History)".to_string());
+
+        m.insert("dialog.git.status_title".to_string(), "Git 状態確認 (Status)".to_string());
+        m.insert("dialog.git.history_title".to_string(), "Git 変更履歴 (History)".to_string());
+        m.insert("dialog.git.snapshot_success".to_string(), "スナップショットを正常に作成しました。".to_string());
+        m.insert("dialog.git.restore_success".to_string(), "最新のスナップショットに復元しました。".to_string());
 
         m.insert("about.version".to_string(), "バージョン".to_string());
         m.insert("about.license".to_string(), "ライセンス".to_string());

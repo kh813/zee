@@ -670,7 +670,7 @@ pub fn restore_session_window(session: zee_core::session::UpdateSession, config:
 
 #[cfg(target_os = "macos")]
 pub fn setup_menu(app: &mut App, i18n: &I18n, config: &Config) {
-    app.set_menus(build_native_menus(i18n, config, None));
+    app.set_menus(build_native_menus(i18n, config, None, false));
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -782,7 +782,13 @@ impl Action for SetLanguage {
     fn name_for_type() -> &'static str { "SetLanguage" }
 }
 
-pub fn build_git_menu_items(i18n: &I18n) -> Vec<MenuItem> {
+pub fn build_git_menu_items(i18n: &I18n, is_ignored: bool) -> Vec<MenuItem> {
+    let ignore_item = if is_ignored {
+        MenuItem::action(i18n.get("menu.git.unignore_file"), ExecutePluginCommand { command: "git_easy_unignore_file".to_string() })
+    } else {
+        MenuItem::action(i18n.get("menu.git.ignore_file"), ExecutePluginCommand { command: "git_easy_ignore_file".to_string() })
+    };
+
     vec![
         MenuItem::action(i18n.get("menu.git.snapshot"), ExecutePluginCommand { command: "git_easy_snapshot".to_string() }),
         MenuItem::action(i18n.get("menu.git.new_draft"), ExecutePluginCommand { command: "git_easy_new_draft".to_string() }),
@@ -791,7 +797,7 @@ pub fn build_git_menu_items(i18n: &I18n) -> Vec<MenuItem> {
         MenuItem::action(i18n.get("menu.git.restore_latest"), ExecutePluginCommand { command: "git_easy_restore_latest".to_string() }),
         MenuItem::separator(),
         MenuItem::action(i18n.get("menu.git.add_file"), ExecutePluginCommand { command: "git_easy_add_file".to_string() }),
-        MenuItem::action(i18n.get("menu.git.ignore_file"), ExecutePluginCommand { command: "git_easy_ignore_file".to_string() }),
+        ignore_item,
         MenuItem::separator(),
         MenuItem::action(i18n.get("menu.git.history"), ExecutePluginCommand { command: "git_easy_history".to_string() }),
         MenuItem::action(i18n.get("menu.git.status"), ExecutePluginCommand { command: "git_easy_status".to_string() }),
@@ -803,6 +809,7 @@ pub fn build_native_menus(
     i18n: &I18n,
     config: &zee_core::config::Config,
     plugin_manager: Option<&zee_core::plugin::PluginManager>,
+    active_file_ignored: bool,
 ) -> Vec<Menu> {
     let mut theme_items = Vec::new();
     for theme in zee_core::theme::Theme::load_all() {
@@ -1096,7 +1103,7 @@ pub fn build_native_menus(
     if has_git {
         menus.push(Menu {
             name: i18n.get("menu.git").into(),
-            items: build_git_menu_items(i18n),
+            items: build_git_menu_items(i18n, active_file_ignored),
             disabled: false,
         });
     }

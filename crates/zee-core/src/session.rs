@@ -137,6 +137,7 @@ mod tests {
 
     #[test]
     fn test_update_session_exists_lifecycle() {
+        let _lock = crate::config::TEST_MUTEX.lock().unwrap();
         // Ensure starting clean
         UpdateSession::clear();
         assert!(!UpdateSession::exists());

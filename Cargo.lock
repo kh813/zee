@@ -8052,6 +8052,7 @@ version = "0.3.3"
 dependencies = [
  "aho-corasick",
  "anyhow",
+ "chrono",
  "encoding_rs",
  "flate2",
  "libc",

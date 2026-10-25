@@ -423,7 +423,7 @@ impl Dialog {
                         #[cfg(target_os = "macos")]
                         {
                             let pm = &workspace.read(cx).plugin_manager;
-                            cx.set_menus(crate::app::build_native_menus(&this.i18n, &workspace.read(cx).config, Some(pm)));
+                            cx.set_menus(crate::app::build_native_menus(&this.i18n, &workspace.read(cx).config, Some(pm), false));
                         }
                     } else if let Err(e) = res {
                         this.registry_error = Some(e.to_string());

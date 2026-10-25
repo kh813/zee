@@ -1072,6 +1072,41 @@ impl PluginManager {
         Ok(all_plugins)
     }
 
+    /// Compare two version strings. Returns true if `candidate` is strictly newer than `installed`.
+    /// Supports SemVer (e.g. 0.1.0 vs 0.2.0) and CalVer / Date-based (e.g. 20261025.1 vs 20261025.2).
+    pub fn is_newer_version(installed: &str, candidate: &str) -> bool {
+        fn clean(s: &str) -> &str {
+            s.trim().trim_start_matches(|c| c == 'v' || c == 'V')
+        }
+        let parse_parts = |s: &str| -> Vec<u64> {
+            clean(s)
+                .split(|c: char| c == '.' || c == '-' || c == '_')
+                .filter(|p| !p.is_empty())
+                .filter_map(|p| p.parse::<u64>().ok())
+                .collect()
+        };
+
+        let inst_parts = parse_parts(installed);
+        let cand_parts = parse_parts(candidate);
+
+        if !inst_parts.is_empty() && !cand_parts.is_empty() {
+            let max_len = inst_parts.len().max(cand_parts.len());
+            for i in 0..max_len {
+                let inst = inst_parts.get(i).copied().unwrap_or(0);
+                let cand = cand_parts.get(i).copied().unwrap_or(0);
+                if cand > inst {
+                    return true;
+                } else if cand < inst {
+                    return false;
+                }
+            }
+            false
+        } else {
+            // Fallback to lexicographical comparison
+            clean(candidate) > clean(installed)
+        }
+    }
+
     /// Install a plugin by ID from online registries
     pub fn install_from_registry(
         plugin_id: &str,
@@ -1683,6 +1718,48 @@ new = "Nova"
 
         crate::config::Config::set_custom_config_dir(None);
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_is_newer_version() {
+        // SemVer comparisons
+        assert!(PluginManager::is_newer_version("0.1.0", "0.2.0"));
+        assert!(PluginManager::is_newer_version("0.1.9", "0.2.0"));
+        assert!(PluginManager::is_newer_version("0.2.0", "0.2.1"));
+        assert!(!PluginManager::is_newer_version("0.2.0", "0.2.0"));
+        assert!(!PluginManager::is_newer_version("0.2.0", "0.1.9"));
+
+        // CalVer / Date-based comparisons
+        assert!(PluginManager::is_newer_version("20261024.1", "20261025.1"));
+        assert!(PluginManager::is_newer_version("20261025.1", "20261025.2"));
+        assert!(PluginManager::is_newer_version("20261025.99", "20261026.1"));
+        assert!(!PluginManager::is_newer_version("20261025.2", "20261025.1"));
+
+        // SemVer to CalVer transition
+        assert!(PluginManager::is_newer_version("0.2.0", "20261025.1"));
+        assert!(!PluginManager::is_newer_version("20261025.1", "0.2.0"));
+
+        // Prefixed with 'v'
+        assert!(PluginManager::is_newer_version("v0.1.0", "v0.2.0"));
+        assert!(PluginManager::is_newer_version("v20261025.1", "20261025.2"));
+    }
+
+    #[test]
+    fn test_git_easy_plugin_real_load() {
+        let mut pm = PluginManager::new();
+        let plugin_dir = PathBuf::from("/Users/hiroshi/dev/zee-plugins/plugins/git-easy");
+        pm.load_plugin_dir(&plugin_dir).expect("Failed to load git-easy plugin");
+
+        let manifests = pm.all_manifests();
+        let ge = manifests.iter().find(|m| m.id == "git-easy").expect("git-easy manifest not found");
+        assert_eq!(ge.name, "Git Easy");
+        assert_eq!(ge.version, "20261025.1");
+        assert_eq!(ge.capabilities.commands.len(), 9);
+
+        // Test executing command through plugin manager
+        let doc = "# My Document\nContent";
+        let res = pm.transform_text("git_easy_snapshot", doc);
+        assert_eq!(res, Some(doc.to_string()));
     }
 }
 

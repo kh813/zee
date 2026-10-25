@@ -2,3 +2,33 @@
 target/
 dist/
 .cargo/
+
+# ==============================================================================
+# Protected by Git Easy (Cross-Platform OS & Editor Ignores)
+# ==============================================================================
+# macOS
+# .DS_Store (already in .gitignore)
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Linux & Temporary Files
+*~
+.fuse_hidden*
+.directory
+*.swp
+*.swo
+*.tmp
+*.bak
+.zee/

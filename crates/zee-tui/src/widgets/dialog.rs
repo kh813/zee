@@ -1179,7 +1179,11 @@ impl Dialog for PluginManagerDialog {
                     let idx = start_idx + row;
                     if idx >= registry.len() { break; }
                     let item = registry[idx];
-                    let is_installed = self.manifests.iter().any(|m| m.id == item.id);
+                    let installed_opt = self.manifests.iter().find(|m| m.id == item.id);
+                    let is_installed = installed_opt.is_some();
+                    let has_update = installed_opt.map_or(false, |m| {
+                        zee_core::plugin::PluginManager::is_newer_version(&m.version, &item.version)
+                    });
                     let is_sel = idx == self.selected_idx;
                     let (bg, fg) = if is_sel { (to_ct_color(theme.editor.selection, theme), accent) } else { (dialog_bg, dialog_fg) };
 
@@ -1195,11 +1199,15 @@ impl Dialog for PluginManagerDialog {
                         zee_core::plugin::PluginType::Syntax => "Syntax",
                         zee_core::plugin::PluginType::Locale => "Locale",
                     };
-                    let name_str = format!("{} [{}] v{}", item.name, type_str, item.version);
+                    let name_str = if has_update {
+                        format!("{} [{}] v{} ➔ v{}", item.name, type_str, installed_opt.unwrap().version, item.version)
+                    } else {
+                        format!("{} [{}] v{}", item.name, type_str, item.version)
+                    };
                     let mut cur_x = x + 3;
                     for c in name_str.chars() {
                         let cw = c.width().unwrap_or(1) as u16;
-                        if cur_x + cw < x + 30 {
+                        if cur_x + cw < x + 35 {
                             renderer.set_cell(cur_x, iy, Cell { ch: c, bg, fg, bold: is_sel, width: cw as u8, ..Default::default() });
                             cur_x += cw;
                         }
@@ -1207,24 +1215,35 @@ impl Dialog for PluginManagerDialog {
 
                     // Description
                     if let Some(ref desc) = item.description {
-                        let mut desc_x = x + 32;
+                        let mut desc_x = x + 36;
                         for c in desc.chars() {
                             let cw = c.width().unwrap_or(1) as u16;
-                            if desc_x + cw < x + w - 16 {
+                            if desc_x + cw < x + w - 18 {
                                 renderer.set_cell(desc_x, iy, Cell { ch: c, bg, fg: to_ct_color(theme.editor.line_number, theme), width: cw as u8, ..Default::default() });
                                 desc_x += cw;
                             }
                         }
                     }
 
-                    // Install / Installed badge
-                    let badge = if is_installed { "✓ Installed" } else { &self.i18n_install };
+                    // Install / Update / Installed badge
+                    let (badge, is_actionable) = if has_update {
+                        ("⬆ Update", true)
+                    } else if is_installed {
+                        ("✓ Installed", false)
+                    } else {
+                        (self.i18n_install.as_str(), true)
+                    };
                     let act_str = format!("[ {} ]", badge);
                     let mut ax = x + w - (act_str.len() as u16) - 3;
-                    let b_bg = if is_sel && !is_installed { active_bg } else { to_ct_color(theme.ui.status_bar_bg, theme) };
-                    let b_fg = if is_sel && !is_installed { active_fg } else { to_ct_color(theme.ui.status_bar_fg, theme) };
+                    let (b_bg, b_fg) = if is_sel && is_actionable {
+                        (active_bg, active_fg)
+                    } else if has_update {
+                        (Color::Yellow, Color::Black)
+                    } else {
+                        (to_ct_color(theme.ui.status_bar_bg, theme), to_ct_color(theme.ui.status_bar_fg, theme))
+                    };
                     for c in act_str.chars() {
-                        renderer.set_cell(ax, iy, Cell { ch: c, bg: b_bg, fg: b_fg, bold: is_sel, width: 1, ..Default::default() });
+                        renderer.set_cell(ax, iy, Cell { ch: c, bg: b_bg, fg: b_fg, bold: is_sel || has_update, width: 1, ..Default::default() });
                         ax += 1;
                     }
                 }
@@ -1340,16 +1359,22 @@ impl Dialog for PluginManagerDialog {
                     let registry = self.filtered_registry();
                     if let Some(item) = registry.get(self.selected_idx) {
                         let id = item.id.clone();
-                        let is_installed = self.manifests.iter().any(|m| m.id == id);
-                        if !is_installed {
+                        let installed_opt = self.manifests.iter().find(|m| m.id == id);
+                        let is_installed = installed_opt.is_some();
+                        let has_update = installed_opt.map_or(false, |m| {
+                            zee_core::plugin::PluginManager::is_newer_version(&m.version, &item.version)
+                        });
+
+                        if !is_installed || has_update {
+                            let action_label = if has_update { "updated" } else { "installed" };
                             match zee_core::plugin::PluginManager::install_from_registry(&id, None, None) {
                                 Ok(()) => {
-                                    self.message = Some((format!("Plugin '{}' installed successfully", id), false));
+                                    self.message = Some((format!("Plugin '{}' {} successfully (v{})", id, action_label, item.version), false));
                                     let pm = zee_core::plugin::PluginManager::new();
                                     self.manifests = pm.all_manifests();
                                 }
                                 Err(e) => {
-                                    self.message = Some((format!("Failed to install: {}", e), true));
+                                    self.message = Some((format!("Failed to {}: {}", if has_update { "update" } else { "install" }, e), true));
                                 }
                             }
                         }
@@ -4981,6 +5006,60 @@ mod tests {
             DialogResult::Cancel => {}
             _ => panic!("Expected DialogResult::Cancel on Esc"),
         }
+    }
+
+    #[test]
+    fn test_plugin_manager_dialog_update_detection() {
+        let i18n = zee_core::I18n::load("en");
+        let pm = zee_core::plugin::PluginManager::new();
+        let mut dialog = PluginManagerDialog::new(&pm, None, &i18n);
+
+        // Inject simulated installed manifest (v0.1.0) and registry plugin (v20261025.1)
+        dialog.manifests = vec![zee_core::plugin::PluginManifest {
+            id: "git-easy".to_string(),
+            name: "Git Easy".to_string(),
+            version: "0.1.0".to_string(),
+            plugin_type: zee_core::plugin::PluginType::Lua,
+            entry: Some("init.lua".to_string()),
+            author: Some("hiroshi".to_string()),
+            description: Some("Test".to_string()),
+            homepage: None,
+            languages: vec!["*".to_string()],
+            capabilities: Default::default(),
+        }];
+
+        dialog.registry_plugins = vec![zee_core::plugin::RegistryPlugin {
+            id: "git-easy".to_string(),
+            name: "Git Easy".to_string(),
+            version: "20261025.1".to_string(),
+            plugin_type: zee_core::plugin::PluginType::Lua,
+            entry: Some("init.lua".to_string()),
+            author: Some("hiroshi".to_string()),
+            description: Some("Test".to_string()),
+            homepage: None,
+            repository: None,
+            download_url: Some("https://example.com/git-easy".to_string()),
+            languages: vec!["*".to_string()],
+            capabilities: Default::default(),
+        }];
+
+        dialog.active_tab = 1; // Registry tab
+        dialog.selected_idx = 0;
+
+        let theme = zee_core::theme::Theme::load_all().into_iter().next().unwrap();
+        let mut renderer = Renderer::new(80, 22);
+        dialog.render(&mut renderer, &theme, 0, 0, 80, 22);
+
+        // Render check: row should contain "Update" badge
+        let mut found_update_badge = false;
+        for y in 0..22 {
+            let row_str: String = (0..80).map(|x| renderer.get_cell(x, y).ch).collect();
+            if row_str.contains("Update") {
+                found_update_badge = true;
+                break;
+            }
+        }
+        assert!(found_update_badge, "Registry view must display Update badge for older installed plugin");
     }
 
     #[test]

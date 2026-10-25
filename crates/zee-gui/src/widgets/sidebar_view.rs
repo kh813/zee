@@ -80,7 +80,7 @@ impl SidebarView {
 
 impl Render for SidebarView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (active_tab, is_right_sidebar, show_hidden, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props) = {
+        let (active_tab, is_right_sidebar, show_hidden, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props, root_path) = {
             let workspace = self.workspace.read(cx);
             let theme = &workspace.theme;
 
@@ -120,7 +120,9 @@ impl Render for SidebarView {
                 }
             });
 
-            (active_tab, is_right_sidebar, show_hidden, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props)
+            let root_path = workspace.file_tree.root_path.clone();
+
+            (active_tab, is_right_sidebar, show_hidden, bg_color, text_color, active_fg, muted_fg, border_color, hover_bg, sel_bg, file_items, active_path, outline_nodes, active_props, root_path)
         };
 
         // Render header tabs
@@ -183,6 +185,25 @@ impl Render for SidebarView {
                             }))
                             .child("Outline")
                     )
+                    .child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .text_size(px(12.0))
+                            .text_color(if active_tab == SidebarTab::History { active_fg } else { muted_fg })
+                            .font_weight(if active_tab == SidebarTab::History { FontWeight::BOLD } else { FontWeight::NORMAL })
+                            .bg(if active_tab == SidebarTab::History { with_alpha(active_fg, 0.12) } else { Rgba { r: 0.0, g: 0.0, b: 0.0, a: 0.0 } })
+                            .hover(move |s| s.bg(with_alpha(active_fg, 0.18)))
+                            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                                this.workspace.update(cx, |w, cx| {
+                                    w.sidebar_tab = SidebarTab::History;
+                                    cx.notify();
+                                });
+                            }))
+                            .child("History")
+                    )
             )
             .child(
                 div()
@@ -239,6 +260,7 @@ impl Render for SidebarView {
         let content = match active_tab {
             SidebarTab::Files => self.render_files(file_items, active_path.as_ref(), text_color, active_fg, muted_fg, hover_bg, sel_bg, cx).into_any_element(),
             SidebarTab::Outline => self.render_outline(&outline_nodes, text_color, active_fg, muted_fg, hover_bg, cx).into_any_element(),
+            SidebarTab::History => self.render_history(&root_path, text_color, active_fg, muted_fg, border_color, hover_bg, cx).into_any_element(),
         };
 
         let mut container = div()
@@ -677,6 +699,204 @@ impl SidebarView {
                         )
                 })
             )
+            .into_any_element()
+    }
+
+    fn render_history(
+        &self,
+        root_path: &std::path::Path,
+        text_color: Rgba,
+        active_fg: Rgba,
+        muted_fg: Rgba,
+        border_color: Rgba,
+        hover_bg: Rgba,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_git_repo = zee_core::git::is_git_repo(root_path);
+
+        if !is_git_repo {
+            let p_init = root_path.to_path_buf();
+            return div()
+                .w_full()
+                .px_4()
+                .py_6()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .items_center()
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(muted_fg)
+                        .child(self.i18n.get("sidebar.history_not_repo").to_string())
+                )
+                .child(
+                    div()
+                        .px_3()
+                        .py_1p5()
+                        .rounded_sm()
+                        .bg(with_alpha(active_fg, 0.15))
+                        .border_1()
+                        .border_color(with_alpha(active_fg, 0.35))
+                        .cursor_pointer()
+                        .text_size(px(12.0))
+                        .text_color(active_fg)
+                        .hover(move |s| s.bg(with_alpha(active_fg, 0.25)))
+                        .on_mouse_down(MouseButton::Left, cx.listener(move |_this, _, _, cx| {
+                            cx.emit(SidebarEvent::GitAction {
+                                command: "git_easy_snapshot".to_string(),
+                                path: p_init.clone(),
+                            });
+                        }))
+                        .child(format!("📸 {}", self.i18n.get("sidebar.history_init_repo")))
+                )
+                .into_any_element();
+        }
+
+        let branch = {
+            let b = zee_core::git::get_current_branch(root_path);
+            if b.is_empty() { "main".to_string() } else { b }
+        };
+        let commits = zee_core::git::git_log_items(root_path, 50).unwrap_or_default();
+
+        let p_snap = root_path.to_path_buf();
+        let branch_bar = div()
+            .w_full()
+            .px_2p5()
+            .py_1p5()
+            .flex()
+            .items_center()
+            .justify_between()
+            .border_b_1()
+            .border_color(border_color)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(muted_fg)
+                            .child("🌿")
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.5))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(text_color)
+                            .truncate()
+                            .max_w(px(110.0))
+                            .child(branch)
+                    )
+            )
+            .child(
+                div()
+                    .px_2()
+                    .py_0p5()
+                    .rounded_sm()
+                    .bg(with_alpha(active_fg, 0.12))
+                    .cursor_pointer()
+                    .text_size(px(11.0))
+                    .text_color(active_fg)
+                    .font_weight(FontWeight::MEDIUM)
+                    .hover(move |s| s.bg(with_alpha(active_fg, 0.22)))
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |_this, _, _, cx| {
+                        cx.emit(SidebarEvent::GitAction {
+                            command: "git_easy_snapshot".to_string(),
+                            path: p_snap.clone(),
+                        });
+                    }))
+                    .child(self.i18n.get("sidebar.history_take_snapshot").to_string())
+            );
+
+        if commits.is_empty() {
+            return div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(branch_bar)
+                .child(
+                    div()
+                        .px_3()
+                        .py_4()
+                        .text_size(px(12.0))
+                        .text_color(muted_fg)
+                        .child(self.i18n.get("sidebar.history_empty").to_string())
+                )
+                .into_any_element();
+        }
+
+        let commit_list = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .py_1()
+            .children(
+                commits.into_iter().map(|item| {
+                    let has_hash = !item.hash.is_empty();
+                    div()
+                        .w_full()
+                        .px_2p5()
+                        .py_1p5()
+                        .border_b_1()
+                        .border_color(with_alpha(border_color, 0.4))
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(hover_bg))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_1()
+                                .when(has_hash, |d| {
+                                    d.child(
+                                        div()
+                                            .px_1()
+                                            .py_0p5()
+                                            .rounded_xs()
+                                            .bg(with_alpha(active_fg, 0.12))
+                                            .text_size(px(10.0))
+                                            .font_weight(FontWeight::BOLD)
+                                            .text_color(active_fg)
+                                            .child(item.hash)
+                                    )
+                                })
+                                .child(
+                                    div()
+                                        .text_size(px(10.0))
+                                        .text_color(muted_fg)
+                                        .whitespace_nowrap()
+                                        .child(item.time_ago)
+                                )
+                        )
+                        .child(
+                            div()
+                                .pt_0p5()
+                                .text_size(px(11.5))
+                                .text_color(text_color)
+                                .truncate()
+                                .child(item.message)
+                        )
+                        .when(!item.author.is_empty(), |d| {
+                            d.child(
+                                div()
+                                    .pt_0p5()
+                                    .text_size(px(10.0))
+                                    .text_color(muted_fg)
+                                    .truncate()
+                                    .child(format!("👤 {}", item.author))
+                            )
+                        })
+                })
+            );
+
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(branch_bar)
+            .child(commit_list)
             .into_any_element()
     }
 

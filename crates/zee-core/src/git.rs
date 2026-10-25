@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use anyhow::{Context, Result};
+use serde::{Serialize, Deserialize};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -313,6 +314,44 @@ pub fn git_history(root: &Path, max_count: usize) -> Result<String> {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GitCommitItem {
+    pub hash: String,
+    pub author: String,
+    pub time_ago: String,
+    pub message: String,
+}
+
+pub fn git_log_items(root: &Path, max_count: usize) -> Result<Vec<GitCommitItem>> {
+    ensure_git_repo(root)?;
+
+    let mut cmd = base_git_command(root);
+    cmd.args(["log", "--format=%h|%an|%ar|%s", "-n", &max_count.to_string()]);
+    let output = cmd.output().context("Failed to run git log")?;
+    let text = String::from_utf8_lossy(&output.stdout);
+
+    let mut items = Vec::new();
+    for line in text.lines() {
+        let parts: Vec<&str> = line.splitn(4, '|').collect();
+        if parts.len() == 4 {
+            items.push(GitCommitItem {
+                hash: parts[0].to_string(),
+                author: parts[1].to_string(),
+                time_ago: parts[2].to_string(),
+                message: parts[3].to_string(),
+            });
+        } else if !line.trim().is_empty() {
+            items.push(GitCommitItem {
+                hash: "".to_string(),
+                author: "".to_string(),
+                time_ago: "".to_string(),
+                message: line.to_string(),
+            });
+        }
+    }
+    Ok(items)
+}
+
 pub fn git_restore_latest(root: &Path, target: Option<&Path>) -> Result<String> {
     ensure_git_repo(root)?;
 
@@ -506,6 +545,29 @@ mod tests {
 
         remove_from_gitignore(&temp_dir, &file).unwrap();
         assert!(!is_path_ignored(&temp_dir, &file));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_git_log_items_and_repo() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_git_log_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        assert!(!is_git_repo(&temp_dir));
+
+        let file = temp_dir.join("sample.txt");
+        std::fs::write(&file, "version 1").unwrap();
+
+        let snap_res = git_snapshot(&temp_dir, Some("First snapshot"));
+        assert!(snap_res.is_ok());
+        assert!(is_git_repo(&temp_dir));
+
+        let items = git_log_items(&temp_dir, 10).unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(!items[0].hash.is_empty());
+        assert!(items[0].message.contains("First snapshot"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

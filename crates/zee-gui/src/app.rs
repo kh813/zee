@@ -613,6 +613,7 @@ pub fn restore_session_window(session: zee_core::session::UpdateSession, config:
             w.sidebar_visible = session.sidebar_visible;
             w.sidebar_tab = match session.sidebar_tab.as_str() {
                 "outline" => crate::workspace::SidebarTab::Outline,
+                "history" => crate::workspace::SidebarTab::History,
                 _ => crate::workspace::SidebarTab::Files,
             };
             if !session.expanded_folders.is_empty() {

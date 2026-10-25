@@ -9,6 +9,7 @@ use std::path::PathBuf;
 pub enum SidebarTab {
     Files,
     Outline,
+    History,
 }
 
 pub struct Workspace {
@@ -622,6 +623,7 @@ mod tests {
         w.sidebar_visible = session.sidebar_visible;
         w.sidebar_tab = match session.sidebar_tab.as_str() {
             "outline" => SidebarTab::Outline,
+            "history" => SidebarTab::History,
             _ => SidebarTab::Files,
         };
         if !session.expanded_folders.is_empty() {

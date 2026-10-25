@@ -1652,20 +1652,11 @@ impl WindowView {
                 }
             }
             "git_easy_history" => {
-                match zee_core::git::git_history(&root_path, 20) {
-                    Ok(hist) => {
-                        self.show_dialog(DialogType::Message {
-                            title: self.i18n.get("dialog.git.history_title").to_string(),
-                            message: hist,
-                        }, None, cx);
-                    }
-                    Err(err) => {
-                        self.show_dialog(DialogType::Message {
-                            title: "Git History Error".to_string(),
-                            message: format!("{:#}", err),
-                        }, None, cx);
-                    }
-                }
+                self.workspace.update(cx, |w, cx| {
+                    w.sidebar_visible = true;
+                    w.sidebar_tab = crate::workspace::SidebarTab::History;
+                    cx.notify();
+                });
             }
             "git_easy_status" => {
                 match zee_core::git::git_status(&root_path) {

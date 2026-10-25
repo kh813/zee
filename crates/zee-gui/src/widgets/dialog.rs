@@ -311,6 +311,7 @@ impl Dialog {
             let sidebar_tab = match ws.sidebar_tab {
                 crate::workspace::SidebarTab::Files => "files".to_string(),
                 crate::workspace::SidebarTab::Outline => "outline".to_string(),
+                crate::workspace::SidebarTab::History => "history".to_string(),
             };
             zee_core::session::UpdateSession {
                 files,
@@ -455,6 +456,7 @@ impl Dialog {
             let sidebar_tab = match ws.sidebar_tab {
                 crate::workspace::SidebarTab::Files => "files".to_string(),
                 crate::workspace::SidebarTab::Outline => "outline".to_string(),
+                crate::workspace::SidebarTab::History => "history".to_string(),
             };
             zee_core::session::UpdateSession {
                 files,

@@ -126,3 +126,15 @@ When any GitHub Actions workflow (CI or Release) fails:
 4. **Push & Execute GitHub Actions (GitHub Actions の実行)**:
    - Only after local verification has completely succeeded, commit the fixes, push to GitHub, and monitor the workflow to completion.
 
+---
+
+## 7. Local Application Bundle Updates & Code Signing (ローカルアプリ更新時のコード署名)
+
+When updating the local macOS application bundle (`/Users/hiroshi/Applications/Zee.app`):
+- **Never simply `cp` a new binary into the app bundle without code signing**: macOS taskgated verifies the executable hash against `_CodeSignature/CodeResources`. If a binary is overwritten without updating the signature, the kernel immediately terminates the process with `EXC_CRASH (SIGKILL (Code Signature Invalid))` / `Taskgated Invalid Signature`.
+- **Mandatory Script Usage**: Always use the automated install script:
+  ```bash
+  ./scripts/install-local-app.sh
+  ```
+  This script builds the release binary, updates `Zee.app/Contents/MacOS/zeeg`, clears extended quarantine attributes (`xattr -cr`), and executes `codesign --force --deep --sign -` followed by verification (`codesign -vvv --deep`).
+

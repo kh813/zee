@@ -670,7 +670,7 @@ pub fn restore_session_window(session: zee_core::session::UpdateSession, config:
 
 #[cfg(target_os = "macos")]
 pub fn setup_menu(app: &mut App, i18n: &I18n, config: &Config) {
-    app.set_menus(build_native_menus(i18n, config, None, false));
+    app.set_menus(build_native_menus(i18n, config, None, None));
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -782,25 +782,46 @@ impl Action for SetLanguage {
     fn name_for_type() -> &'static str { "SetLanguage" }
 }
 
-pub fn build_git_menu_items(i18n: &I18n, is_ignored: bool) -> Vec<MenuItem> {
+#[derive(Debug, Clone, Default)]
+pub struct MenuContext {
+    pub is_git_repo: bool,
+    pub has_active_editor: bool,
+    pub has_active_file: bool,
+    pub active_file_ignored: bool,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    pub has_selection: bool,
+}
+
+pub fn build_git_menu_items(i18n: &I18n, is_ignored: bool, is_git: bool, has_active_file: bool) -> Vec<MenuItem> {
     let ignore_item = if is_ignored {
         MenuItem::action(i18n.get("menu.git.unignore_file"), ExecutePluginCommand { command: "git_easy_unignore_file".to_string() })
+            .disabled(!is_git || !has_active_file)
     } else {
         MenuItem::action(i18n.get("menu.git.ignore_file"), ExecutePluginCommand { command: "git_easy_ignore_file".to_string() })
+            .disabled(!is_git || !has_active_file)
     };
 
     vec![
-        MenuItem::action(i18n.get("menu.git.snapshot"), ExecutePluginCommand { command: "git_easy_snapshot".to_string() }),
-        MenuItem::action(i18n.get("menu.git.new_draft"), ExecutePluginCommand { command: "git_easy_new_draft".to_string() }),
-        MenuItem::action(i18n.get("menu.git.merge_draft"), ExecutePluginCommand { command: "git_easy_merge_draft".to_string() }),
-        MenuItem::action(i18n.get("menu.git.switch_draft"), ExecutePluginCommand { command: "git_easy_switch_draft".to_string() }),
-        MenuItem::action(i18n.get("menu.git.restore_latest"), ExecutePluginCommand { command: "git_easy_restore_latest".to_string() }),
+        MenuItem::action(i18n.get("menu.git.snapshot"), ExecutePluginCommand { command: "git_easy_snapshot".to_string() })
+            .disabled(!is_git),
+        MenuItem::action(i18n.get("menu.git.new_draft"), ExecutePluginCommand { command: "git_easy_new_draft".to_string() })
+            .disabled(!is_git),
+        MenuItem::action(i18n.get("menu.git.merge_draft"), ExecutePluginCommand { command: "git_easy_merge_draft".to_string() })
+            .disabled(!is_git),
+        MenuItem::action(i18n.get("menu.git.switch_draft"), ExecutePluginCommand { command: "git_easy_switch_draft".to_string() })
+            .disabled(!is_git),
+        MenuItem::action(i18n.get("menu.git.restore_latest"), ExecutePluginCommand { command: "git_easy_restore_latest".to_string() })
+            .disabled(!is_git),
         MenuItem::separator(),
-        MenuItem::action(i18n.get("menu.git.add_file"), ExecutePluginCommand { command: "git_easy_add_file".to_string() }),
+        MenuItem::action(i18n.get("menu.git.add_file"), ExecutePluginCommand { command: "git_easy_add_file".to_string() })
+            .disabled(!is_git || !has_active_file),
         ignore_item,
         MenuItem::separator(),
-        MenuItem::action(i18n.get("menu.git.history"), ExecutePluginCommand { command: "git_easy_history".to_string() }),
-        MenuItem::action(i18n.get("menu.git.status"), ExecutePluginCommand { command: "git_easy_status".to_string() }),
+        MenuItem::action(i18n.get("menu.git.history"), ExecutePluginCommand { command: "git_easy_history".to_string() })
+            .disabled(!is_git),
+        MenuItem::action(i18n.get("menu.git.status"), ExecutePluginCommand { command: "git_easy_status".to_string() })
+            .disabled(!is_git),
     ]
 }
 
@@ -809,8 +830,18 @@ pub fn build_native_menus(
     i18n: &I18n,
     config: &zee_core::config::Config,
     plugin_manager: Option<&zee_core::plugin::PluginManager>,
-    active_file_ignored: bool,
+    menu_ctx: Option<&MenuContext>,
 ) -> Vec<Menu> {
+    let default_ctx = MenuContext {
+        is_git_repo: true,
+        has_active_editor: true,
+        has_active_file: true,
+        active_file_ignored: false,
+        can_undo: true,
+        can_redo: true,
+        has_selection: true,
+    };
+    let ctx = menu_ctx.unwrap_or(&default_ctx);
     let mut theme_items = Vec::new();
     for theme in zee_core::theme::Theme::load_all() {
         let display_label = if zee_core::theme::is_default_theme(&theme.meta.name) {
@@ -997,10 +1028,10 @@ pub fn build_native_menus(
                         disabled: false,
                     }),
                     MenuItem::separator(),
-                    MenuItem::action(i18n.get("menu.file.reload"), ReloadFile {}),
+                    MenuItem::action(i18n.get("menu.file.reload"), ReloadFile {}).disabled(!ctx.has_active_file),
                     MenuItem::separator(),
-                    MenuItem::action(i18n.get("menu.file.save"), Save {}),
-                    MenuItem::action(i18n.get("menu.file.save_as"), SaveAs {}),
+                    MenuItem::action(i18n.get("menu.file.save"), Save {}).disabled(!ctx.has_active_editor),
+                    MenuItem::action(i18n.get("menu.file.save_as"), SaveAs {}).disabled(!ctx.has_active_editor),
                     MenuItem::separator(),
                     MenuItem::action(
                         format!("{} {}", if config.trim_trailing_whitespace { "✓" } else { " " }, i18n.get("menu.file.trim_trailing_whitespace")),
@@ -1014,7 +1045,7 @@ pub fn build_native_menus(
                     MenuItem::action(i18n.get("menu.file.export_config"), ExportConfig {}),
                     MenuItem::action(i18n.get("menu.file.import_config"), ImportConfig {}),
                     MenuItem::separator(),
-                    MenuItem::action(i18n.get("menu.file.close"), CloseTab {}),
+                    MenuItem::action(i18n.get("menu.file.close"), CloseTab {}).disabled(!ctx.has_active_editor),
                     MenuItem::separator(),
                     MenuItem::action(i18n.get("menu.file.exit"), Exit {}),
                 ]
@@ -1024,24 +1055,24 @@ pub fn build_native_menus(
         Menu {
             name: i18n.get("menu.edit").into(),
             items: vec![
-                MenuItem::action(i18n.get("menu.edit.undo"), Undo {}),
-                MenuItem::action(i18n.get("menu.edit.redo"), Redo {}),
+                MenuItem::action(i18n.get("menu.edit.undo"), Undo {}).disabled(!ctx.can_undo),
+                MenuItem::action(i18n.get("menu.edit.redo"), Redo {}).disabled(!ctx.can_redo),
                 MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.edit.cut"), Cut {}),
-                MenuItem::action(i18n.get("menu.edit.copy"), Copy {}),
-                MenuItem::action(i18n.get("menu.edit.paste"), Paste {}),
+                MenuItem::action(i18n.get("menu.edit.cut"), Cut {}).disabled(!ctx.has_selection),
+                MenuItem::action(i18n.get("menu.edit.copy"), Copy {}).disabled(!ctx.has_selection),
+                MenuItem::action(i18n.get("menu.edit.paste"), Paste {}).disabled(!ctx.has_active_editor),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.edit.find"), Find {}),
                 MenuItem::action(i18n.get("menu.edit.replace"), Replace {}),
                 MenuItem::action(i18n.get("menu.edit.project_search"), ProjectSearch {}),
-                MenuItem::action(i18n.get("menu.edit.select_all"), SelectAll {}),
-                MenuItem::action(i18n.get("menu.edit.toggle_comment"), ToggleComment {}),
+                MenuItem::action(i18n.get("menu.edit.select_all"), SelectAll {}).disabled(!ctx.has_active_editor),
+                MenuItem::action(i18n.get("menu.edit.toggle_comment"), ToggleComment {}).disabled(!ctx.has_active_editor),
                 MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.edit.convert_tabs_to_spaces"), ConvertTabsToSpaces {}),
-                MenuItem::action(i18n.get("menu.edit.convert_spaces_to_tabs"), ConvertSpacesToTabs {}),
+                MenuItem::action(i18n.get("menu.edit.convert_tabs_to_spaces"), ConvertTabsToSpaces {}).disabled(!ctx.has_active_editor),
+                MenuItem::action(i18n.get("menu.edit.convert_spaces_to_tabs"), ConvertSpacesToTabs {}).disabled(!ctx.has_active_editor),
                 MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.edit.format_document"), FormatDocument {}),
-                MenuItem::action(i18n.get("menu.edit.sort_lines"), SortLines {}),
+                MenuItem::action(i18n.get("menu.edit.format_document"), FormatDocument {}).disabled(!ctx.has_active_editor),
+                MenuItem::action(i18n.get("menu.edit.sort_lines"), SortLines {}).disabled(!ctx.has_active_editor),
             ],
             disabled: false,
         },
@@ -1051,7 +1082,7 @@ pub fn build_native_menus(
                 MenuItem::action(i18n.get("menu.view.sidebar"), ToggleSidebar {}),
                 MenuItem::action(i18n.get("menu.view.refresh_files"), RefreshFileTree {}),
                 MenuItem::separator(),
-                MenuItem::action(i18n.get("menu.view.go_to_line"), GoToLine {}),
+                MenuItem::action(i18n.get("menu.view.go_to_line"), GoToLine {}).disabled(!ctx.has_active_editor),
                 MenuItem::separator(),
                 MenuItem::action(i18n.get("menu.view.zoom_in"), ZoomIn {}),
                 MenuItem::action(i18n.get("menu.view.zoom_out"), ZoomOut {}),
@@ -1103,7 +1134,7 @@ pub fn build_native_menus(
     if has_git {
         menus.push(Menu {
             name: i18n.get("menu.git").into(),
-            items: build_git_menu_items(i18n, active_file_ignored),
+            items: build_git_menu_items(i18n, ctx.active_file_ignored, ctx.is_git_repo, ctx.has_active_file),
             disabled: false,
         });
     }

@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 use gpui::*;
+#[allow(unused_imports)]
+use gpui::prelude::FluentBuilder;
 use zee_core::config::Config;
 use zee_core::i18n::I18n;
 use crate::widgets::editor_view::EditorView;
@@ -32,6 +34,7 @@ pub struct WindowView {
     dialog: Option<Entity<Dialog>>,
     focus_handle: FocusHandle,
     plugins_version: usize,
+    last_menu_state: (usize, usize, usize, bool),
 }
 
 impl WindowView {
@@ -122,7 +125,16 @@ impl WindowView {
                 }
                 menu_changed = true;
             }
-            if menu_changed {
+            let ws_ref = workspace.read(cx);
+            let active_editor = ws_ref.active_editor();
+            let current_state = (
+                ws_ref.active_editor_index,
+                active_editor.map(|e| e.undo_stack.len()).unwrap_or(0),
+                active_editor.map(|e| e.redo_stack.len()).unwrap_or(0),
+                active_editor.map(|e| e.selection.is_some()).unwrap_or(false),
+            );
+            if menu_changed || this.last_menu_state != current_state {
+                this.last_menu_state = current_state;
                 this.update_native_menus(cx);
             }
             cx.notify();
@@ -261,6 +273,7 @@ impl WindowView {
             dialog: None,
             focus_handle,
             plugins_version,
+            last_menu_state: (0, 0, 0, false),
         }
     }
 
@@ -866,15 +879,38 @@ impl WindowView {
         #[cfg(target_os = "macos")]
         {
             let ws = self.workspace.read(cx);
-            let is_ignored = ws.active_editor()
-                .and_then(|e| e.path.as_ref())
-                .map(|p| zee_core::git::is_path_ignored(&ws.file_tree.root_path, p))
-                .unwrap_or(false);
+            let root_path = &ws.file_tree.root_path;
+            let is_git_repo = zee_core::git::is_git_repo(root_path);
+            let active_editor = ws.active_editor();
+            let has_active_editor = active_editor.is_some();
+            let has_active_file = active_editor.and_then(|e| e.path.as_ref()).is_some();
+            let active_file_ignored = if is_git_repo {
+                active_editor
+                    .and_then(|e| e.path.as_ref())
+                    .map(|p| zee_core::git::is_path_ignored(root_path, p))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            let can_undo = active_editor.map(|e| !e.undo_stack.is_empty()).unwrap_or(false);
+            let can_redo = active_editor.map(|e| !e.redo_stack.is_empty()).unwrap_or(false);
+            let has_selection = active_editor.map(|e| e.selection.is_some()).unwrap_or(false);
+
+            let ctx = crate::app::MenuContext {
+                is_git_repo,
+                has_active_editor,
+                has_active_file,
+                active_file_ignored,
+                can_undo,
+                can_redo,
+                has_selection,
+            };
+
             cx.set_menus(crate::app::build_native_menus(
                 &self.i18n,
                 &self.config,
                 Some(&ws.plugin_manager),
-                is_ignored,
+                Some(&ctx),
             ));
         }
     }
@@ -2024,13 +2060,19 @@ impl WindowView {
         label: String,
         shortcut: Option<&'static str>,
         checked: bool,
+        disabled: bool,
         action: A,
-        _fg: Rgba,
+        fg: Rgba,
         hover_bg: Rgba,
         muted_fg: Rgba,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let action = action.clone();
+        let item_fg = if disabled {
+            crate::widgets::with_alpha(muted_fg, 0.45)
+        } else {
+            fg
+        };
         div()
             .h(px(26.0))
             .px_2()
@@ -2039,14 +2081,19 @@ impl WindowView {
             .items_center()
             .justify_between()
             .rounded_sm()
-            .cursor_pointer()
-            .hover(move |s| s.bg(hover_bg))
+            .when(!disabled, |d| {
+                d.cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
+                        this.menu_bar.update(cx, |m, cx| m.close_menu(cx));
+                        window.dispatch_action(Box::new(action.clone()), cx);
+                    }))
+            })
+            .when(disabled, |d| {
+                d.cursor_default()
+            })
             .on_mouse_move(cx.listener(|this, _, _, cx| {
                 this.menu_bar.update(cx, |m, cx| m.close_submenu(cx));
-            }))
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, window, cx| {
-                this.menu_bar.update(cx, |m, cx| m.close_menu(cx));
-                window.dispatch_action(Box::new(action.clone()), cx);
             }))
             .child(
                 div()
@@ -2060,12 +2107,17 @@ impl WindowView {
                             .items_center()
                             .justify_center()
                             .text_size(px(12.0))
+                            .text_color(item_fg)
                             .child(if checked { "✓" } else { "" })
                     )
-                    .child(label)
+                    .child(
+                        div()
+                            .text_color(item_fg)
+                            .child(label)
+                    )
             )
             .child(if let Some(sc) = shortcut {
-                div().text_size(px(11.0)).text_color(muted_fg).child(sc)
+                div().text_size(px(11.0)).text_color(if disabled { crate::widgets::with_alpha(muted_fg, 0.35) } else { muted_fg }).child(sc)
             } else {
                 div()
             })
@@ -2252,19 +2304,23 @@ impl WindowView {
     }
 
     fn render_file_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+        let ws = self.workspace.read(cx);
+        let has_editor = ws.active_editor().is_some();
+        let has_file = ws.active_editor().and_then(|e| e.path.as_ref()).is_some();
+
         let recent = zee_core::recent::RecentFiles::load();
         let mut menu = div()
             .flex()
             .flex_col()
-            .child(self.render_menu_item(self.i18n.get("menu.file.new_tab").to_string(), Some("Ctrl+T"), false, NewTab {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.new_tab").to_string(), Some("Ctrl+T"), false, false, NewTab {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_submenu_trigger(SubmenuId::NewFromTemplate, 30.0, self.i18n.get("menu.file.new_from_template").to_string(), fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.file.new_window").to_string(), Some("Ctrl+N"), false, NewWindow {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.file.open").to_string(), Some("Ctrl+O"), false, Open {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.file.open_folder").to_string(), Some("Ctrl+Shift+O"), false, OpenFolder {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.file.fuzzy_finder").to_string(), Some("Ctrl+P"), false, FuzzyFinder {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.file.open_gdrive").to_string(), None, false, OpenGoogleDrive {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.new_window").to_string(), Some("Ctrl+N"), false, false, NewWindow {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.open").to_string(), Some("Ctrl+O"), false, false, Open {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.open_folder").to_string(), Some("Ctrl+Shift+O"), false, false, OpenFolder {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.fuzzy_finder").to_string(), Some("Ctrl+P"), false, false, FuzzyFinder {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.open_gdrive").to_string(), None, false, false, OpenGoogleDrive {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.file.reload").to_string(), Some("Ctrl+Shift+R"), false, ReloadFile {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.reload").to_string(), Some("Ctrl+Shift+R"), false, !has_file, ReloadFile {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border));
 
         if !recent.files.is_empty() {
@@ -2274,6 +2330,7 @@ impl WindowView {
                     format!("  {}", name),
                     None,
                     false,
+                    false,
                     OpenRecent { path: p.to_string_lossy().into_owned() },
                     fg,
                     hover_bg,
@@ -2281,51 +2338,60 @@ impl WindowView {
                     cx,
                 ));
             }
-            menu = menu.child(self.render_menu_item(self.i18n.get("menu.file.clear_recent").to_string(), None, false, ClearRecent {}, fg, hover_bg, muted_fg, cx));
+            menu = menu.child(self.render_menu_item(self.i18n.get("menu.file.clear_recent").to_string(), None, false, false, ClearRecent {}, fg, hover_bg, muted_fg, cx));
             menu = menu.child(self.render_menu_sep(border));
         }
 
         menu
-            .child(self.render_menu_item(self.i18n.get("menu.file.save").to_string(), Some("Ctrl+S"), false, Save {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.file.save_as").to_string(), Some("Ctrl+Shift+S"), false, SaveAs {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.save").to_string(), Some("Ctrl+S"), false, !has_editor, Save {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.save_as").to_string(), Some("Ctrl+Shift+S"), false, !has_editor, SaveAs {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.file.trim_trailing_whitespace").to_string(), None, self.config.trim_trailing_whitespace, ToggleTrimTrailingWhitespace {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.file.ensure_final_newline").to_string(), None, self.config.ensure_final_newline, ToggleEnsureFinalNewline {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.trim_trailing_whitespace").to_string(), None, self.config.trim_trailing_whitespace, false, ToggleTrimTrailingWhitespace {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.ensure_final_newline").to_string(), None, self.config.ensure_final_newline, false, ToggleEnsureFinalNewline {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.file.export_config").to_string(), None, false, ExportConfig {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.file.import_config").to_string(), None, false, ImportConfig {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.export_config").to_string(), None, false, false, ExportConfig {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.import_config").to_string(), None, false, false, ImportConfig {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.file.close").to_string(), Some("Ctrl+W"), false, CloseTab {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.close").to_string(), Some("Ctrl+W"), false, !has_editor, CloseTab {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.file.exit").to_string(), Some("Ctrl+Q"), false, Exit {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.file.exit").to_string(), Some("Ctrl+Q"), false, false, Exit {}, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_edit_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+        let ws = self.workspace.read(cx);
+        let active_editor = ws.active_editor();
+        let has_editor = active_editor.is_some();
+        let can_undo = active_editor.map(|e| !e.undo_stack.is_empty()).unwrap_or(false);
+        let can_redo = active_editor.map(|e| !e.redo_stack.is_empty()).unwrap_or(false);
+        let has_selection = active_editor.map(|e| e.selection.is_some()).unwrap_or(false);
+
         div()
             .flex()
             .flex_col()
-            .child(self.render_menu_item(self.i18n.get("menu.edit.undo").to_string(), Some("Ctrl+Z"), false, Undo {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.redo").to_string(), Some("Ctrl+Y"), false, Redo {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.undo").to_string(), Some("Ctrl+Z"), false, !can_undo, Undo {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.redo").to_string(), Some("Ctrl+Y"), false, !can_redo, Redo {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.cut").to_string(), Some("Ctrl+X"), false, Cut {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.copy").to_string(), Some("Ctrl+C"), false, Copy {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.paste").to_string(), Some("Ctrl+V"), false, Paste {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.cut").to_string(), Some("Ctrl+X"), false, !has_selection, Cut {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.copy").to_string(), Some("Ctrl+C"), false, !has_selection, Copy {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.paste").to_string(), Some("Ctrl+V"), false, !has_editor, Paste {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.find").to_string(), Some("Ctrl+F"), false, Find {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.replace").to_string(), Some("Ctrl+H"), false, Replace {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.project_search").to_string(), Some("Ctrl+Shift+F"), false, ProjectSearch {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.find").to_string(), Some("Ctrl+F"), false, false, Find {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.replace").to_string(), Some("Ctrl+H"), false, false, Replace {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.project_search").to_string(), Some("Ctrl+Shift+F"), false, false, ProjectSearch {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.select_all").to_string(), Some("Ctrl+A"), false, SelectAll {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.toggle_comment").to_string(), Some("Ctrl+/"), false, crate::app::ToggleComment {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.select_all").to_string(), Some("Ctrl+A"), false, !has_editor, SelectAll {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.toggle_comment").to_string(), Some("Ctrl+/"), false, !has_editor, crate::app::ToggleComment {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.format_document").to_string(), None, false, crate::app::FormatDocument {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.sort_lines").to_string(), None, false, crate::app::SortLines {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.format_document").to_string(), None, false, !has_editor, crate::app::FormatDocument {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.sort_lines").to_string(), None, false, !has_editor, crate::app::SortLines {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.convert_tabs_to_spaces").to_string(), None, false, crate::app::ConvertTabsToSpaces {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.edit.convert_spaces_to_tabs").to_string(), None, false, crate::app::ConvertSpacesToTabs {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.convert_tabs_to_spaces").to_string(), None, false, !has_editor, crate::app::ConvertTabsToSpaces {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.edit.convert_spaces_to_tabs").to_string(), None, false, !has_editor, crate::app::ConvertSpacesToTabs {}, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_view_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
+        let ws = self.workspace.read(cx);
+        let has_editor = ws.active_editor().is_some();
         let line_numbers_checked = self.config.line_numbers;
         let word_wrap_checked = self.config.word_wrap;
         let vi_mode_checked = self.config.vi_mode;
@@ -2333,28 +2399,36 @@ impl WindowView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_menu_item(self.i18n.get("menu.view.go_to_line").to_string(), None, false, GoToLine {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.view.go_to_line").to_string(), None, false, !has_editor, GoToLine {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.view.zoom_in").to_string(), Some("Ctrl+="), false, ZoomIn {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.view.zoom_out").to_string(), Some("Ctrl+-"), false, ZoomOut {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.view.reset_zoom").to_string(), Some("Ctrl+0"), false, ResetZoom {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.view.zoom_in").to_string(), Some("Ctrl+="), false, false, ZoomIn {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.view.zoom_out").to_string(), Some("Ctrl+-"), false, false, ZoomOut {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.view.reset_zoom").to_string(), Some("Ctrl+0"), false, false, ResetZoom {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.view.sidebar").to_string(), Some("Ctrl+B"), false, ToggleSidebar {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.view.line_numbers").to_string(), None, line_numbers_checked, ToggleLineNumbers {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.view.word_wrap").to_string(), None, word_wrap_checked, ToggleWordWrap {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.view.vi_mode").to_string(), None, vi_mode_checked, ToggleViMode {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.view.sidebar").to_string(), Some("Ctrl+B"), false, false, ToggleSidebar {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.view.line_numbers").to_string(), None, line_numbers_checked, false, ToggleLineNumbers {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.view.word_wrap").to_string(), None, word_wrap_checked, false, ToggleWordWrap {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.view.vi_mode").to_string(), None, vi_mode_checked, false, ToggleViMode {}, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
             .child(self.render_submenu_trigger(SubmenuId::Language, 268.0, self.i18n.get("menu.view.language").to_string(), fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.app.preferences").to_string(), Some("Ctrl+,"), false, OpenSettings {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.app.preferences").to_string(), Some("Ctrl+,"), false, false, OpenSettings {}, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_git_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
         let ws = self.workspace.read(cx);
-        let is_ignored = ws.active_editor()
-            .and_then(|e| e.path.as_ref())
-            .map(|p| zee_core::git::is_path_ignored(&ws.file_tree.root_path, p))
-            .unwrap_or(false);
+        let root_path = &ws.file_tree.root_path;
+        let is_git_repo = zee_core::git::is_git_repo(root_path);
+        let active_editor = ws.active_editor();
+        let has_active_file = active_editor.and_then(|e| e.path.as_ref()).is_some();
+        let is_ignored = if is_git_repo {
+            active_editor
+                .and_then(|e| e.path.as_ref())
+                .map(|p| zee_core::git::is_path_ignored(root_path, p))
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
         let (ignore_label, ignore_cmd) = if is_ignored {
             (self.i18n.get("menu.git.unignore_file").to_string(), "git_easy_unignore_file".to_string())
@@ -2365,17 +2439,17 @@ impl WindowView {
         div()
             .flex()
             .flex_col()
-            .child(self.render_menu_item(self.i18n.get("menu.git.snapshot").to_string(), None, false, ExecutePluginCommand { command: "git_easy_snapshot".to_string() }, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.git.new_draft").to_string(), None, false, ExecutePluginCommand { command: "git_easy_new_draft".to_string() }, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.git.merge_draft").to_string(), None, false, ExecutePluginCommand { command: "git_easy_merge_draft".to_string() }, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.git.switch_draft").to_string(), None, false, ExecutePluginCommand { command: "git_easy_switch_draft".to_string() }, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.git.restore_latest").to_string(), None, false, ExecutePluginCommand { command: "git_easy_restore_latest".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.snapshot").to_string(), None, false, !is_git_repo, ExecutePluginCommand { command: "git_easy_snapshot".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.new_draft").to_string(), None, false, !is_git_repo, ExecutePluginCommand { command: "git_easy_new_draft".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.merge_draft").to_string(), None, false, !is_git_repo, ExecutePluginCommand { command: "git_easy_merge_draft".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.switch_draft").to_string(), None, false, !is_git_repo, ExecutePluginCommand { command: "git_easy_switch_draft".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.restore_latest").to_string(), None, false, !is_git_repo, ExecutePluginCommand { command: "git_easy_restore_latest".to_string() }, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.git.add_file").to_string(), None, false, ExecutePluginCommand { command: "git_easy_add_file".to_string() }, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(ignore_label, None, false, ExecutePluginCommand { command: ignore_cmd }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.add_file").to_string(), None, false, !is_git_repo || !has_active_file, ExecutePluginCommand { command: "git_easy_add_file".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(ignore_label, None, false, !is_git_repo || !has_active_file, ExecutePluginCommand { command: ignore_cmd }, fg, hover_bg, muted_fg, cx))
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.git.history").to_string(), None, false, ExecutePluginCommand { command: "git_easy_history".to_string() }, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.git.status").to_string(), None, false, ExecutePluginCommand { command: "git_easy_status".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.history").to_string(), None, false, !is_git_repo, ExecutePluginCommand { command: "git_easy_history".to_string() }, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.git.status").to_string(), None, false, !is_git_repo, ExecutePluginCommand { command: "git_easy_status".to_string() }, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_plugins_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, border: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2385,16 +2459,17 @@ impl WindowView {
             .flex_col();
 
         if plugins.is_empty() {
-            menu = menu.child(self.render_menu_item(self.i18n.get("menu.plugins.no_plugins").to_string(), None, false, NoOp {}, fg, hover_bg, muted_fg, cx));
+            menu = menu.child(self.render_menu_item(self.i18n.get("menu.plugins.no_plugins").to_string(), None, false, false, NoOp {}, fg, hover_bg, muted_fg, cx));
         } else {
             for manifest in plugins {
                 if manifest.capabilities.commands.is_empty() {
-                    menu = menu.child(self.render_menu_item(format!("✓ {}", manifest.name), None, false, NoOp {}, fg, hover_bg, muted_fg, cx));
+                    menu = menu.child(self.render_menu_item(format!("✓ {}", manifest.name), None, false, false, NoOp {}, fg, hover_bg, muted_fg, cx));
                 } else {
                     for cmd in &manifest.capabilities.commands {
                         menu = menu.child(self.render_menu_item(
                             format!("{}: {}", manifest.name, cmd),
                             None,
+                            false,
                             false,
                             ExecutePluginCommand { command: cmd.clone() },
                             fg,
@@ -2409,15 +2484,15 @@ impl WindowView {
 
         menu
             .child(self.render_menu_sep(border))
-            .child(self.render_menu_item(self.i18n.get("menu.plugins.manage").to_string(), None, false, ManagePlugins {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.plugins.open_folder").to_string(), None, false, OpenPluginsFolder {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.plugins.manage").to_string(), None, false, false, ManagePlugins {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.plugins.open_folder").to_string(), None, false, false, OpenPluginsFolder {}, fg, hover_bg, muted_fg, cx))
     }
 
     fn render_help_menu(&self, fg: Rgba, hover_bg: Rgba, muted_fg: Rgba, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .child(self.render_menu_item(self.i18n.get("menu.help.about").to_string(), None, false, About {}, fg, hover_bg, muted_fg, cx))
-            .child(self.render_menu_item(self.i18n.get("menu.help.check_for_updates").to_string(), None, false, CheckForUpdates {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.help.about").to_string(), None, false, false, About {}, fg, hover_bg, muted_fg, cx))
+            .child(self.render_menu_item(self.i18n.get("menu.help.check_for_updates").to_string(), None, false, false, CheckForUpdates {}, fg, hover_bg, muted_fg, cx))
     }
 }

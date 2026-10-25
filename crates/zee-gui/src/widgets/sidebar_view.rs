@@ -296,7 +296,12 @@ impl Render for SidebarView {
 
             let has_git = self.workspace.read(cx).plugin_manager.has_git_easy();
             let root_path = self.workspace.read(cx).file_tree.root_path.clone();
-            let is_ignored = zee_core::git::is_path_ignored(&root_path, ctx_path);
+            let is_git_repo = zee_core::git::is_git_repo(&root_path);
+            let is_ignored = if is_git_repo {
+                zee_core::git::is_path_ignored(&root_path, ctx_path)
+            } else {
+                false
+            };
 
             // Clamped coordinates relative to sidebar
             // Sidebar width is 240px, context menu width is up to 210px.
@@ -386,89 +391,52 @@ impl Render for SidebarView {
                     let p_add = ctx_path.clone();
                     let p_ign = ctx_path.clone();
                     let p_hist = ctx_path.clone();
+
+                    let make_git_item = |label: String, cmd: &'static str, p: std::path::PathBuf| {
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .text_size(px(12.0))
+                            .when(is_git_repo, |d| {
+                                d.cursor_pointer()
+                                    .hover(move |s| s.bg(hover_bg))
+                                    .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                                        this.context_menu = None;
+                                        cx.emit(SidebarEvent::GitAction {
+                                            command: cmd.to_string(),
+                                            path: p.clone(),
+                                        });
+                                    }))
+                            })
+                            .when(!is_git_repo, |d| {
+                                d.cursor_default()
+                                    .text_color(with_alpha(muted_fg, 0.45))
+                            })
+                            .child(label)
+                    };
+
+                    let ign_label = if is_ignored {
+                        self.i18n.get("sidebar.git_unignore").to_string()
+                    } else {
+                        self.i18n.get("sidebar.git_ignore").to_string()
+                    };
+                    let ign_cmd = if is_ignored {
+                        "git_easy_unignore_file"
+                    } else {
+                        "git_easy_ignore_file"
+                    };
+
                     m.child(
                         div()
                             .h(px(1.0))
                             .my_1()
                             .bg(border_color)
                     )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .text_size(px(12.0))
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                this.context_menu = None;
-                                cx.emit(SidebarEvent::GitAction {
-                                    command: "git_easy_snapshot".to_string(),
-                                    path: p_snap.clone(),
-                                });
-                            }))
-                            .child(self.i18n.get("sidebar.git_snapshot").to_string())
-                    )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .text_size(px(12.0))
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                this.context_menu = None;
-                                cx.emit(SidebarEvent::GitAction {
-                                    command: "git_easy_add_file".to_string(),
-                                    path: p_add.clone(),
-                                });
-                            }))
-                            .child(self.i18n.get("sidebar.git_add").to_string())
-                    )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .text_size(px(12.0))
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                this.context_menu = None;
-                                let cmd = if is_ignored {
-                                    "git_easy_unignore_file"
-                                } else {
-                                    "git_easy_ignore_file"
-                                };
-                                cx.emit(SidebarEvent::GitAction {
-                                    command: cmd.to_string(),
-                                    path: p_ign.clone(),
-                                });
-                            }))
-                            .child(if is_ignored {
-                                self.i18n.get("sidebar.git_unignore").to_string()
-                            } else {
-                                self.i18n.get("sidebar.git_ignore").to_string()
-                            })
-                    )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .text_size(px(12.0))
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
-                                this.context_menu = None;
-                                cx.emit(SidebarEvent::GitAction {
-                                    command: "git_easy_history".to_string(),
-                                    path: p_hist.clone(),
-                                });
-                            }))
-                            .child(self.i18n.get("sidebar.git_history").to_string())
-                    )
+                    .child(make_git_item(self.i18n.get("sidebar.git_snapshot").to_string(), "git_easy_snapshot", p_snap))
+                    .child(make_git_item(self.i18n.get("sidebar.git_add").to_string(), "git_easy_add_file", p_add))
+                    .child(make_git_item(ign_label, ign_cmd, p_ign))
+                    .child(make_git_item(self.i18n.get("sidebar.git_history").to_string(), "git_easy_history", p_hist))
                 });
 
             res = res.child(menu);

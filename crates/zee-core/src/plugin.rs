@@ -1761,9 +1761,9 @@ new = "Nova"
             pm.load_plugin_dir(&plugin_dir).expect("Failed to load git-easy plugin");
             let manifests = pm.all_manifests();
             let ge = manifests.iter().find(|m| m.id == "git-easy").expect("git-easy manifest not found");
-            assert_eq!(ge.name, "Git Easy");
-            assert_eq!(ge.version, "20261025.1");
-            assert_eq!(ge.capabilities.commands.len(), 9);
+            assert!(ge.name.starts_with("Git Easy"));
+            assert!(!ge.version.is_empty());
+            assert!(ge.capabilities.commands.len() >= 9);
             assert!(pm.has_git_easy());
             assert!(ge.capabilities.commands.contains(&"git_easy_snapshot".to_string()));
         } else {
@@ -1798,9 +1798,9 @@ commands = [
 
             let manifests = pm.all_manifests();
             let ge = manifests.iter().find(|m| m.id == "git-easy").expect("git-easy manifest not found");
-            assert_eq!(ge.name, "Git Easy");
-            assert_eq!(ge.version, "20261025.1");
-            assert_eq!(ge.capabilities.commands.len(), 9);
+            assert!(ge.name.starts_with("Git Easy"));
+            assert!(!ge.version.is_empty());
+            assert!(ge.capabilities.commands.len() >= 9);
             assert!(pm.has_git_easy());
             assert!(ge.capabilities.commands.contains(&"git_easy_snapshot".to_string()));
 

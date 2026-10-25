@@ -8048,7 +8048,7 @@ dependencies = [
 
 [[package]]
 name = "zee-core"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -8077,7 +8077,7 @@ dependencies = [
 
 [[package]]
 name = "zee-gui"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "futures",
@@ -8104,7 +8104,7 @@ dependencies = [
 
 [[package]]
 name = "zee-tui"
-version = "0.3.4"
+version = "0.3.5"
 dependencies = [
  "anyhow",
  "arboard",

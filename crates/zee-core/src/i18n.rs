@@ -432,7 +432,7 @@ impl I18n {
         m.insert("dialog.plugin.restart_now".to_string(), "Restart Now".to_string());
         m.insert("dialog.plugin.restart_later".to_string(), "Later".to_string());
 
-        m.insert("menu.git".to_string(), "Git".to_string());
+        m.insert("menu.git".to_string(), "Git (Experimental)".to_string());
         m.insert("menu.git.snapshot".to_string(), "Take Snapshot".to_string());
         m.insert("menu.git.new_draft".to_string(), "Create Draft Branch…".to_string());
         m.insert("menu.git.merge_draft".to_string(), "Merge Draft into main".to_string());
@@ -727,7 +727,7 @@ impl I18n {
         m.insert("dialog.plugin.restart_now".to_string(), "今すぐ再起動".to_string());
         m.insert("dialog.plugin.restart_later".to_string(), "後で".to_string());
 
-        m.insert("menu.git".to_string(), "Git".to_string());
+        m.insert("menu.git".to_string(), "Git (Experimental)".to_string());
         m.insert("menu.git.snapshot".to_string(), "📸 スナップショット (Snapshot)".to_string());
         m.insert("menu.git.new_draft".to_string(), "📝 ドラフトブランチ作成 (New Draft)…".to_string());
         m.insert("menu.git.merge_draft".to_string(), "🔀 ドラフトをmainにマージ (Merge Draft)".to_string());

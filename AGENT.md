@@ -78,9 +78,9 @@ Every release package must be verified locally on macOS before pushing or taggin
 
 | Target | Release Asset | Local Verification Command on macOS | What It Guarantees |
 | :--- | :--- | :--- | :--- |
-| **macOS (arm64)** | `zee-v*-macos-arm64.zip` (Zee.app) | `cargo test --workspace`<br>`cargo check --release -p zee-gui --bin zeeg` | Full workspace unit/regression suite (130+ tests) passes and GUI release binary compiles cleanly without warnings. |
-| **Windows (x64)** | `zee-v*-windows-x64.zip` (zee.exe) | `cargo check --workspace --target x86_64-pc-windows-gnu` | 100% of `#[cfg(windows)]`, `#[cfg(not(target_os = "macos"))]`, GPUI Windows integration, and scope/API errors are caught in ~1-3s. |
-| **Linux (x64)** | `zee-cli-v*-linux-x64.zip` (zee) | `docker run --rm --platform linux/amd64 -v zee_cargo_registry:/usr/local/cargo/registry -v zee_cargo_git:/usr/local/cargo/git -v zee_target_linux:/workspace/target_docker -v "$PWD":/workspace -w /workspace -e CARGO_TARGET_DIR=/workspace/target_docker rust:slim cargo test -p zee-tui --lib` | Runs all 69+ CLI tests natively inside an `amd64` Linux container with persistent volume caching in ~3-5s. |
+| **macOS (arm64)** | `zee-v*-macos-arm64.zip` (Zee.app) | `cargo check --workspace --all-targets`<br>`cargo test --workspace`<br>`cargo check --release -p zee-gui --bin zeeg` | Full workspace unit/regression suite (160+ tests) passes, all targets compile cleanly, and GUI release binary compiles cleanly without warnings. |
+| **Windows (x64)** | `zee-v*-windows-x64.zip` (zee.exe) | `cargo check --workspace --all-targets --target x86_64-pc-windows-gnu` | 100% of `#[cfg(windows)]`, `#[cfg(not(target_os = "macos"))]`, GPUI Windows integration, and **non-macOS test code compilation errors** (which CI checks via `--all-targets`) are caught locally in ~1-3s. |
+| **Linux (x64)** | `zee-cli-v*-linux-x64.zip` (zee) | `docker run --rm --platform linux/amd64 -v zee_cargo_registry:/usr/local/cargo/registry -v zee_cargo_git:/usr/local/cargo/git -v zee_target_linux:/workspace/target_docker -v "$PWD":/workspace -w /workspace -e CARGO_TARGET_DIR=/workspace/target_docker rust:slim sh -c "cargo test -p zee-core --lib && cargo test -p zee-tui --lib"` | Runs all CLI and core tests natively inside an `amd64` Linux container with persistent volume caching in ~3-5s. |
 
 ### 2. All-in-One Automated Check Tool
 Run the unified verification script before finishing major tasks or pushing releases:
@@ -88,8 +88,8 @@ Run the unified verification script before finishing major tasks or pushing rele
 ./scripts/verify-all-targets.sh
 ```
 This script sequentially runs:
-1. `[1/3] macOS`: Full workspace tests + release GUI compilation.
-2. `[2/3] Windows`: Cross-target compilation check (`x86_64-pc-windows-gnu`).
+1. `[1/3] macOS`: CI-equivalent `cargo check --workspace --all-targets` + full workspace tests + release GUI compilation.
+2. `[2/3] Windows`: Cross-target compilation & test code check with `--all-targets` (`x86_64-pc-windows-gnu`).
 3. `[3/3] Linux`: Native unit test execution inside cached Docker container.
 
 ### 3. Release Gate: No Blind Tagging (見切り発車リリースの禁止)

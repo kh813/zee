@@ -87,6 +87,21 @@ pub fn ensure_git_repo(root: &Path) -> Result<()> {
         }
     }
 
+    // Ensure fallback author name & email in repo config if git user is not configured
+    let mut check_user = base_git_command(root);
+    check_user.args(["config", "user.name"]);
+    if let Ok(out) = check_user.output() {
+        if !out.status.success() || String::from_utf8_lossy(&out.stdout).trim().is_empty() {
+            let mut set_name = base_git_command(root);
+            set_name.args(["config", "user.name", "Zee User"]);
+            let _ = set_name.output();
+
+            let mut set_email = base_git_command(root);
+            set_email.args(["config", "user.email", "zee@local"]);
+            let _ = set_email.output();
+        }
+    }
+
     let gitignore_path = root.join(".gitignore");
     if !gitignore_path.exists() {
         let _ = std::fs::write(&gitignore_path, DEFAULT_GITIGNORE_CONTENT);
@@ -551,6 +566,11 @@ mod tests {
 
     #[test]
     fn test_git_log_items_and_repo() {
+        if !is_git_installed() {
+            eprintln!("Skipping test_git_log_items_and_repo: git binary not found in environment");
+            return;
+        }
+
         let temp_dir = std::env::temp_dir().join(format!("zee_test_git_log_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -561,7 +581,7 @@ mod tests {
         std::fs::write(&file, "version 1").unwrap();
 
         let snap_res = git_snapshot(&temp_dir, Some("First snapshot"));
-        assert!(snap_res.is_ok());
+        assert!(snap_res.is_ok(), "git_snapshot must succeed: {:?}", snap_res);
         assert!(is_git_repo(&temp_dir));
 
         let items = git_log_items(&temp_dir, 10).unwrap();

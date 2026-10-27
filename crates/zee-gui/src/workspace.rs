@@ -1189,8 +1189,6 @@ mod tests {
 
     #[test]
     fn test_theme_checkmark_resolution_and_os_default() {
-        use zee_core::config::Config;
-        use zee_core::i18n::I18n;
         use zee_core::theme::{is_default_theme, is_same_theme};
 
         // 1. is_default_theme test
@@ -1216,6 +1214,8 @@ mod tests {
         // 3. Menu checkmark verification on macOS
         #[cfg(target_os = "macos")]
         {
+            use zee_core::config::Config;
+            use zee_core::i18n::I18n;
             let i18n = I18n::load("en");
 
             // Scenario A: Default config ("terminal-default") -> Exactly one item with "✓ OS Default"
@@ -1747,6 +1747,7 @@ mod tests {
     #[test]
     fn test_disabled_menu_items_when_not_git_or_no_editor() {
         let i18n = zee_core::i18n::I18n::load("ja");
+        #[cfg(target_os = "macos")]
         let config = Config::default();
 
         // 1. Git items disabled when is_git == false
@@ -1767,24 +1768,27 @@ mod tests {
             assert!(!*disabled, "Snapshot must be enabled inside a git repo");
         }
 
-        // 3. Native menus disabled state with MenuContext
-        let ctx = crate::app::MenuContext {
-            is_git_repo: false,
-            has_active_editor: false,
-            has_active_file: false,
-            active_file_ignored: false,
-            can_undo: false,
-            can_redo: false,
-            has_selection: false,
-        };
-        let menus = crate::app::build_native_menus(&i18n, &config, None, Some(&ctx));
-        let edit_menu = menus.iter().find(|m| m.name.as_ref() == "編集").expect("Edit menu exists");
-        let undo_item = edit_menu.items.iter().find(|it| match it {
-            gpui::MenuItem::Action { name, .. } => name.contains("元に戻す") || name.contains("Undo"),
-            _ => false,
-        }).expect("Undo item exists");
-        if let gpui::MenuItem::Action { disabled, .. } = undo_item {
-            assert!(*disabled, "Undo must be disabled when can_undo is false");
+        // 3. Native menus disabled state with MenuContext (macOS only)
+        #[cfg(target_os = "macos")]
+        {
+            let ctx = crate::app::MenuContext {
+                is_git_repo: false,
+                has_active_editor: false,
+                has_active_file: false,
+                active_file_ignored: false,
+                can_undo: false,
+                can_redo: false,
+                has_selection: false,
+            };
+            let menus = crate::app::build_native_menus(&i18n, &config, None, Some(&ctx));
+            let edit_menu = menus.iter().find(|m| m.name.as_ref() == "編集").expect("Edit menu exists");
+            let undo_item = edit_menu.items.iter().find(|it| match it {
+                gpui::MenuItem::Action { name, .. } => name.contains("元に戻す") || name.contains("Undo"),
+                _ => false,
+            }).expect("Undo item exists");
+            if let gpui::MenuItem::Action { disabled, .. } = undo_item {
+                assert!(*disabled, "Undo must be disabled when can_undo is false");
+            }
         }
     }
 }

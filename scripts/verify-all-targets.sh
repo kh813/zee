@@ -28,6 +28,8 @@ echo -e "${BOLD}${BLUE}=== Pre-Release Multi-Platform Verification ===${NC}\n"
 # 1. macOS: GUI (arm64)
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}[1/3] macOS (GUI arm64) Verification...${NC}"
+echo "Running CI-equivalent cargo check with --all-targets..."
+cargo check --workspace --all-targets --quiet
 echo "Running workspace unit & regression tests..."
 cargo test --workspace --quiet
 echo "Checking GUI release build..."
@@ -35,11 +37,11 @@ cargo check --release -p zee-gui --bin zeeg --quiet
 echo -e "${GREEN}✓ macOS (GUI arm64) passed!${NC}\n"
 
 # ------------------------------------------------------------------------------
-# 2. Windows: GUI (x64)
+# 2. Windows: GUI (x64) & Cross-Platform Non-macOS Test Code Check
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}[2/3] Windows (GUI x64) Verification...${NC}"
-echo "Running cross-target compilation check (x86_64-pc-windows-gnu)..."
-cargo check --workspace --target x86_64-pc-windows-gnu --quiet
+echo "Running cross-target compilation & test code check with --all-targets (x86_64-pc-windows-gnu)..."
+cargo check --workspace --all-targets --target x86_64-pc-windows-gnu --quiet
 echo -e "${GREEN}✓ Windows (GUI x64) cross-check passed!${NC}\n"
 
 # ------------------------------------------------------------------------------
@@ -56,7 +58,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         -w /workspace \
         -e CARGO_TARGET_DIR=/workspace/target_docker \
         rust:slim \
-        cargo test -p zee-tui --lib --quiet
+        sh -c "cargo test -p zee-core --lib --quiet && cargo test -p zee-tui --lib --quiet"
     echo -e "${GREEN}✓ Linux (CLI x64) container tests passed!${NC}\n"
 else
     echo -e "${YELLOW}⚠ Docker is not running. Skipped Linux x64 container tests.${NC}"

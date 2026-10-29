@@ -52,6 +52,18 @@ pub enum ExCommand {
         arg: Option<String>,
         extra: Option<String>,
     },
+    /// `:r [path]` - Read file content and insert after current line.
+    ReadFile(String),
+    /// `:r ![command]` - Run shell command and insert output after current line.
+    ReadCommand(String),
+    /// `:![command]` - Execute shell command and show output.
+    Shell(String),
+    /// `:[range]g[!]/{pattern}/[d]` or `:[range]v/{pattern}/[d]` - Global command.
+    Global {
+        pattern: String,
+        invert: bool,
+        action: String,
+    },
     /// Empty command (e.g. `:` alone).
     Empty,
     /// Unknown or unsupported command string.
@@ -169,6 +181,40 @@ fn parse_substitute(body: &str) -> Option<ExCommand> {
     })
 }
 
+fn parse_global(body: &str) -> Option<ExCommand> {
+    let s = body.strip_prefix('%').unwrap_or(body).trim();
+    let (invert, rest) = if let Some(r) = s.strip_prefix("g!") {
+        (true, r)
+    } else if let Some(r) = s.strip_prefix('v') {
+        (true, r)
+    } else if let Some(r) = s.strip_prefix('g') {
+        (false, r)
+    } else {
+        return None;
+    };
+
+    let delimiter = rest.chars().next()?;
+    if delimiter.is_alphanumeric() || delimiter.is_whitespace() {
+        return None;
+    }
+    let rest_str = &rest[delimiter.len_utf8()..];
+    let (pattern, action_str) = if let Some(idx) = rest_str.find(delimiter) {
+        let pat = &rest_str[..idx];
+        let act = rest_str[idx + delimiter.len_utf8()..].trim();
+        (pat.to_string(), act.to_string())
+    } else {
+        (rest_str.to_string(), "d".to_string())
+    };
+
+    let action = if action_str.is_empty() { "d".to_string() } else { action_str };
+
+    Some(ExCommand::Global {
+        pattern,
+        invert,
+        action,
+    })
+}
+
 /// Parses an Ex command string typed in vi command mode.
 ///
 /// Handles full-width characters (IME input) and leading colons.
@@ -184,6 +230,11 @@ pub fn parse_ex_command(input: &str) -> ExCommand {
         return ExCommand::Empty;
     }
 
+    // Check for shell command (e.g. :!git status, :!ls)
+    if let Some(shell_cmd) = body.strip_prefix('!') {
+        return ExCommand::Shell(shell_cmd.trim().to_string());
+    }
+
     // Check if it's purely a line number jump (e.g. ":42", ":100")
     if let Ok(line_num) = body.parse::<usize>() {
         return ExCommand::GoToLine(line_num);
@@ -192,6 +243,11 @@ pub fn parse_ex_command(input: &str) -> ExCommand {
     // Check for substitute command (e.g. :%s/foo/bar/g, :s/a/b/, :1,5s/a/b/)
     if let Some(sub_cmd) = parse_substitute(body) {
         return sub_cmd;
+    }
+
+    // Check for global command (e.g. :g/pattern/d, :v/pattern/d)
+    if let Some(global_cmd) = parse_global(body) {
+        return global_cmd;
     }
 
     // Split into command name and arguments
@@ -223,6 +279,18 @@ pub fn parse_ex_command(input: &str) -> ExCommand {
         // --- Edit / Reload ---
         "e" | "edit" => ExCommand::Edit { path: arg, force: false },
         "e!" | "edit!" => ExCommand::Edit { path: arg, force: true },
+
+        // --- Read file or command (:r <file> or :r !<cmd>) ---
+        "r" | "read" => {
+            let rest = body[cmd_name.len()..].trim();
+            if let Some(cmd) = rest.strip_prefix('!') {
+                ExCommand::ReadCommand(cmd.trim().to_string())
+            } else if !rest.is_empty() {
+                ExCommand::ReadFile(rest.to_string())
+            } else {
+                ExCommand::Unknown("r requires a file path or !command".to_string())
+            }
+        }
 
         // --- Clear search highlight ---
         "noh" | "nohl" | "nohlsearch" => ExCommand::NoHighlight,
@@ -485,6 +553,38 @@ mod tests {
                 subcmd: "repo".into(),
                 arg: Some("remove".into()),
                 extra: Some("https://github.com/foo/bar".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_advanced_commands() {
+        assert_eq!(
+            parse_ex_command(":r /etc/hosts"),
+            ExCommand::ReadFile("/etc/hosts".into())
+        );
+        assert_eq!(
+            parse_ex_command(":r !date"),
+            ExCommand::ReadCommand("date".into())
+        );
+        assert_eq!(
+            parse_ex_command(":!git status"),
+            ExCommand::Shell("git status".into())
+        );
+        assert_eq!(
+            parse_ex_command(":g/pattern/d"),
+            ExCommand::Global {
+                pattern: "pattern".into(),
+                invert: false,
+                action: "d".into(),
+            }
+        );
+        assert_eq!(
+            parse_ex_command(":v/^#/d"),
+            ExCommand::Global {
+                pattern: "^#".into(),
+                invert: true,
+                action: "d".into(),
             }
         );
     }

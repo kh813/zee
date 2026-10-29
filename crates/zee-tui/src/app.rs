@@ -90,6 +90,7 @@ pub struct App {
     pub pending_d: bool,
     pub pending_y: bool,
     pub pending_c: bool,
+    pub pending_text_obj: Option<bool>, // Some(true) = inner, Some(false) = around
     pub pending_r: bool,
     pub pending_f: bool,
     pub pending_capital_f: bool,
@@ -267,6 +268,7 @@ impl App {
             pending_d: false,
             pending_y: false,
             pending_c: false,
+            pending_text_obj: None,
             pending_r: false,
             pending_f: false,
             pending_capital_f: false,
@@ -1402,7 +1404,7 @@ impl App {
 
         if !self.pending_r && !self.pending_f && !self.pending_capital_f && !self.pending_t && !self.pending_capital_t
             && !self.pending_m && !self.pending_single_quote && !self.pending_backtick
-            && !self.pending_g
+            && !self.pending_g && self.pending_text_obj.is_none()
         {
             if let KeyCode::Char(c) = code {
                 if (self.count == 0 && matches!(c, '1'..='9')) || (self.count > 0 && matches!(c, '0'..='9')) {
@@ -1411,6 +1413,52 @@ impl App {
                         return;
                     }
                 }
+            }
+        }
+
+        // Handle text object operator (diw, ci", ya(, etc.)
+        if let Some(inside) = self.pending_text_obj.take() {
+            if let KeyCode::Char(obj_char) = code {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(range) = buffer.get_text_object_range(obj_char, inside) {
+                        let text = buffer.rope.slice(range.clone()).to_string();
+                        if self.pending_d {
+                            let _ = clipboard::set_clipboard(&text);
+                            buffer.delete(range.clone());
+                            buffer.cursor = range.start.min(buffer.rope.len_chars());
+                            buffer.selection = None;
+                            buffer.selection_anchor = None;
+                        } else if self.pending_c {
+                            let _ = clipboard::set_clipboard(&text);
+                            buffer.delete(range.clone());
+                            buffer.cursor = range.start.min(buffer.rope.len_chars());
+                            buffer.selection = None;
+                            buffer.selection_anchor = None;
+                            buffer.vi_mode = zee_core::ViMode::Insert;
+                        } else if self.pending_y {
+                            let _ = clipboard::set_clipboard(&text);
+                            buffer.selection = None;
+                            buffer.selection_anchor = None;
+                        }
+                    }
+                }
+            }
+            self.pending_d = false;
+            self.pending_c = false;
+            self.pending_y = false;
+            self.pending_op_count = 0;
+            self.ensure_cursor_visible();
+            return;
+        }
+
+        if self.pending_d || self.pending_c || self.pending_y {
+            if matches!(code, KeyCode::Char('i')) {
+                self.pending_text_obj = Some(true);
+                return;
+            }
+            if matches!(code, KeyCode::Char('a')) {
+                self.pending_text_obj = Some(false);
+                return;
             }
         }
 
@@ -2394,6 +2442,7 @@ impl App {
                 self.pending_d = false;
                 self.pending_y = false;
                 self.pending_c = false;
+                self.pending_text_obj = None;
                 self.pending_g = false;
                 self.pending_r = false;
                 self.pending_f = false;
@@ -2429,6 +2478,7 @@ impl App {
                 self.pending_d = false;
                 self.pending_y = false;
                 self.pending_c = false;
+                self.pending_text_obj = None;
                 self.pending_op_count = 0;
                 self.pending_g = false;
                 self.pending_r = false;
@@ -2478,10 +2528,35 @@ impl App {
 
         let is_block = self.buffers.get(self.active_buffer).map(|b| b.vi_mode == zee_core::ViMode::VisualBlock).unwrap_or(false);
         
+        // Handle visual mode text objects (e.g. viw, va", vi(, etc.)
+        if let Some(inside) = self.pending_text_obj.take() {
+            if let KeyCode::Char(obj_char) = code {
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    if let Some(range) = buffer.get_text_object_range(obj_char, inside) {
+                        buffer.selection_anchor = Some(range.start);
+                        buffer.cursor = range.end.saturating_sub(1);
+                        buffer.selection = Some(range.start..range.end);
+                    }
+                }
+            }
+            self.ensure_cursor_visible();
+            return;
+        }
+
+        if matches!(code, KeyCode::Char('i')) {
+            self.pending_text_obj = Some(true);
+            return;
+        }
+        if matches!(code, KeyCode::Char('a')) {
+            self.pending_text_obj = Some(false);
+            return;
+        }
+
         match code {
             KeyCode::Esc => {
                 self.pending_single_quote = false;
                 self.pending_backtick = false;
+                self.pending_text_obj = None;
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     buffer.vi_mode = zee_core::ViMode::Normal;
                     buffer.selection = None;
@@ -3098,6 +3173,99 @@ impl App {
                             _ => {
                                 self.vi_message = Some((format!("Unknown plugin command: {}. Available: list, repo [list|add|remove], install <id>, uninstall <id>, reload", subcmd), true));
                             }
+                        }
+                    }
+                    zee_core::ExCommand::ReadFile(path_str) => {
+                        let path = std::path::Path::new(&path_str);
+                        match std::fs::read_to_string(path) {
+                            Ok(content) => {
+                                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                    let (line, _) = buffer.char_to_line_col(buffer.cursor);
+                                    let insert_pos = if line + 1 < buffer.line_count() {
+                                        buffer.rope.line_to_char(line + 1)
+                                    } else {
+                                        buffer.rope.len_chars()
+                                    };
+                                    let formatted_content = if !content.ends_with('\n') {
+                                        format!("{}\n", content)
+                                    } else {
+                                        content.clone()
+                                    };
+                                    buffer.insert(insert_pos, &formatted_content);
+                                    let lines = content.lines().count();
+                                    let bytes = content.len();
+                                    self.vi_message = Some((format!("\"{}\" {}L, {}B", path_str, lines, bytes), false));
+                                }
+                            }
+                            Err(e) => {
+                                self.vi_message = Some((format!("E484: Can't open file: {}", e), true));
+                            }
+                        }
+                    }
+                    zee_core::ExCommand::ReadCommand(shell_cmd) => {
+                        #[cfg(target_os = "windows")]
+                        let output = std::process::Command::new("cmd").args(["/C", &shell_cmd]).output();
+                        #[cfg(not(target_os = "windows"))]
+                        let output = std::process::Command::new("sh").args(["-c", &shell_cmd]).output();
+
+                        match output {
+                            Ok(out) => {
+                                let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                    let (line, _) = buffer.char_to_line_col(buffer.cursor);
+                                    let insert_pos = if line + 1 < buffer.line_count() {
+                                        buffer.rope.line_to_char(line + 1)
+                                    } else {
+                                        buffer.rope.len_chars()
+                                    };
+                                    let formatted = if !stdout.ends_with('\n') && !stdout.is_empty() {
+                                        format!("{}\n", stdout)
+                                    } else {
+                                        stdout.clone()
+                                    };
+                                    let lines = formatted.lines().count();
+                                    buffer.insert(insert_pos, &formatted);
+                                    self.vi_message = Some((format!("!{} ({} lines)", shell_cmd, lines), false));
+                                }
+                            }
+                            Err(e) => {
+                                self.vi_message = Some((format!("E485: Command error: {}", e), true));
+                            }
+                        }
+                    }
+                    zee_core::ExCommand::Shell(shell_cmd) => {
+                        #[cfg(target_os = "windows")]
+                        let output = std::process::Command::new("cmd").args(["/C", &shell_cmd]).output();
+                        #[cfg(not(target_os = "windows"))]
+                        let output = std::process::Command::new("sh").args(["-c", &shell_cmd]).output();
+
+                        match output {
+                            Ok(out) => {
+                                let stdout = String::from_utf8_lossy(&out.stdout);
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                let first_line = stdout.lines().next().or_else(|| stderr.lines().next()).unwrap_or("done");
+                                let is_err = !out.status.success();
+                                self.vi_message = Some((format!("!{}: {}", shell_cmd, first_line), is_err));
+                            }
+                            Err(e) => {
+                                self.vi_message = Some((format!("E485: Command execution failed: {}", e), true));
+                            }
+                        }
+                    }
+                    zee_core::ExCommand::Global { pattern, invert, action } => {
+                        if action == "d" {
+                            if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                                match buffer.global_delete(&pattern, invert) {
+                                    Ok(deleted_count) => {
+                                        self.vi_message = Some((format!("{} fewer lines", deleted_count), false));
+                                    }
+                                    Err(e) => {
+                                        self.vi_message = Some((format!("E486: Pattern error: {}", e), true));
+                                    }
+                                }
+                            }
+                        } else {
+                            self.vi_message = Some((format!("E476: Invalid command: {}", action), true));
                         }
                     }
                     zee_core::ExCommand::Empty => {
@@ -6965,6 +7133,80 @@ mod tests {
         app.handle_key(make_key(KeyCode::Esc));
         assert!(!app.is_vi_cmd_mode);
         assert_eq!(app.vi_cmd, "");
+
+        // 8. Global delete command via :g/pattern/d
+        let len = app.buffers[0].rope.len_chars();
+        app.buffers[0].delete(0..len);
+        app.buffers[0].insert(0, "# Comment 1\nserver {\n  listen 80;\n}\n# Comment 2\n");
+        app.handle_key(make_key(KeyCode::Char(':')));
+        for c in "g/^#/d".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.buffers[0].rope.to_string(), "server {\n  listen 80;\n}\n");
+
+        // 9. Read file command via :r
+        let temp_dir = std::env::temp_dir();
+        let snippet_path = temp_dir.join(format!("zee_snippet_{}.conf", std::process::id()));
+        std::fs::write(&snippet_path, "  server_name example.com;\n").unwrap();
+        app.buffers[0].cursor = 0; // line 1 (server {)
+        app.handle_key(make_key(KeyCode::Char(':')));
+        let cmd_str = format!("r {}", snippet_path.to_string_lossy());
+        for c in cmd_str.chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        app.handle_key(make_key(KeyCode::Enter));
+        assert!(app.buffers[0].rope.to_string().contains("server_name example.com;"));
+        let _ = std::fs::remove_file(snippet_path);
+    }
+
+    #[test]
+    fn test_vi_mode_text_objects_workflow() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.vi_mode = true;
+        app.recompute_layout();
+        app.buffers[0].vi_mode = zee_core::ViMode::Normal;
+        app.buffers[0].insert(0, "let name = \"alice\";\nlet sum = add(10, 20);\n");
+
+        // 1. ci" on "alice" -> should delete inside quotes and enter Insert mode
+        app.buffers[0].cursor = 13; // on 'l' in "alice"
+        app.handle_key(make_key(KeyCode::Char('c')));
+        app.handle_key(make_key(KeyCode::Char('i')));
+        app.handle_key(make_key(KeyCode::Char('"')));
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Insert);
+        assert_eq!(app.buffers[0].rope.to_string(), "let name = \"\";\nlet sum = add(10, 20);\n");
+
+        // Return to Normal mode
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.buffers[0].vi_mode, zee_core::ViMode::Normal);
+
+        // 2. di( on (10, 20) -> should delete inside parens
+        let paren_pos = app.buffers[0].rope.to_string().find("10").unwrap();
+        app.buffers[0].cursor = paren_pos;
+        app.handle_key(make_key(KeyCode::Char('d')));
+        app.handle_key(make_key(KeyCode::Char('i')));
+        app.handle_key(make_key(KeyCode::Char('(')));
+        assert_eq!(app.buffers[0].rope.to_string(), "let name = \"\";\nlet sum = add();\n");
+
+        // 3. diw on word 'sum'
+        let sum_pos = app.buffers[0].rope.to_string().find("sum").unwrap();
+        app.buffers[0].cursor = sum_pos;
+        app.handle_key(make_key(KeyCode::Char('d')));
+        app.handle_key(make_key(KeyCode::Char('i')));
+        app.handle_key(make_key(KeyCode::Char('w')));
+        assert_eq!(app.buffers[0].rope.to_string(), "let name = \"\";\nlet  = add();\n");
+
+        // 4. Visual selection via vi(
+        let add_pos = app.buffers[0].rope.to_string().find("add").unwrap();
+        app.buffers[0].cursor = add_pos;
+        app.buffers[0].insert(add_pos + 4, "foo, bar"); // let  = add(foo, bar);
+        app.buffers[0].cursor = add_pos + 5; // inside (foo, bar)
+        app.buffers[0].vi_mode = zee_core::ViMode::Visual;
+        app.handle_key(make_key(KeyCode::Char('i')));
+        app.handle_key(make_key(KeyCode::Char('(')));
+        assert!(app.buffers[0].selection.is_some());
+        let sel = app.buffers[0].selection.as_ref().unwrap();
+        assert_eq!(&app.buffers[0].rope.slice(sel.clone()).to_string(), "foo, bar");
     }
 
     #[test]

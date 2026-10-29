@@ -546,6 +546,111 @@ impl EditorView {
                     cx.notify();
                 });
             }
+            zee_core::ExCommand::ReadFile(path_str) => {
+                workspace.update(cx, |w, cx| {
+                    let path = std::path::Path::new(&path_str);
+                    match std::fs::read_to_string(path) {
+                        Ok(content) => {
+                            if let Some(editor) = w.active_editor_mut() {
+                                let (line, _) = editor.char_to_line_col(editor.cursor);
+                                let insert_pos = if line + 1 < editor.line_count() {
+                                    editor.rope.line_to_char(line + 1)
+                                } else {
+                                    editor.rope.len_chars()
+                                };
+                                let formatted_content = if !content.ends_with('\n') {
+                                    format!("{}\n", content)
+                                } else {
+                                    content.clone()
+                                };
+                                editor.insert(insert_pos, &formatted_content);
+                                let lines = content.lines().count();
+                                let bytes = content.len();
+                                w.vi_message = Some((format!("\"{}\" {}L, {}B", path_str, lines, bytes), false));
+                            }
+                        }
+                        Err(e) => {
+                            w.vi_message = Some((format!("E484: Can't open file: {}", e), true));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::ReadCommand(shell_cmd) => {
+                workspace.update(cx, |w, cx| {
+                    #[cfg(target_os = "windows")]
+                    let output = std::process::Command::new("cmd").args(["/C", &shell_cmd]).output();
+                    #[cfg(not(target_os = "windows"))]
+                    let output = std::process::Command::new("sh").args(["-c", &shell_cmd]).output();
+
+                    match output {
+                        Ok(out) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+                            if let Some(editor) = w.active_editor_mut() {
+                                let (line, _) = editor.char_to_line_col(editor.cursor);
+                                let insert_pos = if line + 1 < editor.line_count() {
+                                    editor.rope.line_to_char(line + 1)
+                                } else {
+                                    editor.rope.len_chars()
+                                };
+                                let formatted = if !stdout.ends_with('\n') && !stdout.is_empty() {
+                                    format!("{}\n", stdout)
+                                } else {
+                                    stdout.clone()
+                                };
+                                let lines = formatted.lines().count();
+                                editor.insert(insert_pos, &formatted);
+                                w.vi_message = Some((format!("!{} ({} lines)", shell_cmd, lines), false));
+                            }
+                        }
+                        Err(e) => {
+                            w.vi_message = Some((format!("E485: Command error: {}", e), true));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::Shell(shell_cmd) => {
+                workspace.update(cx, |w, cx| {
+                    #[cfg(target_os = "windows")]
+                    let output = std::process::Command::new("cmd").args(["/C", &shell_cmd]).output();
+                    #[cfg(not(target_os = "windows"))]
+                    let output = std::process::Command::new("sh").args(["-c", &shell_cmd]).output();
+
+                    match output {
+                        Ok(out) => {
+                            let stdout = String::from_utf8_lossy(&out.stdout);
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            let first_line = stdout.lines().next().or_else(|| stderr.lines().next()).unwrap_or("done");
+                            let is_err = !out.status.success();
+                            w.vi_message = Some((format!("!{}: {}", shell_cmd, first_line), is_err));
+                        }
+                        Err(e) => {
+                            w.vi_message = Some((format!("E485: Command execution failed: {}", e), true));
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+            zee_core::ExCommand::Global { pattern, invert, action } => {
+                workspace.update(cx, |w, cx| {
+                    if action == "d" {
+                        if let Some(editor) = w.active_editor_mut() {
+                            match editor.global_delete(&pattern, invert) {
+                                Ok(deleted_count) => {
+                                    w.vi_message = Some((format!("{} fewer lines", deleted_count), false));
+                                }
+                                Err(e) => {
+                                    w.vi_message = Some((format!("E486: Pattern error: {}", e), true));
+                                }
+                            }
+                        }
+                    } else {
+                        w.vi_message = Some((format!("E476: Invalid command: {}", action), true));
+                    }
+                    cx.notify();
+                });
+            }
             zee_core::ExCommand::Empty => {
                 workspace.update(cx, |w, cx| {
                     w.vi_message = None;

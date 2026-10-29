@@ -2083,6 +2083,248 @@ impl Editor {
         None
     }
 
+    /// Returns the character range of a Vim text object at the cursor position.
+    /// `obj` can be:
+    /// - `'w'`: word
+    /// - `'W'`: WORD (whitespace-delimited)
+    /// - `'"'`, `'\''`, '`': quoted string
+    /// - `'('`, `')'`, `'b'`: round brackets / parentheses
+    /// - `'['`, `']'`: square brackets
+    /// - `'{'`, `'}'`, `'B'`: curly braces
+    /// - `'<'`, `'>'`: angle brackets
+    /// `inside`: `true` for `i` (inner), `false` for `a` (around/outer)
+    pub fn get_text_object_range(&self, obj: char, inside: bool) -> Option<Range<usize>> {
+        let len = self.rope.len_chars();
+        if len == 0 {
+            return None;
+        }
+        let pos = self.cursor.min(len.saturating_sub(1));
+
+        match obj {
+            'w' => {
+                let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+                let is_ws = |c: char| c.is_whitespace();
+                let ch = self.rope.char(pos);
+
+                let (start, end) = if is_word_char(ch) {
+                    let mut s = pos;
+                    while s > 0 && is_word_char(self.rope.char(s - 1)) {
+                        s -= 1;
+                    }
+                    let mut e = pos;
+                    while e < len && is_word_char(self.rope.char(e)) {
+                        e += 1;
+                    }
+                    (s, e)
+                } else if is_ws(ch) {
+                    let mut s = pos;
+                    while s > 0 && is_ws(self.rope.char(s - 1)) {
+                        s -= 1;
+                    }
+                    let mut e = pos;
+                    while e < len && is_ws(self.rope.char(e)) {
+                        e += 1;
+                    }
+                    (s, e)
+                } else {
+                    let mut s = pos;
+                    while s > 0 && !is_word_char(self.rope.char(s - 1)) && !is_ws(self.rope.char(s - 1)) {
+                        s -= 1;
+                    }
+                    let mut e = pos;
+                    while e < len && !is_word_char(self.rope.char(e)) && !is_ws(self.rope.char(e)) {
+                        e += 1;
+                    }
+                    (s, e)
+                };
+
+                if inside {
+                    Some(start..end)
+                } else {
+                    let mut e = end;
+                    while e < len && is_ws(self.rope.char(e)) && self.rope.char(e) != '\n' {
+                        e += 1;
+                    }
+                    if e > end {
+                        Some(start..e)
+                    } else {
+                        let mut s = start;
+                        while s > 0 && is_ws(self.rope.char(s - 1)) && self.rope.char(s - 1) != '\n' {
+                            s -= 1;
+                        }
+                        Some(s..end)
+                    }
+                }
+            }
+            'W' => {
+                let is_ws = |c: char| c.is_whitespace();
+                let ch = self.rope.char(pos);
+
+                let (start, end) = if is_ws(ch) {
+                    let mut s = pos;
+                    while s > 0 && is_ws(self.rope.char(s - 1)) { s -= 1; }
+                    let mut e = pos;
+                    while e < len && is_ws(self.rope.char(e)) { e += 1; }
+                    (s, e)
+                } else {
+                    let mut s = pos;
+                    while s > 0 && !is_ws(self.rope.char(s - 1)) { s -= 1; }
+                    let mut e = pos;
+                    while e < len && !is_ws(self.rope.char(e)) { e += 1; }
+                    (s, e)
+                };
+
+                if inside {
+                    Some(start..end)
+                } else {
+                    let mut e = end;
+                    while e < len && is_ws(self.rope.char(e)) && self.rope.char(e) != '\n' {
+                        e += 1;
+                    }
+                    if e > end {
+                        Some(start..e)
+                    } else {
+                        let mut s = start;
+                        while s > 0 && is_ws(self.rope.char(s - 1)) && self.rope.char(s - 1) != '\n' {
+                            s -= 1;
+                        }
+                        Some(s..end)
+                    }
+                }
+            }
+            '"' | '\'' | '`' => {
+                let quote = obj;
+                let line_idx = self.rope.char_to_line(pos);
+                let line_start = self.rope.line_to_char(line_idx);
+                let line_end = line_start + self.rope.line(line_idx).len_chars();
+
+                let mut quotes = Vec::new();
+                for p in line_start..line_end {
+                    if self.rope.char(p) == quote {
+                        let mut backslash_count = 0;
+                        let mut b_pos = p;
+                        while b_pos > line_start && self.rope.char(b_pos - 1) == '\\' {
+                            backslash_count += 1;
+                            b_pos -= 1;
+                        }
+                        if backslash_count % 2 == 0 {
+                            quotes.push(p);
+                        }
+                    }
+                }
+
+                if quotes.len() < 2 {
+                    return None;
+                }
+
+                let mut target_pair = None;
+                for pair in quotes.chunks_exact(2) {
+                    let (q1, q2) = (pair[0], pair[1]);
+                    if pos >= q1 && pos <= q2 {
+                        target_pair = Some((q1, q2));
+                        break;
+                    }
+                }
+                if target_pair.is_none() {
+                    for pair in quotes.chunks_exact(2) {
+                        let (q1, q2) = (pair[0], pair[1]);
+                        if q1 > pos {
+                            target_pair = Some((q1, q2));
+                            break;
+                        }
+                    }
+                }
+
+                let (q1, q2) = target_pair?;
+                if inside {
+                    Some((q1 + 1)..q2)
+                } else {
+                    Some(q1..(q2 + 1))
+                }
+            }
+            '(' | ')' | 'b' | '[' | ']' | '{' | '}' | 'B' | '<' | '>' => {
+                let (open_ch, close_ch) = match obj {
+                    '(' | ')' | 'b' => ('(', ')'),
+                    '[' | ']' => ('[', ']'),
+                    '{' | '}' | 'B' => ('{', '}'),
+                    '<' | '>' => ('<', '>'),
+                    _ => unreachable!(),
+                };
+
+                let mut curr = pos;
+                let mut target_open = None;
+
+                loop {
+                    let ch = self.rope.char(curr);
+                    if ch == open_ch {
+                        let mut depth = 0;
+                        let mut found_close = None;
+                        for (i, c) in self.rope.chars_at(curr).enumerate() {
+                            if c == open_ch {
+                                depth += 1;
+                            } else if c == close_ch {
+                                depth -= 1;
+                                if depth == 0 {
+                                    found_close = Some(curr + i);
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(close_pos) = found_close {
+                            if close_pos >= pos {
+                                target_open = Some((curr, close_pos));
+                                break;
+                            }
+                        }
+                    }
+                    if curr == 0 { break; }
+                    curr -= 1;
+                }
+
+                let (o, c) = target_open?;
+                if inside {
+                    Some((o + 1)..c)
+                } else {
+                    Some(o..(c + 1))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Delete all lines matching (or not matching if `invert` is true) the given regex `pattern`.
+    /// Returns the number of lines deleted, or a regex error.
+    pub fn global_delete(&mut self, pattern: &str, invert: bool) -> Result<usize, regex::Error> {
+        let re = regex::Regex::new(pattern)?;
+        let text = self.rope.to_string();
+        let lines: Vec<&str> = text.lines().collect();
+        let mut kept_lines = Vec::new();
+        let mut deleted_count = 0;
+
+        for l in lines {
+            let is_match = re.is_match(l);
+            let should_delete = if invert { !is_match } else { is_match };
+            if should_delete {
+                deleted_count += 1;
+            } else {
+                kept_lines.push(l);
+            }
+        }
+
+        let mut new_text = kept_lines.join("\n");
+        if text.ends_with('\n') && !new_text.is_empty() {
+            new_text.push('\n');
+        }
+
+        self.delete(0..self.rope.len_chars());
+        self.insert(0, &new_text);
+        self.cursor = self.cursor.min(self.rope.len_chars());
+        self.selection = None;
+        self.selection_anchor = None;
+
+        Ok(deleted_count)
+    }
+
     pub fn search_word_at_cursor(&mut self, forward: bool) {
         let range = self.find_word_bounds(self.cursor);
         let word = self.rope.slice(range).to_string();
@@ -4036,6 +4278,44 @@ mod tests {
         assert_eq!(editor.rope.to_string(), "        let x = 1;\n");
         editor.convert_spaces_to_tabs(4);
         assert_eq!(editor.rope.to_string(), "\t\tlet x = 1;\n");
+    }
+
+    #[test]
+    fn test_text_object_ranges() {
+        let mut editor = Editor::new();
+        editor.insert(0, "let msg = \"hello world\";\nlet sum = add(10, 20);\nlet config = { key: \"val\" };\n");
+
+        // 1. Quoted string text object
+        // Cursor on 'e' in "hello world" (pos = 12)
+        editor.cursor = 12;
+        let r_in = editor.get_text_object_range('"', true).unwrap();
+        assert_eq!(&editor.rope.slice(r_in).to_string(), "hello world");
+        let r_out = editor.get_text_object_range('"', false).unwrap();
+        assert_eq!(&editor.rope.slice(r_out).to_string(), "\"hello world\"");
+
+        // 2. Parentheses text object
+        // Cursor on '1' in (10, 20)
+        let pos_paren = editor.rope.to_string().find("10").unwrap();
+        editor.cursor = pos_paren;
+        let r_in_paren = editor.get_text_object_range('(', true).unwrap();
+        assert_eq!(&editor.rope.slice(r_in_paren).to_string(), "10, 20");
+        let r_out_paren = editor.get_text_object_range('(', false).unwrap();
+        assert_eq!(&editor.rope.slice(r_out_paren).to_string(), "(10, 20)");
+
+        // 3. Braces text object
+        let pos_brace = editor.rope.to_string().find("key").unwrap();
+        editor.cursor = pos_brace;
+        let r_in_brace = editor.get_text_object_range('{', true).unwrap();
+        assert_eq!(&editor.rope.slice(r_in_brace).to_string(), " key: \"val\" ");
+        let r_out_brace = editor.get_text_object_range('{', false).unwrap();
+        assert_eq!(&editor.rope.slice(r_out_brace).to_string(), "{ key: \"val\" }");
+
+        // 4. Word text object
+        editor.cursor = 4; // 'm' in 'msg'
+        let r_in_w = editor.get_text_object_range('w', true).unwrap();
+        assert_eq!(&editor.rope.slice(r_in_w).to_string(), "msg");
+        let r_out_w = editor.get_text_object_range('w', false).unwrap();
+        assert_eq!(&editor.rope.slice(r_out_w).to_string(), "msg ");
     }
 }
 

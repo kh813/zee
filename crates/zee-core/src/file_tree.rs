@@ -40,17 +40,24 @@ pub struct FileTree {
     pub root_path: PathBuf,
     pub root_node: FileTreeNode,
     pub show_hidden: bool,
+    pub is_populated: bool,
 }
 
 impl FileTree {
     pub fn new<P: AsRef<Path>>(root_path: P, show_hidden: bool) -> Self {
+        let mut tree = Self::new_lazy(root_path, show_hidden);
+        tree.ensure_populated();
+        tree
+    }
+
+    pub fn new_lazy<P: AsRef<Path>>(root_path: P, show_hidden: bool) -> Self {
         let root_path = root_path.as_ref().to_path_buf();
         let name = root_path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| root_path.to_string_lossy().to_string());
 
-        let mut root_node = FileTreeNode {
+        let root_node = FileTreeNode {
             name,
             path: root_path.clone(),
             is_dir: true,
@@ -58,12 +65,18 @@ impl FileTree {
             children: Vec::new(),
         };
 
-        Self::populate_children(&mut root_node, show_hidden);
-
         Self {
             root_path,
             root_node,
             show_hidden,
+            is_populated: false,
+        }
+    }
+
+    pub fn ensure_populated(&mut self) {
+        if !self.is_populated {
+            Self::populate_children(&mut self.root_node, self.show_hidden);
+            self.is_populated = true;
         }
     }
 
@@ -82,13 +95,16 @@ impl FileTree {
             children: Vec::new(),
         };
 
-        Self::populate_children(&mut root_node, self.show_hidden);
+        if self.is_populated {
+            Self::populate_children(&mut root_node, self.show_hidden);
+        }
 
         self.root_path = root_path;
         self.root_node = root_node;
     }
 
     pub fn refresh(&mut self) {
+        self.ensure_populated();
         Self::refresh_node(&mut self.root_node, self.show_hidden);
     }
 
@@ -112,6 +128,7 @@ impl FileTree {
     }
 
     pub fn restore_expanded_paths(&mut self, list: &[PathBuf]) {
+        self.ensure_populated();
         Self::restore_expanded(&mut self.root_node, list, self.show_hidden);
     }
 
@@ -151,10 +168,12 @@ impl FileTree {
     }
 
     pub fn toggle_expand(&mut self, target_path: &Path) -> bool {
+        self.ensure_populated();
         Self::toggle_expand_node(&mut self.root_node, target_path, self.show_hidden)
     }
 
     pub fn ensure_expanded(&mut self, dir_path: &Path) {
+        self.ensure_populated();
         Self::ensure_expanded_node(&mut self.root_node, dir_path, self.show_hidden);
     }
 
@@ -503,6 +522,25 @@ mod tests {
         let names_visible: Vec<String> = tree.flatten().into_iter().map(|i| i.name).collect();
         assert!(names_visible.contains(&".env".to_string()));
         assert!(names_visible.contains(&"main.rs".to_string()));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_file_tree_lazy_loading() {
+        let temp_dir = std::env::temp_dir().join("zee_test_tree_lazy");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+        fs::write(temp_dir.join("sample.txt"), "hello").unwrap();
+
+        let mut tree = FileTree::new_lazy(&temp_dir, false);
+        assert!(!tree.is_populated, "Lazy tree should not be populated initially");
+        assert!(tree.root_node.children.is_empty(), "Children should be empty prior to population");
+
+        tree.ensure_populated();
+        assert!(tree.is_populated, "Tree should be populated after ensure_populated");
+        assert_eq!(tree.root_node.children.len(), 1, "Should have loaded 1 child node");
+        assert_eq!(tree.root_node.children[0].name, "sample.txt");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

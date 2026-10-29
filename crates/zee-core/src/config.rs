@@ -37,6 +37,8 @@ pub struct Config {
     // Update channel
     #[serde(default)]
     pub include_prerelease: bool,
+    #[serde(default = "default_true")]
+    pub check_for_updates: bool,
     // Custom user keybindings (shortcut string -> action name)
     #[serde(default)]
     pub keybindings: std::collections::HashMap<String, String>,
@@ -44,6 +46,10 @@ pub struct Config {
 
 pub fn default_plugin_registries() -> Vec<String> {
     vec!["https://github.com/kh813/zee-plugins".to_string()]
+}
+
+pub fn default_true() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -70,6 +76,7 @@ impl Default for Config {
             gdrive_client_id: None,
             gdrive_client_secret: None,
             include_prerelease: false,
+            check_for_updates: true,
             keybindings: std::collections::HashMap::new(),
         }
     }

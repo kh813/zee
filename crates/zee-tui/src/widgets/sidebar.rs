@@ -64,11 +64,18 @@ pub fn format_file_size(bytes: usize) -> String {
 
 impl Sidebar {
     pub fn new(root_path: PathBuf, visible: bool, show_hidden: bool) -> Self {
-        let file_tree = FileTree::new(root_path, show_hidden);
-        let mut plugin_manager = zee_core::plugin::PluginManager::new();
-        let dev_plugin_dir = PathBuf::from("plugins/zee-plugin-text");
-        if dev_plugin_dir.exists() {
-            let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
+        let file_tree = if visible {
+            FileTree::new(root_path, show_hidden)
+        } else {
+            FileTree::new_lazy(root_path, show_hidden)
+        };
+        let mut plugin_manager = zee_core::plugin::PluginManager::empty();
+        if visible {
+            plugin_manager.load_installed_plugins();
+            let dev_plugin_dir = PathBuf::from("plugins/zee-plugin-text");
+            if dev_plugin_dir.exists() {
+                let _ = plugin_manager.load_plugin_dir(&dev_plugin_dir);
+            }
         }
         Self {
             visible,
@@ -85,8 +92,26 @@ impl Sidebar {
         }
     }
 
+    pub fn ensure_initialized(&mut self) {
+        if !self.file_tree.is_populated {
+            self.file_tree.ensure_populated();
+        }
+    }
+
+    pub fn ensure_plugins_loaded(&mut self) {
+        if self.plugin_manager.plugins.is_empty()
+            && self.plugin_manager.lua_plugins.is_empty()
+            && self.plugin_manager.component_plugins.is_empty()
+        {
+            self.reload_plugins();
+        }
+    }
+
     pub fn toggle_visibility(&mut self) {
         self.visible = !self.visible;
+        if self.visible {
+            self.ensure_initialized();
+        }
     }
 
     pub fn reload_plugins(&mut self) {
@@ -100,7 +125,11 @@ impl Sidebar {
 
     #[allow(dead_code)]
     pub fn set_root(&mut self, root_path: PathBuf) {
-        self.file_tree = FileTree::new(root_path, self.file_tree.show_hidden);
+        self.file_tree = if self.visible {
+            FileTree::new(root_path, self.file_tree.show_hidden)
+        } else {
+            FileTree::new_lazy(root_path, self.file_tree.show_hidden)
+        };
         self.selected_file_idx = 0;
         self.file_scroll_top = 0;
     }
@@ -890,5 +919,22 @@ mod tests {
         assert_eq!(format_file_size(500), "500 B");
         assert_eq!(format_file_size(2048), "2.0 KB");
         assert_eq!(format_file_size(5 * 1024 * 1024), "5.00 MB");
+    }
+
+    #[test]
+    fn test_sidebar_lazy_initialization() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_sb_lazy_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let _ = std::fs::write(temp_dir.join("file1.txt"), "hello");
+
+        let mut sidebar = Sidebar::new(temp_dir.clone(), false, false);
+        assert!(!sidebar.visible);
+        assert!(!sidebar.file_tree.is_populated, "Hidden sidebar should not populate file tree on init");
+
+        sidebar.toggle_visibility();
+        assert!(sidebar.visible);
+        assert!(sidebar.file_tree.is_populated, "Toggling sidebar to visible should populate file tree");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

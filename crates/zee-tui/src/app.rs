@@ -78,6 +78,8 @@ pub struct App {
     pub theme: zee_core::theme::Theme,
     pub themes: Vec<zee_core::theme::Theme>,
     pub syntax_defs: Vec<zee_core::syntax::SyntaxDefinition>,
+    pub templates: Vec<zee_core::template::Template>,
+    pub plugin_manifests: Vec<zee_core::plugin::PluginManifest>,
 
     pub find_panel: crate::widgets::find_panel::FindPanel,
     pub sidebar: crate::widgets::sidebar::Sidebar,
@@ -185,7 +187,17 @@ impl App {
         }
 
         let active_buffer = 0;
-        let menus = Self::build_menus(&i18n, &config, buffers.get(active_buffer), &themes, &syntax_defs);
+        let templates = zee_core::template::Template::load_all();
+        let plugin_manifests = Vec::new();
+        let menus = Self::build_menus(
+            &i18n,
+            &config,
+            buffers.get(active_buffer),
+            &themes,
+            &syntax_defs,
+            &templates,
+            &plugin_manifests,
+        );
 
         let mut layout = Layout::new(width, height);
         layout.recompute(&menus, &buffers, active_buffer, config.line_numbers, config.sidebar, &config.sidebar_position, config.vi_mode);
@@ -196,16 +208,21 @@ impl App {
         let cached_update = zee_core::selfupdate::get_cached_available_update();
         let (update_tx, update_rx) = std::sync::mpsc::channel();
         let include_prerelease = config.include_prerelease;
-        std::thread::spawn(move || {
-            // Wait 3 minutes (180s) after launch before first background check
-            std::thread::sleep(std::time::Duration::from_secs(180));
-            loop {
-                if let Some(ver) = zee_core::selfupdate::check_background_update(zee_core::selfupdate::AppType::Cli, include_prerelease) {
-                    let _ = update_tx.send(ver);
-                }
-                std::thread::sleep(std::time::Duration::from_secs(4 * 3600));
-            }
-        });
+        if config.check_for_updates {
+            let _ = std::thread::Builder::new()
+                .name("zee-update-checker".to_string())
+                .stack_size(256 * 1024)
+                .spawn(move || {
+                    // Wait 3 minutes (180s) after launch before first background check
+                    std::thread::sleep(std::time::Duration::from_secs(180));
+                    loop {
+                        if let Some(ver) = zee_core::selfupdate::check_background_update(zee_core::selfupdate::AppType::Cli, include_prerelease) {
+                            let _ = update_tx.send(ver);
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(4 * 3600));
+                    }
+                });
+        }
 
         let mut app = App {
             focus: Focus::Editor,
@@ -238,6 +255,8 @@ impl App {
             theme,
             themes,
             syntax_defs,
+            templates,
+            plugin_manifests,
 
             find_panel: crate::widgets::find_panel::FindPanel::new(),
             sidebar,
@@ -428,6 +447,8 @@ impl App {
         buffer: Option<&Editor>,
         themes: &[zee_core::theme::Theme],
         syntax_defs: &[zee_core::syntax::SyntaxDefinition],
+        templates: &[zee_core::template::Template],
+        manifests: &[zee_core::plugin::PluginManifest],
     ) -> Vec<Menu> {
         let cur_enc = buffer.map(|b| b.encoding).unwrap_or(Encoding::Utf8);
         let cur_le = buffer.map(|b| b.line_ending).unwrap_or(LineEnding::Lf);
@@ -496,9 +517,8 @@ impl App {
             }
         }).collect();
 
-        let templates = zee_core::template::Template::load_all();
         let mut template_items = Vec::new();
-        for tpl in &templates {
+        for tpl in templates {
             template_items.push(MenuItem::Action {
                 label: tpl.name.clone(),
                 action: Action::NewFromTemplate(tpl.id.clone()),
@@ -582,12 +602,6 @@ impl App {
         file_items.push(MenuItem::Action { label: i18n.get("menu.file.exit").to_string(), action: Action::Exit, shortcut: Some("Ctrl+Q".to_string()) });
 
         let mut plugin_items = Vec::new();
-        let mut pm = zee_core::plugin::PluginManager::new();
-        let dev_plugin_dir = std::path::PathBuf::from("plugins/zee-plugin-text");
-        if dev_plugin_dir.exists() {
-            let _ = pm.load_plugin_dir(&dev_plugin_dir);
-        }
-        let manifests = pm.all_manifests();
         if manifests.is_empty() {
             plugin_items.push(MenuItem::Action {
                 label: i18n.get("menu.plugins.no_plugins").to_string(),
@@ -683,6 +697,24 @@ impl App {
         ]
     }
 
+    pub fn refresh_menus(&mut self) {
+        self.menus = Self::build_menus(
+            &self.i18n,
+            &self.config,
+            self.buffers.get(self.active_buffer),
+            &self.themes,
+            &self.syntax_defs,
+            &self.templates,
+            &self.plugin_manifests,
+        );
+    }
+
+    pub fn reload_plugins(&mut self) {
+        self.sidebar.reload_plugins();
+        self.plugin_manifests = self.sidebar.plugin_manager.all_manifests();
+        self.refresh_menus();
+    }
+
     pub fn recompute_layout(&mut self) {
         self.layout.recompute(
             &self.menus,
@@ -708,6 +740,7 @@ impl App {
     }
 
     pub fn apply_plugin_transform(&mut self, cmd: &str) {
+        self.sidebar.ensure_plugins_loaded();
         let (has_selection, range, text_to_transform) = if let Some(buffer) = self.buffers.get(self.active_buffer) {
             if let Some(range) = buffer.selection.clone() {
                 let start = range.start.min(range.end);
@@ -809,7 +842,7 @@ impl App {
             }
         }
         self.update_active_outline();
-        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+        self.refresh_menus();
         self.recompute_layout();
     }
 
@@ -900,6 +933,7 @@ impl App {
     }
 
     fn render_sidebar(&mut self) {
+        self.sidebar.ensure_initialized();
         let bounds = self.layout.sidebar_bounds();
         let is_focused = self.focus == Focus::Sidebar;
         let active_buf = self.buffers.get(self.active_buffer);
@@ -1107,7 +1141,7 @@ impl App {
                 KeyCode::Tab | KeyCode::PageDown | KeyCode::Char(']') => {
                     self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
                     self.update_active_outline();
-                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.refresh_menus();
                     self.recompute_layout();
                     if self.layout.panel_height > 0 {
                         self.run_search();
@@ -1117,7 +1151,7 @@ impl App {
                 KeyCode::PageUp | KeyCode::Char('[') => {
                     self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
                     self.update_active_outline();
-                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.refresh_menus();
                     self.recompute_layout();
                     if self.layout.panel_height > 0 {
                         self.run_search();
@@ -1136,7 +1170,7 @@ impl App {
                 KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('[') | KeyCode::Char('{') => {
                     self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
                     self.update_active_outline();
-                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.refresh_menus();
                     self.recompute_layout();
                     if self.layout.panel_height > 0 {
                         self.run_search();
@@ -1146,7 +1180,7 @@ impl App {
                 KeyCode::Char(']') | KeyCode::Char('}') => {
                     self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
                     self.update_active_outline();
-                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.refresh_menus();
                     self.recompute_layout();
                     if self.layout.panel_height > 0 {
                         self.run_search();
@@ -1168,7 +1202,7 @@ impl App {
                 KeyCode::Left => {
                     self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
                     self.update_active_outline();
-                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.refresh_menus();
                     self.recompute_layout();
                     if self.layout.panel_height > 0 {
                         self.run_search();
@@ -1178,7 +1212,7 @@ impl App {
                 KeyCode::Right => {
                     self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
                     self.update_active_outline();
-                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.refresh_menus();
                     self.recompute_layout();
                     if self.layout.panel_height > 0 {
                         self.run_search();
@@ -3028,7 +3062,7 @@ impl App {
                                 if let Some(id) = arg {
                                     match zee_core::plugin::PluginManager::install_from_registry(&id, None, Some(&self.config.plugin_registries)) {
                                         Ok(_) => {
-                                            self.sidebar.reload_plugins();
+                                            self.reload_plugins();
                                             self.vi_message = Some((format!("Plugin '{}' installed successfully", id), false));
                                         }
                                         Err(e) => {
@@ -3043,7 +3077,7 @@ impl App {
                                 if let Some(id) = arg {
                                     match zee_core::plugin::PluginManager::uninstall_plugin_by_id(&id) {
                                         Ok(true) => {
-                                            self.sidebar.reload_plugins();
+                                            self.reload_plugins();
                                             self.vi_message = Some((format!("Plugin '{}' uninstalled successfully", id), false));
                                         }
                                         Ok(false) => {
@@ -3058,7 +3092,7 @@ impl App {
                                 }
                             }
                             "reload" => {
-                                self.sidebar.reload_plugins();
+                                self.reload_plugins();
                                 self.vi_message = Some(("Plugins reloaded successfully".to_string(), false));
                             }
                             _ => {
@@ -3369,7 +3403,7 @@ impl App {
                                         self.buffers.push(buffer);
                                         self.active_buffer = self.buffers.len() - 1;
                                         self.update_active_outline();
-                                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                        self.refresh_menus();
                                         self.recompute_layout();
                                     }
                                     Err(e) => {
@@ -3412,7 +3446,7 @@ impl App {
                                     }
                                     return;
                                 }
-                                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                self.refresh_menus();
                                 self.recompute_layout();
                             }
                             PendingOp::OpenFolder => {
@@ -3424,7 +3458,7 @@ impl App {
                                 self.current_dialog = None;
                                 self.pending_op = PendingOp::None;
                                 self.focus = Focus::Sidebar;
-                                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                self.refresh_menus();
                                 self.recompute_layout();
                                 return;
                             }
@@ -3491,8 +3525,8 @@ impl App {
                                     Ok(report) => {
                                         self.config = Config::load();
                                         self.i18n = I18n::load(&self.config.language);
-                                        self.sidebar.reload_plugins();
-                                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                        self.reload_plugins();
+                                        self.refresh_menus();
                                         self.recompute_layout();
 
                                         let title = self.i18n.get("dialog.backup.import_title").to_string();
@@ -3759,7 +3793,7 @@ impl App {
                                                 b.encoding = enc;
                                                 self.buffers[self.active_buffer] = b;
                                                 self.update_active_outline();
-                                                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                                self.refresh_menus();
                                                 self.recompute_layout();
                                             }
                                         }
@@ -3801,15 +3835,15 @@ impl App {
                             self.i18n = I18n::load(&self.config.language);
                         }
 
-                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                        self.refresh_menus();
                         self.recompute_layout();
                     }
                     dialog::Action::Cancel => {}
                 }
                 if let Some(ref d) = self.current_dialog {
                     if d.title() == self.i18n.get("dialog.plugin.title") {
-                        self.sidebar.reload_plugins();
-                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                        self.reload_plugins();
+                        self.refresh_menus();
                     }
                 }
                 self.current_dialog = None;
@@ -3819,8 +3853,8 @@ impl App {
             DialogResult::Cancel => {
                 if let Some(ref d) = self.current_dialog {
                     if d.title() == self.i18n.get("dialog.plugin.title") {
-                        self.sidebar.reload_plugins();
-                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                        self.reload_plugins();
+                        self.refresh_menus();
                     }
                 }
                 self.current_dialog = None;
@@ -4211,7 +4245,7 @@ impl App {
         if let Some(idx) = self.buffers.iter().position(|b| b.path.as_deref() == Some(path)) {
             self.active_buffer = idx;
             self.update_active_outline();
-            self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+            self.refresh_menus();
             self.recompute_layout();
             return true;
         }
@@ -4229,7 +4263,7 @@ impl App {
                         let mut recent = zee_core::recent::RecentFiles::load();
                         recent.add(path);
                         self.update_active_outline();
-                        self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                        self.refresh_menus();
                         self.recompute_layout();
                         return true;
                     }
@@ -4240,7 +4274,7 @@ impl App {
                 let mut recent = zee_core::recent::RecentFiles::load();
                 recent.add(path);
                 self.update_active_outline();
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
                 self.recompute_layout();
                 true
             }
@@ -4321,7 +4355,7 @@ impl App {
                             self.buffers[0] = buffer;
                             self.active_buffer = 0;
                             self.update_active_outline();
-                            self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                            self.refresh_menus();
                             self.recompute_layout();
                             return;
                         }
@@ -4330,7 +4364,7 @@ impl App {
                     self.buffers.push(buffer);
                     self.active_buffer = self.buffers.len() - 1;
                     self.update_active_outline();
-                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.refresh_menus();
                     self.recompute_layout();
                 }
             }
@@ -4379,7 +4413,7 @@ impl App {
             Action::ClearRecent => {
                 let mut recent = zee_core::recent::RecentFiles::load();
                 recent.clear();
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
             }
             Action::Save => {
                 let needs_save_as = if let Some(buffer) = self.buffers.get(self.active_buffer) {
@@ -4573,7 +4607,7 @@ impl App {
                 if !self.sidebar.visible && self.focus == Focus::Sidebar {
                     self.focus = Focus::Editor;
                 }
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
                 self.recompute_layout();
             }
             Action::ToggleOutline => {
@@ -4584,19 +4618,19 @@ impl App {
                 }
                 self.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Outline;
                 self.focus = Focus::Sidebar;
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
                 self.recompute_layout();
             }
             Action::ToggleLineNumbers => {
                 self.config.line_numbers = !self.config.line_numbers;
                 let _ = Config::write_key("line_numbers", &self.config.line_numbers.to_string());
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
                 self.recompute_layout();
             }
             Action::ToggleWordWrap => {
                 self.config.word_wrap = !self.config.word_wrap;
                 let _ = Config::write_key("word_wrap", &self.config.word_wrap.to_string());
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
             }
             Action::ToggleViMode => {
                 if self.layout.panel_height > 0 {
@@ -4610,7 +4644,7 @@ impl App {
                 }
 
                 self.config.vi_mode = !self.config.vi_mode;
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
                 
                 for b in self.buffers.iter_mut() {
                     b.vi_mode = if self.config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
@@ -4626,12 +4660,12 @@ impl App {
             Action::ToggleTrimTrailingWhitespace => {
                 self.config.trim_trailing_whitespace = !self.config.trim_trailing_whitespace;
                 let _ = Config::write_key("trim_trailing_whitespace", &self.config.trim_trailing_whitespace.to_string());
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
             }
             Action::ToggleEnsureFinalNewline => {
                 self.config.ensure_final_newline = !self.config.ensure_final_newline;
                 let _ = Config::write_key("ensure_final_newline", &self.config.ensure_final_newline.to_string());
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
             }
             Action::About => {
                 self.focus = Focus::Dialog;
@@ -4656,7 +4690,7 @@ impl App {
                                 b.encoding = enc;
                                 self.buffers[self.active_buffer] = b;
                                 self.update_active_outline();
-                                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                self.refresh_menus();
                                 self.recompute_layout();
                             }
                         }
@@ -4667,22 +4701,22 @@ impl App {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     buffer.encoding = enc;
                     buffer.modified_since_save = true;
-                    self.menus = Self::build_menus(&self.i18n, &self.config, Some(buffer), &self.themes, &self.syntax_defs);
                 }
+                self.refresh_menus();
             }
             Action::SetLineEnding(le) => {
                 if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                     buffer.line_ending = le;
                     buffer.modified_since_save = true;
-                    self.menus = Self::build_menus(&self.i18n, &self.config, Some(buffer), &self.themes, &self.syntax_defs);
                 }
+                self.refresh_menus();
             }
             Action::SetTheme(theme_id) => {
                 if let Some(theme) = self.themes.iter().find(|t| t.meta.name.to_lowercase().replace(" ", "-") == theme_id) {
                     self.theme = theme.clone();
                     self.config.theme = theme_id;
                     let _ = Config::write_key("theme", &self.config.theme);
-                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                    self.refresh_menus();
                 }
             }
             Action::SetSyntax(syntax_name) => {
@@ -4697,13 +4731,13 @@ impl App {
                         buffer.update_syntax(None);
                     }
                 }
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
             }
             Action::SetLanguage(lang_id) => {
                 self.config.language = lang_id.clone();
                 let _ = Config::write_key("language", &self.config.language);
                 self.i18n = I18n::load(&self.config.language);
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
                 self.recompute_layout();
             }
             Action::OpenSettings => {
@@ -4722,13 +4756,16 @@ impl App {
                 }
                 self.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Files;
                 self.focus = Focus::Sidebar;
-                self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                self.refresh_menus();
                 self.recompute_layout();
             }
             Action::RefreshFileTree => {
                 self.sidebar.refresh_files();
             }
             Action::ManagePlugins => {
+                self.sidebar.ensure_plugins_loaded();
+                self.plugin_manifests = self.sidebar.plugin_manager.all_manifests();
+                self.refresh_menus();
                 self.focus = Focus::Dialog;
                 self.current_dialog = Some(Box::new(dialog::PluginManagerDialog::new(
                     &self.sidebar.plugin_manager,
@@ -4951,7 +4988,7 @@ impl App {
                                 } else {
                                     self.active_buffer = *idx;
                                     self.update_active_outline();
-                                    self.menus = Self::build_menus(&self.i18n, &self.config, self.buffers.get(self.active_buffer), &self.themes, &self.syntax_defs);
+                                    self.refresh_menus();
                                     self.recompute_layout();
                                     if self.layout.panel_height > 0 {
                                         self.run_search();
@@ -6566,7 +6603,7 @@ mod tests {
         // Change language config & reload i18n
         app.config.language = if initial_lang == "ja" { "en".to_string() } else { "ja".to_string() };
         app.i18n = I18n::load(&app.config.language);
-        app.menus = App::build_menus(&app.i18n, &app.config, app.buffers.get(app.active_buffer), &app.themes, &app.syntax_defs);
+        app.refresh_menus();
         
         // Check menu title updated
         let file_menu_label = app.menus[0].label.clone();

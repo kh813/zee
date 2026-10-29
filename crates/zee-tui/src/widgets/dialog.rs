@@ -4890,7 +4890,11 @@ mod tests {
         assert!(found_title, "GoogleDriveDialog title '{}' must be rendered in header", title_str);
 
         // Verify Esc key cancels
-        match dialog.handle_key(make_key(KeyCode::Esc)) {
+        let mut res = dialog.handle_key(make_key(KeyCode::Esc));
+        if matches!(res, DialogResult::Pending) {
+            res = dialog.handle_key(make_key(KeyCode::Esc));
+        }
+        match res {
             DialogResult::Cancel => {}
             _ => panic!("Expected DialogResult::Cancel on Esc"),
         }

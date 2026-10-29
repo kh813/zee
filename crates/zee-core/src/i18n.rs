@@ -248,6 +248,8 @@ impl I18n {
         m.insert("menu.edit.copy".to_string(), "Copy".to_string());
         m.insert("menu.edit.paste".to_string(), "Paste".to_string());
         m.insert("menu.edit.find".to_string(), "Find…".to_string());
+        m.insert("menu.edit.find_next".to_string(), "Find Next".to_string());
+        m.insert("menu.edit.find_prev".to_string(), "Find Previous".to_string());
         m.insert("menu.edit.replace".to_string(), "Replace…".to_string());
         m.insert("menu.edit.project_search".to_string(), "Find in Files…".to_string());
         m.insert("menu.edit.select_all".to_string(), "Select All".to_string());
@@ -548,6 +550,8 @@ impl I18n {
         m.insert("menu.edit.copy".to_string(), "コピー".to_string());
         m.insert("menu.edit.paste".to_string(), "貼り付け".to_string());
         m.insert("menu.edit.find".to_string(), "検索…".to_string());
+        m.insert("menu.edit.find_next".to_string(), "次を検索".to_string());
+        m.insert("menu.edit.find_prev".to_string(), "前を検索".to_string());
         m.insert("menu.edit.replace".to_string(), "置換…".to_string());
         m.insert("menu.edit.project_search".to_string(), "プロジェクト横断検索…".to_string());
         m.insert("menu.edit.select_all".to_string(), "すべて選択".to_string());

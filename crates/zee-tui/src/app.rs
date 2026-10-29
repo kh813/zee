@@ -657,6 +657,8 @@ impl App {
                 MenuItem::Action { label: i18n.get("menu.edit.paste").to_string(), action: Action::Paste, shortcut: Some("Ctrl+V".to_string()) },
                 MenuItem::Separator,
                 MenuItem::Action { label: i18n.get("menu.edit.find").to_string(), action: Action::Find, shortcut: Some("Ctrl+F".to_string()) },
+                MenuItem::Action { label: i18n.get("menu.edit.find_next").to_string(), action: Action::FindNext, shortcut: Some("Enter / F3".to_string()) },
+                MenuItem::Action { label: i18n.get("menu.edit.find_prev").to_string(), action: Action::FindPrev, shortcut: Some("Shift+Enter / Alt+Enter".to_string()) },
                 MenuItem::Action { label: i18n.get("menu.edit.replace").to_string(), action: Action::Replace, shortcut: Some("Ctrl+R".to_string()) },
                 MenuItem::Action { label: i18n.get("menu.edit.project_search").to_string(), action: Action::ProjectSearch, shortcut: Some("Ctrl+Shift+F".to_string()) },
                 MenuItem::Separator,
@@ -1116,8 +1118,23 @@ impl App {
             }
         }
 
+        // Global F3 / Shift+F3 for find next / prev (when not in modal dialog)
+        if self.focus != Focus::Dialog && key.code == KeyCode::F(3) {
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                self.find_prev();
+            } else {
+                self.find_next();
+            }
+            return;
+        }
+
         // Global shortcuts (Ctrl+...) only if not in a dialog
         if self.focus != Focus::Dialog && key.modifiers == KeyModifiers::CONTROL {
+            // When inside Find panel, intercept Ctrl+P and Ctrl+N for search navigation
+            if self.focus == Focus::Panel && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P') | KeyCode::Char('n') | KeyCode::Char('N')) {
+                self.handle_panel_key(key);
+                return;
+            }
             match key.code {
                 KeyCode::Char('q') => { self.perform_action(Action::Exit); return; }
                 KeyCode::Char('t') | KeyCode::Char('n') => { self.perform_action(Action::New); return; }
@@ -4050,10 +4067,10 @@ impl App {
             }
             KeyCode::Tab => self.find_panel.next_field(),
             KeyCode::BackTab => self.find_panel.prev_field(),
-            KeyCode::Enter => {
+            KeyCode::Enter | KeyCode::Char('\n') | KeyCode::Char('\r') => {
                 match self.find_panel.focused_field {
                     PanelField::FindInput => {
-                        if key.modifiers.contains(KeyModifiers::SHIFT) {
+                        if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::ALT) {
                             self.find_prev();
                         } else {
                             self.find_next();
@@ -4091,14 +4108,44 @@ impl App {
                     PanelField::ReplaceAllBtn => self.replace_all(),
                 }
             }
+            KeyCode::Up => {
+                match self.find_panel.focused_field {
+                    PanelField::FindInput => self.find_prev(),
+                    PanelField::ReplaceInput => {
+                        self.find_panel.focused_field = PanelField::FindInput;
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Down => {
+                match self.find_panel.focused_field {
+                    PanelField::FindInput => {
+                        if self.find_panel.is_replace_mode {
+                            self.find_panel.focused_field = PanelField::ReplaceInput;
+                        } else {
+                            self.find_next();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Char('p') | KeyCode::Char('P') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.find_prev();
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.find_next();
+            }
             KeyCode::F(3) => {
-                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                if key.modifiers.contains(KeyModifiers::SHIFT) || key.modifiers.contains(KeyModifiers::ALT) {
                     self.find_prev();
                 } else {
                     self.find_next();
                 }
             }
             KeyCode::Char(c) => {
+                if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                    return;
+                }
                 match self.find_panel.focused_field {
                     PanelField::FindInput => {
                         self.find_panel.find_text.push(c);
@@ -4644,6 +4691,24 @@ impl App {
                 self.find_panel.focused_field = crate::widgets::find_panel::PanelField::FindInput;
                 self.recompute_layout();
                 self.run_search();
+            }
+            Action::FindNext => {
+                if let Some(buffer) = self.buffers.get(self.active_buffer) {
+                    if buffer.find_results.is_empty() && self.layout.panel_height == 0 {
+                        self.perform_action(Action::Find);
+                        return;
+                    }
+                }
+                self.find_next();
+            }
+            Action::FindPrev => {
+                if let Some(buffer) = self.buffers.get(self.active_buffer) {
+                    if buffer.find_results.is_empty() && self.layout.panel_height == 0 {
+                        self.perform_action(Action::Find);
+                        return;
+                    }
+                }
+                self.find_prev();
             }
             Action::Replace => {
                 self.find_panel.is_replace_mode = true;
@@ -6780,6 +6845,72 @@ mod tests {
         } else {
             assert_eq!(file_menu_label, "File");
         }
+    }
+
+    #[test]
+    fn test_find_navigation_shortcuts() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        
+        if let Some(buffer) = app.buffers.get_mut(app.active_buffer) {
+            buffer.insert(0, "alpha beta alpha gamma alpha");
+        }
+
+        // Open Find panel (Ctrl+F)
+        app.handle_key(make_ctrl_key(KeyCode::Char('f')));
+        assert_eq!(app.focus, Focus::Panel);
+
+        // Search for 'alpha'
+        for c in "alpha".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.find_panel.find_text, "alpha");
+        let buffer = &app.buffers[app.active_buffer];
+        assert_eq!(buffer.find_results.len(), 3);
+        assert_eq!(buffer.current_match_idx, Some(0));
+
+        // 1. Enter moves to next match (index 1)
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(1));
+
+        // 2. Enter moves to next match (index 2)
+        app.handle_key(make_key(KeyCode::Enter));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(2));
+
+        // 3. Shift+Enter moves to previous match (index 1)
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(1));
+
+        // 4. Alt+Enter also moves to previous match (for terminals where Shift+Enter sends CR)
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(0));
+
+        // 5. Up arrow moves to previous match (wraps to index 2)
+        app.handle_key(make_key(KeyCode::Up));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(2));
+
+        // 6. Down arrow moves to next match (wraps to index 0)
+        app.handle_key(make_key(KeyCode::Down));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(0));
+
+        // 7. Ctrl+N moves to next match (index 1)
+        app.handle_key(make_ctrl_key(KeyCode::Char('n')));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(1));
+
+        // 8. Ctrl+P moves to previous match (index 0)
+        app.handle_key(make_ctrl_key(KeyCode::Char('p')));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(0));
+
+        // 9. Close panel with Esc
+        app.handle_key(make_key(KeyCode::Esc));
+        assert_eq!(app.focus, Focus::Editor);
+
+        // 10. Global F3 moves to next match (index 1) while focused on Editor
+        app.handle_key(make_key(KeyCode::F(3)));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(1));
+
+        // 11. Global Shift+F3 moves to previous match (index 0) while focused on Editor
+        app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT));
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(0));
     }
 
     #[test]

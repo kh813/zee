@@ -45,5 +45,5 @@ start = "```"
 end = "```"
 
 [[rule]]
-token = "function"
+token = "link"
 pattern = "\\[.*\\]\\(.*\\)"

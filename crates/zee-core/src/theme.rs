@@ -319,6 +319,7 @@ impl Theme {
                 heading5: Some(Color::Ansi(8)),    // Gray / Slate
                 heading6: Some(Color::Ansi(5)),    // Magenta / Violet
                 inline_code: Some(Color::Ansi(13)), // Bright Magenta / Pink
+                link: None,
             },
         }
     }
@@ -390,6 +391,8 @@ pub struct SyntaxColors {
     pub heading6: Option<Color>,
     #[serde(default)]
     pub inline_code: Option<Color>,
+    #[serde(default)]
+    pub link: Option<Color>,
 }
 
 impl Default for Theme {
@@ -448,6 +451,7 @@ impl Default for Theme {
                 heading5: Some(Color::Rgb(86, 95, 137)),
                 heading6: Some(Color::Rgb(157, 124, 216)),
                 inline_code: Some(Color::Rgb(245, 194, 231)),
+                link: None,
             },
         }
     }

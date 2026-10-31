@@ -211,6 +211,7 @@ impl EditorView {
             TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
             TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
             TokenType::Bold => None,
+            TokenType::Link => theme.syntax.link.or(theme.syntax.function),
         };
         led_color_to_gpui(color.unwrap_or(theme.editor.foreground))
     }
@@ -4203,24 +4204,30 @@ impl EditorView {
 
         for (char_idx, (rel_byte, ch)) in v_text.char_indices().enumerate() {
             let abs_byte = byte_start + rel_byte;
-            let fg_color = if let Some(toks) = tokens {
+            let (is_bold, fg_color) = if let Some(toks) = tokens {
                 while tok_idx < toks.len() && toks[tok_idx].byte_range.end <= abs_byte {
                     tok_idx += 1;
                 }
                 if tok_idx < toks.len() && toks[tok_idx].byte_range.start <= abs_byte {
-                    self.token_color(toks[tok_idx].token, theme)
+                    if toks[tok_idx].token == TokenType::Bold {
+                        let t_start = toks[tok_idx].byte_range.start;
+                        let t_end = toks[tok_idx].byte_range.end;
+                        let is_marker = (t_end >= t_start + 4) && (abs_byte < t_start + 2 || abs_byte >= t_end - 2);
+                        if is_marker {
+                            (false, self.token_color(TokenType::Comment, theme))
+                        } else {
+                            (true, default_fg)
+                        }
+                    } else {
+                        (false, self.token_color(toks[tok_idx].token, theme))
+                    }
                 } else {
-                    default_fg
+                    (false, default_fg)
                 }
             } else {
-                default_fg
+                (false, default_fg)
             };
 
-            let is_bold = if let Some(toks) = tokens {
-                tok_idx < toks.len() && toks[tok_idx].byte_range.start <= abs_byte && toks[tok_idx].token == TokenType::Bold
-            } else {
-                false
-            };
             let mut char_font = font.clone();
             if is_bold {
                 char_font.weight = gpui::FontWeight::BOLD;
@@ -4632,9 +4639,22 @@ impl EditorView {
 
                     let text = &v_text[v_tok_start..v_tok_end];
                     let start_char = v_text[..v_tok_start].chars().count();
-                    let is_bold = token.token == TokenType::Bold;
-                    let tok_color = if is_bold { None } else { Some(self.token_color(token.token, theme)) };
-                    render_chunk(text, start_char, tok_color, is_bold, &mut elements);
+                    if token.token == TokenType::Bold && text.starts_with("**") && text.ends_with("**") && text.len() >= 4 {
+                        let marker_color = Some(self.token_color(TokenType::Comment, theme));
+                        // Leading '**'
+                        render_chunk(&text[..2], start_char, marker_color, false, &mut elements);
+                        // Inner content
+                        let inner = &text[2..text.len() - 2];
+                        let inner_start_char = start_char + 2;
+                        render_chunk(inner, inner_start_char, None, true, &mut elements);
+                        // Trailing '**'
+                        let trailing_start_char = start_char + text[..text.len() - 2].chars().count();
+                        render_chunk(&text[text.len() - 2..], trailing_start_char, marker_color, false, &mut elements);
+                    } else {
+                        let is_bold = token.token == TokenType::Bold;
+                        let tok_color = if is_bold { None } else { Some(self.token_color(token.token, theme)) };
+                        render_chunk(text, start_char, tok_color, is_bold, &mut elements);
+                    }
                     last_v_offset = v_tok_end;
                 }
             }

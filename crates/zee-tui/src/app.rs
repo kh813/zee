@@ -428,6 +428,7 @@ impl App {
             zee_core::syntax::TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
             zee_core::syntax::TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
             zee_core::syntax::TokenType::Bold => None,
+            zee_core::syntax::TokenType::Link => theme.syntax.link.or(theme.syntax.function),
         };
         self.to_ct_color(color.unwrap_or(theme.editor.foreground))
     }
@@ -6227,7 +6228,7 @@ impl App {
 
         let mut token_colors = std::collections::HashMap::new();
         use zee_core::syntax::TokenType::*;
-        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode, Bold] {
+        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode, Bold, Link] {
             token_colors.insert(t, self.get_token_color(t));
         }
 
@@ -6304,7 +6305,14 @@ impl App {
                         if current_token_idx < tokens.len() && tokens[current_token_idx].byte_range.start <= byte_offset {
                             let tok = tokens[current_token_idx].token;
                             if tok == zee_core::syntax::TokenType::Bold {
-                                cell_bold = true;
+                                let t_start = tokens[current_token_idx].byte_range.start;
+                                let t_end = tokens[current_token_idx].byte_range.end;
+                                let is_marker = (t_end >= t_start + 4) && (byte_offset < t_start + 2 || byte_offset >= t_end - 2);
+                                if is_marker {
+                                    fg = *token_colors.get(&zee_core::syntax::TokenType::Comment).unwrap_or(&editor_fg);
+                                } else {
+                                    cell_bold = true;
+                                }
                             } else {
                                 fg = *token_colors.get(&tok).unwrap_or(&editor_fg);
                             }
@@ -6487,7 +6495,14 @@ impl App {
                         if current_token_idx < tokens.len() && tokens[current_token_idx].byte_range.start <= byte_offset {
                             let tok = tokens[current_token_idx].token;
                             if tok == zee_core::syntax::TokenType::Bold {
-                                cell_bold = true;
+                                let t_start = tokens[current_token_idx].byte_range.start;
+                                let t_end = tokens[current_token_idx].byte_range.end;
+                                let is_marker = (t_end >= t_start + 4) && (byte_offset < t_start + 2 || byte_offset >= t_end - 2);
+                                if is_marker {
+                                    fg = *token_colors.get(&zee_core::syntax::TokenType::Comment).unwrap_or(&editor_fg);
+                                } else {
+                                    cell_bold = true;
+                                }
                             } else {
                                 fg = *token_colors.get(&tok).unwrap_or(&editor_fg);
                             }
@@ -6930,30 +6945,43 @@ mod tests {
     fn test_markdown_bold_and_heading1_rendering() {
         let temp_dir = std::env::temp_dir();
         let md_path = temp_dir.join("test_md_rendering.md");
-        std::fs::write(&md_path, "# Header 1\n**bold text**\n").unwrap();
+        std::fs::write(&md_path, "# Header 1\n**bold text**\n[link text](#url)\n").unwrap();
 
         let mut app = App::new(vec![md_path.clone()]).expect("Failed to init App");
         assert_eq!(app.buffers.len(), 1);
 
-        // Switch to Light theme to verify theme heading1 matching type_name color (#7c2d12)
+        // Switch to Light theme to verify theme heading1 and link colors
         app.perform_action(Action::SetTheme("light".to_string()));
         app.recompute_layout();
         app.render_editor();
 
         let (ex, ey, _ew, _eh) = app.layout.editor_bounds();
 
-        // 1. Line 0: '# Header 1' should have heading1 color (which matches theme.syntax.heading1 / #7c2d12)
+        // 1. Line 0: '# Header 1' should have heading1 color
         let header_cell = app.renderer.get_cell(ex, ey);
         assert_eq!(header_cell.ch, '#');
         let expected_heading1_fg = app.to_ct_color(app.theme.syntax.heading1.expect("heading1 color should be set"));
         assert_eq!(header_cell.fg, expected_heading1_fg);
 
-        // 2. Line 1: '**bold text**' should have bold=true and fg should match editor_fg (not type_name color)
-        let bold_cell = app.renderer.get_cell(ex, ey + 1);
-        assert_eq!(bold_cell.ch, '*');
-        assert!(bold_cell.bold, "Cell in '**bold text**' must have bold: true");
+        // 2. Line 1: leading '**' marker should have bold=false and fg should match comment color (muted gray)
+        let marker_cell = app.renderer.get_cell(ex, ey + 1);
+        assert_eq!(marker_cell.ch, '*');
+        assert!(!marker_cell.bold, "Marker '*' must have bold: false");
+        let comment_fg = app.to_ct_color(app.theme.syntax.comment.expect("comment color should be set"));
+        assert_eq!(marker_cell.fg, comment_fg, "Marker '*' must have comment color");
+
+        // 3. Line 1: inner character 'b' in '**bold text**' should have bold=true and fg=editor_fg
+        let inner_bold_cell = app.renderer.get_cell(ex + 2, ey + 1);
+        assert_eq!(inner_bold_cell.ch, 'b');
+        assert!(inner_bold_cell.bold, "Inner 'b' must have bold: true");
         let editor_fg = app.to_ct_color(app.theme.editor.foreground);
-        assert_eq!(bold_cell.fg, editor_fg, "Bold text should keep editor foreground color");
+        assert_eq!(inner_bold_cell.fg, editor_fg, "Inner 'b' should keep editor foreground color");
+
+        // 4. Line 2: '[link text](#url)' should have link color (deep forest green)
+        let link_cell = app.renderer.get_cell(ex, ey + 2);
+        assert_eq!(link_cell.ch, '[');
+        let expected_link_fg = app.to_ct_color(app.theme.syntax.link.expect("link color should be set"));
+        assert_eq!(link_cell.fg, expected_link_fg, "Link should have theme link color");
 
         let _ = std::fs::remove_file(&md_path);
     }

@@ -73,6 +73,16 @@ impl SingleInstanceLock {
     }
 }
 
+#[cfg(unix)]
+impl Drop for SingleInstanceLock {
+    fn drop(&mut self) {
+        use std::os::unix::io::AsRawFd;
+        unsafe {
+            libc::flock(self._file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
 #[cfg(windows)]
 impl Drop for SingleInstanceLock {
     fn drop(&mut self) {
@@ -92,15 +102,30 @@ mod tests {
     #[test]
     fn test_single_instance_lock_mutual_exclusion() {
         let _lock = crate::config::TEST_MUTEX.lock().unwrap();
-        let lock1 = SingleInstanceLock::try_acquire("test_mutex_unique_abc123");
+        let unique_name = format!(
+            "test_mutex_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let lock1 = SingleInstanceLock::try_acquire(&unique_name);
         assert!(lock1.is_some(), "First lock acquisition should succeed");
 
-        let lock2 = SingleInstanceLock::try_acquire("test_mutex_unique_abc123");
+        let lock2 = SingleInstanceLock::try_acquire(&unique_name);
         assert!(lock2.is_none(), "Concurrent second lock acquisition must fail");
 
         drop(lock1);
 
-        let lock3 = SingleInstanceLock::try_acquire("test_mutex_unique_abc123");
+        let mut lock3 = None;
+        for _ in 0..10 {
+            lock3 = SingleInstanceLock::try_acquire(&unique_name);
+            if lock3.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert!(lock3.is_some(), "Acquisition after dropping previous lock must succeed");
     }
 }

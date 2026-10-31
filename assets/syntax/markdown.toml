@@ -28,7 +28,7 @@ token = "heading1"
 pattern = "^#.*"
 
 [[rule]]
-token = "type_name"
+token = "bold"
 pattern = "\\*\\*.*\\*\\*"
 
 [[rule]]

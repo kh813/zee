@@ -427,6 +427,7 @@ impl App {
             zee_core::syntax::TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
             zee_core::syntax::TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
             zee_core::syntax::TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
+            zee_core::syntax::TokenType::Bold => None,
         };
         self.to_ct_color(color.unwrap_or(theme.editor.foreground))
     }
@@ -6226,7 +6227,7 @@ impl App {
 
         let mut token_colors = std::collections::HashMap::new();
         use zee_core::syntax::TokenType::*;
-        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode] {
+        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode, Bold] {
             token_colors.insert(t, self.get_token_color(t));
         }
 
@@ -6294,13 +6295,19 @@ impl App {
                         let rx = ex + visual_x;
                         let mut bg = line_bg;
                         let mut fg = editor_fg;
+                        let mut cell_bold = false;
 
                         // Syntax highlighting
                         while current_token_idx < tokens.len() && tokens[current_token_idx].byte_range.end <= byte_offset {
                             current_token_idx += 1;
                         }
                         if current_token_idx < tokens.len() && tokens[current_token_idx].byte_range.start <= byte_offset {
-                            fg = *token_colors.get(&tokens[current_token_idx].token).unwrap_or(&editor_fg);
+                            let tok = tokens[current_token_idx].token;
+                            if tok == zee_core::syntax::TokenType::Bold {
+                                cell_bold = true;
+                            } else {
+                                fg = *token_colors.get(&tok).unwrap_or(&editor_fg);
+                            }
                         }
 
                         let in_selection = if buffer.vi_mode == zee_core::ViMode::VisualBlock {
@@ -6348,9 +6355,9 @@ impl App {
                         }
 
                         if c == '\t' {
-                            renderer.set_cell(ex + visual_x, ry, Cell { ch: ' ', bg, fg, width: char_w as u8, underline: cell_underline, ..Default::default() });
+                            renderer.set_cell(ex + visual_x, ry, Cell { ch: ' ', bg, fg, width: char_w as u8, underline: cell_underline, bold: cell_bold, ..Default::default() });
                         } else if c != '\n' && c != '\r' {
-                            renderer.set_cell(rx, ry, Cell { ch: c, bg, fg, width: char_w as u8, underline: cell_underline, ..Default::default() });
+                            renderer.set_cell(rx, ry, Cell { ch: c, bg, fg, width: char_w as u8, underline: cell_underline, bold: cell_bold, ..Default::default() });
                         } else {
                             // End of logical line, might show cursor/selection
                             if is_cursor_cell {
@@ -6471,13 +6478,19 @@ impl App {
                         let ry = ey + dy;
                         let mut bg = line_bg;
                         let mut fg = editor_fg;
+                        let mut cell_bold = false;
 
                         // Syntax highlighting
                         while current_token_idx < tokens.len() && tokens[current_token_idx].byte_range.end <= byte_offset {
                             current_token_idx += 1;
                         }
                         if current_token_idx < tokens.len() && tokens[current_token_idx].byte_range.start <= byte_offset {
-                            fg = *token_colors.get(&tokens[current_token_idx].token).unwrap_or(&editor_fg);
+                            let tok = tokens[current_token_idx].token;
+                            if tok == zee_core::syntax::TokenType::Bold {
+                                cell_bold = true;
+                            } else {
+                                fg = *token_colors.get(&tok).unwrap_or(&editor_fg);
+                            }
                         }
 
                         let in_selection = if buffer.vi_mode == zee_core::ViMode::VisualBlock {
@@ -6528,13 +6541,13 @@ impl App {
                             for dx in 0..char_w {
                                 let vx = visual_x + dx;
                                 if vx >= buffer.scroll_col as u16 && vx < buffer.scroll_col as u16 + ew {
-                                    renderer.set_cell(ex + (vx - buffer.scroll_col as u16), ry, Cell { ch: ' ', bg, fg, width: 1, underline: cell_underline, ..Default::default() });
+                                    renderer.set_cell(ex + (vx - buffer.scroll_col as u16), ry, Cell { ch: ' ', bg, fg, width: 1, underline: cell_underline, bold: cell_bold, ..Default::default() });
                                 }
                             }
                         } else if c != '\n' && c != '\r' {
                             let rx = ex + (visual_x.saturating_sub(buffer.scroll_col as u16));
                             let ry = ey + dy;
-                            renderer.set_cell(rx, ry, Cell { ch: c, bg, fg, width: char_w as u8, underline: cell_underline, ..Default::default() });
+                            renderer.set_cell(rx, ry, Cell { ch: c, bg, fg, width: char_w as u8, underline: cell_underline, bold: cell_bold, ..Default::default() });
                         } else {
                             if is_cursor_cell {
                                 if !is_insert_mode {
@@ -6911,6 +6924,38 @@ mod tests {
         // 11. Global Shift+F3 moves to previous match (index 0) while focused on Editor
         app.handle_key(KeyEvent::new(KeyCode::F(3), KeyModifiers::SHIFT));
         assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(0));
+    }
+
+    #[test]
+    fn test_markdown_bold_and_heading1_rendering() {
+        let temp_dir = std::env::temp_dir();
+        let md_path = temp_dir.join("test_md_rendering.md");
+        std::fs::write(&md_path, "# Header 1\n**bold text**\n").unwrap();
+
+        let mut app = App::new(vec![md_path.clone()]).expect("Failed to init App");
+        assert_eq!(app.buffers.len(), 1);
+
+        // Switch to Light theme to verify theme heading1 matching type_name color (#7c2d12)
+        app.perform_action(Action::SetTheme("light".to_string()));
+        app.recompute_layout();
+        app.render_editor();
+
+        let (ex, ey, _ew, _eh) = app.layout.editor_bounds();
+
+        // 1. Line 0: '# Header 1' should have heading1 color (which matches theme.syntax.heading1 / #7c2d12)
+        let header_cell = app.renderer.get_cell(ex, ey);
+        assert_eq!(header_cell.ch, '#');
+        let expected_heading1_fg = app.to_ct_color(app.theme.syntax.heading1.expect("heading1 color should be set"));
+        assert_eq!(header_cell.fg, expected_heading1_fg);
+
+        // 2. Line 1: '**bold text**' should have bold=true and fg should match editor_fg (not type_name color)
+        let bold_cell = app.renderer.get_cell(ex, ey + 1);
+        assert_eq!(bold_cell.ch, '*');
+        assert!(bold_cell.bold, "Cell in '**bold text**' must have bold: true");
+        let editor_fg = app.to_ct_color(app.theme.editor.foreground);
+        assert_eq!(bold_cell.fg, editor_fg, "Bold text should keep editor foreground color");
+
+        let _ = std::fs::remove_file(&md_path);
     }
 
     #[test]

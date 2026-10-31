@@ -4216,6 +4216,16 @@ impl EditorView {
                 default_fg
             };
 
+            let is_bold = if let Some(toks) = tokens {
+                tok_idx < toks.len() && toks[tok_idx].byte_range.start <= abs_byte && toks[tok_idx].token == TokenType::Bold
+            } else {
+                false
+            };
+            let mut char_font = font.clone();
+            if is_bold {
+                char_font.weight = gpui::FontWeight::BOLD;
+            }
+
             let is_selected = v_selection
                 .as_ref()
                 .map(|sel| char_idx >= sel.start && char_idx < sel.end)
@@ -4229,14 +4239,14 @@ impl EditorView {
             let ch_len = ch.len_utf8();
 
             if let Some(last) = runs.last_mut() {
-                if last.color == fg_hsla && last.background_color == bg_color {
+                if last.color == fg_hsla && last.background_color == bg_color && last.font == char_font {
                     last.len += ch_len;
                     continue;
                 }
             }
             runs.push(TextRun {
                 len: ch_len,
-                font: font.clone(),
+                font: char_font,
                 color: fg_hsla,
                 background_color: bg_color,
                 underline: None,
@@ -4600,9 +4610,9 @@ impl EditorView {
 
         let mut elements = Vec::new();
 
-        let render_chunk = |text: &str, chunk_start_char: usize, token_color: Option<Rgba>, elements: &mut Vec<AnyElement>| {
+        let render_chunk = |text: &str, chunk_start_char: usize, token_color: Option<Rgba>, is_bold: bool, elements: &mut Vec<AnyElement>| {
             if text.is_empty() { return; }
-            self.render_chunk_internal(text, chunk_start_char, token_color, v_selection.clone(), theme, line_height, elements);
+            self.render_chunk_internal(text, chunk_start_char, token_color, is_bold, v_selection.clone(), theme, line_height, elements);
         };
 
         if let Some(Some(tokens)) = editor.line_tokens.get(line_idx) {
@@ -4617,22 +4627,24 @@ impl EditorView {
                     if v_tok_start > last_v_offset {
                         let text = &v_text[last_v_offset..v_tok_start];
                         let start_char = v_text[..last_v_offset].chars().count();
-                        render_chunk(text, start_char, None, &mut elements);
+                        render_chunk(text, start_char, None, false, &mut elements);
                     }
 
                     let text = &v_text[v_tok_start..v_tok_end];
                     let start_char = v_text[..v_tok_start].chars().count();
-                    render_chunk(text, start_char, Some(self.token_color(token.token, theme)), &mut elements);
+                    let is_bold = token.token == TokenType::Bold;
+                    let tok_color = if is_bold { None } else { Some(self.token_color(token.token, theme)) };
+                    render_chunk(text, start_char, tok_color, is_bold, &mut elements);
                     last_v_offset = v_tok_end;
                 }
             }
             if last_v_offset < v_text.len() {
                 let text = &v_text[last_v_offset..];
                 let start_char = v_text[..last_v_offset].chars().count();
-                render_chunk(text, start_char, None, &mut elements);
+                render_chunk(text, start_char, None, false, &mut elements);
             }
         } else {
-            render_chunk(v_text, 0, None, &mut elements);
+            render_chunk(v_text, 0, None, false, &mut elements);
         }
 
         elements
@@ -4896,6 +4908,7 @@ impl EditorView {
         text: &str,
         start_char: usize,
         token_color: Option<Rgba>,
+        is_bold: bool,
         selection: Option<std::ops::Range<usize>>,
         theme: &Theme,
         line_height: Pixels,
@@ -4908,6 +4921,11 @@ impl EditorView {
 
         let chunk_chars: Vec<char> = text.chars().collect();
         let chunk_len = chunk_chars.len();
+        let weight = if is_bold {
+            gpui::FontWeight::BOLD
+        } else {
+            gpui::FontWeight::NORMAL
+        };
 
         if let Some(ref sel) = selection {
             let sel_start = sel.start.saturating_sub(start_char);
@@ -4925,6 +4943,7 @@ impl EditorView {
                             .items_center()
                             .text_color(text_color)
                             .font_family(self.font_family.clone())
+                            .font_weight(weight)
                             .child(chunk_chars[..highlight_start].iter().collect::<String>())
                             .into_any_element()
                     );
@@ -4938,6 +4957,7 @@ impl EditorView {
                         .bg(sel_bg)
                         .text_color(text_color)
                         .font_family(self.font_family.clone())
+                        .font_weight(weight)
                         .child(chunk_chars[highlight_start..highlight_end].iter().collect::<String>())
                         .into_any_element()
                 );
@@ -4950,6 +4970,7 @@ impl EditorView {
                             .items_center()
                             .text_color(text_color)
                             .font_family(self.font_family.clone())
+                            .font_weight(weight)
                             .child(chunk_chars[highlight_end..].iter().collect::<String>())
                             .into_any_element()
                     );
@@ -4965,6 +4986,7 @@ impl EditorView {
                 .items_center()
                 .text_color(text_color)
                 .font_family(self.font_family.clone())
+                .font_weight(weight)
                 .child(text.to_string())
                 .into_any_element()
         );

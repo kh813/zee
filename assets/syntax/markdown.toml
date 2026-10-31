@@ -29,7 +29,7 @@ pattern = "^#.*"
 
 [[rule]]
 token = "bold"
-pattern = "\\*\\*.*\\*\\*"
+pattern = "\\*\\*[^\\*\\r\\n]+?\\*\\*"
 
 [[rule]]
 token = "attribute"

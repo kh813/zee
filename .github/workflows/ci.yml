@@ -33,6 +33,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            mold \
+            clang \
             libwayland-dev \
             wayland-protocols \
             libxkbcommon-dev \
@@ -48,8 +50,12 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Run cargo check
-        run: cargo check --workspace --all-targets
+      - name: Run workspace tests (Linux with mold linker)
+        if: runner.os == 'Linux'
+        run: cargo test --workspace
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=mold"
 
-      - name: Run workspace tests
+      - name: Run workspace tests (macOS / Windows)
+        if: runner.os != 'Linux'
         run: cargo test --workspace

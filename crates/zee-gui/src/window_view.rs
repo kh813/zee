@@ -162,6 +162,11 @@ impl WindowView {
             }
         }).detach();
 
+        cx.observe_window_bounds(window, move |_, window, _| {
+            let state = crate::app::window_bounds_to_state(window.window_bounds());
+            let _ = state.save();
+        }).detach();
+
         cx.subscribe(&tab_bar, |this, _tab_bar, event: &TabBarEvent, cx| {
             match event {
                 TabBarEvent::Select(idx) => {

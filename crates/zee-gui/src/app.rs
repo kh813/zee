@@ -283,7 +283,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
                     let paths: Vec<_> = files.into_iter().map(|f| f.path().to_path_buf()).collect();
                     cx.update(|cx| {
                         let theme_to_use = resolve_theme(&config, cx.window_appearance());
-                        cx.open_window(centered_window_options(cx), move |window, cx| {
+                        cx.open_window(default_window_options(cx), move |window, cx| {
                             let workspace = cx.new(|_| {
                                 let mut w = Workspace::new(config.clone());
                                 w.theme = theme_to_use;
@@ -308,7 +308,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         let i18n = i18n_about.clone();
         let config = config_about.clone();
         let theme_to_use = resolve_theme(&config, cx.window_appearance());
-        cx.open_window(centered_window_options(cx), move |window, cx| {
+        cx.open_window(default_window_options(cx), move |window, cx| {
             let workspace = cx.new(|_| {
                 let mut w = Workspace::new(config.clone());
                 w.theme = theme_to_use;
@@ -338,7 +338,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
             });
         } else {
             let theme_to_use = resolve_theme(&config, cx.window_appearance());
-            cx.open_window(centered_window_options(cx), move |window, cx| {
+            cx.open_window(default_window_options(cx), move |window, cx| {
                 let workspace = cx.new(|_| {
                     let mut w = Workspace::new(config.clone());
                     w.theme = theme_to_use;
@@ -375,6 +375,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
                 return;
             }
         }
+        save_first_window_state(cx);
         cx.quit();
     });
 
@@ -400,6 +401,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
                 return;
             }
         }
+        save_first_window_state(cx);
         cx.quit();
     });
 
@@ -520,6 +522,78 @@ fn centered_window_options(cx: &App) -> WindowOptions {
     }
 }
 
+pub fn window_bounds_to_state(window_bounds: WindowBounds) -> zee_core::window_state::WindowState {
+    let bounds = window_bounds.get_bounds();
+    let is_maximized = matches!(window_bounds, WindowBounds::Maximized(_));
+    zee_core::window_state::WindowState {
+        x: bounds.origin.x / px(1.0),
+        y: bounds.origin.y / px(1.0),
+        width: bounds.size.width / px(1.0),
+        height: bounds.size.height / px(1.0),
+        is_maximized,
+    }
+}
+
+pub fn window_state_to_bounds(state: &zee_core::window_state::WindowState) -> WindowBounds {
+    let bounds = Bounds {
+        origin: Point {
+            x: px(state.x),
+            y: px(state.y),
+        },
+        size: Size {
+            width: px(state.width.max(400.0)),
+            height: px(state.height.max(300.0)),
+        },
+    };
+    if state.is_maximized {
+        WindowBounds::Maximized(bounds)
+    } else {
+        WindowBounds::Windowed(bounds)
+    }
+}
+
+pub fn is_bounds_on_any_display(bounds: Bounds<Pixels>, cx: &App) -> bool {
+    let displays = cx.displays();
+    if displays.is_empty() {
+        return true;
+    }
+    for display in displays {
+        let db = display.bounds();
+        let intersect_x = bounds.origin.x.max(db.origin.x);
+        let intersect_y = bounds.origin.y.max(db.origin.y);
+        let intersect_w = (bounds.origin.x + bounds.size.width).min(db.origin.x + db.size.width) - intersect_x;
+        let intersect_h = (bounds.origin.y + bounds.size.height).min(db.origin.y + db.size.height) - intersect_y;
+        if intersect_w >= px(100.0) && intersect_h >= px(100.0) {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn default_window_options(cx: &App) -> WindowOptions {
+    if cx.windows().is_empty() {
+        if let Some(state) = zee_core::window_state::WindowState::load() {
+            let wb = window_state_to_bounds(&state);
+            if is_bounds_on_any_display(wb.get_bounds(), cx) {
+                return WindowOptions {
+                    window_bounds: Some(wb),
+                    ..Default::default()
+                };
+            }
+        }
+    }
+    centered_window_options(cx)
+}
+
+pub fn save_first_window_state(cx: &mut App) {
+    if let Some(hw) = cx.active_window().or_else(|| cx.windows().into_iter().next()) {
+        let _ = cx.update_window(hw, |_, window, _| {
+            let state = window_bounds_to_state(window.window_bounds());
+            let _ = state.save();
+        });
+    }
+}
+
 pub fn resolve_theme(config: &Config, appearance: WindowAppearance) -> Theme {
     if zee_core::theme::is_default_theme(&config.theme) {
         match appearance {
@@ -539,7 +613,7 @@ pub fn new_window(config: Config, i18n: I18n, cx: &mut App) {
     cx.activate(true);
     let theme_to_use = resolve_theme(&config, cx.window_appearance());
 
-    let options = centered_window_options(cx);
+    let options = default_window_options(cx);
     cx.open_window(options, move |window, cx| {
         window.activate_window();
         let workspace = cx.new(|_| {
@@ -555,7 +629,7 @@ pub fn open_file_targets(targets: Vec<zee_core::cli::FileTarget>, config: Config
     cx.activate(true);
     let theme_to_use = resolve_theme(&config, cx.window_appearance());
 
-    let options = centered_window_options(cx);
+    let options = default_window_options(cx);
     cx.open_window(options, move |window, cx| {
         window.activate_window();
         let workspace = cx.new(|_| {
@@ -604,7 +678,19 @@ pub fn restore_session_window(session: zee_core::session::UpdateSession, config:
     cx.activate(true);
     let theme_to_use = resolve_theme(&config, cx.window_appearance());
 
-    let options = centered_window_options(cx);
+    let options = if let Some(ref state) = session.window_state {
+        let wb = window_state_to_bounds(state);
+        if is_bounds_on_any_display(wb.get_bounds(), cx) {
+            WindowOptions {
+                window_bounds: Some(wb),
+                ..Default::default()
+            }
+        } else {
+            default_window_options(cx)
+        }
+    } else {
+        default_window_options(cx)
+    };
     cx.open_window(options, move |window, cx| {
         window.activate_window();
         let workspace = cx.new(|_| {
@@ -1190,3 +1276,4 @@ actions!(zee, [
     // Other
     NoOp
 ]);
+

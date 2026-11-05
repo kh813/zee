@@ -290,7 +290,18 @@ impl Dialog {
         self.update_status = Some(UpdateStatus::Downloading);
         cx.notify();
 
-        // Save session state so that tabs, cursor positions, root folder, and sidebar state are preserved after relaunch
+        // Save window state and session state so that window bounds, tabs, cursor positions, root folder, and sidebar state are preserved after relaunch
+        let window_state = if let Some(active_win) = cx.active_window() {
+            cx.update_window(active_win, |_, window, _| {
+                crate::app::window_bounds_to_state(window.window_bounds())
+            }).ok()
+        } else {
+            None
+        }.or_else(zee_core::window_state::WindowState::load);
+        if let Some(ref ws_state) = window_state {
+            let _ = ws_state.save();
+        }
+
         let session = {
             let ws = self.workspace.read(cx);
             let mut files = Vec::new();
@@ -320,6 +331,7 @@ impl Dialog {
                 expanded_folders: ws.file_tree.expanded_paths(),
                 sidebar_visible: ws.sidebar_visible,
                 sidebar_tab,
+                window_state,
             }
         };
         let _ = session.save();
@@ -436,6 +448,17 @@ impl Dialog {
     }
 
     pub fn restart_zee(&self, cx: &mut Context<Self>) {
+        let window_state = if let Some(active_win) = cx.active_window() {
+            cx.update_window(active_win, |_, window, _| {
+                crate::app::window_bounds_to_state(window.window_bounds())
+            }).ok()
+        } else {
+            None
+        }.or_else(zee_core::window_state::WindowState::load);
+        if let Some(ref ws_state) = window_state {
+            let _ = ws_state.save();
+        }
+
         let session = {
             let ws = self.workspace.read(cx);
             let mut files = Vec::new();
@@ -465,6 +488,7 @@ impl Dialog {
                 expanded_folders: ws.file_tree.expanded_paths(),
                 sidebar_visible: ws.sidebar_visible,
                 sidebar_tab,
+                window_state,
             }
         };
         let _ = session.save();

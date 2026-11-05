@@ -3556,6 +3556,7 @@ impl App {
             expanded_folders: self.sidebar.file_tree.expanded_paths(),
             sidebar_visible: self.sidebar.visible,
             sidebar_tab: "files".to_string(),
+            window_state: None,
         };
         session.save()
     }

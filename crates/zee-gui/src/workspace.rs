@@ -616,6 +616,7 @@ mod tests {
             expanded_folders: vec![temp_dir.join("subdir")],
             sidebar_visible: true,
             sidebar_tab: "outline".to_string(),
+            window_state: None,
         };
 
         // Simulate restore logic
@@ -1790,6 +1791,54 @@ mod tests {
                 assert!(*disabled, "Undo must be disabled when can_undo is false");
             }
         }
+    }
+
+    #[test]
+    fn test_window_bounds_and_state_conversion() {
+        let orig_bounds = gpui::WindowBounds::Windowed(gpui::Bounds {
+            origin: gpui::Point { x: gpui::px(250.0), y: gpui::px(180.0) },
+            size: gpui::Size { width: gpui::px(1200.0), height: gpui::px(850.0) },
+        });
+
+        let state = crate::app::window_bounds_to_state(orig_bounds);
+        assert_eq!(state.x, 250.0);
+        assert_eq!(state.y, 180.0);
+        assert_eq!(state.width, 1200.0);
+        assert_eq!(state.height, 850.0);
+        assert!(!state.is_maximized);
+
+        let restored_bounds = crate::app::window_state_to_bounds(&state);
+        assert_eq!(restored_bounds, orig_bounds);
+    }
+
+    #[test]
+    fn test_window_bounds_maximized_conversion() {
+        let max_bounds = gpui::WindowBounds::Maximized(gpui::Bounds {
+            origin: gpui::Point { x: gpui::px(0.0), y: gpui::px(0.0) },
+            size: gpui::Size { width: gpui::px(1920.0), height: gpui::px(1080.0) },
+        });
+
+        let state = crate::app::window_bounds_to_state(max_bounds);
+        assert!(state.is_maximized);
+
+        let restored = crate::app::window_state_to_bounds(&state);
+        assert_eq!(restored, max_bounds);
+    }
+
+    #[test]
+    fn test_window_state_minimum_size_protection() {
+        let state = zee_core::window_state::WindowState {
+            x: 50.0,
+            y: 50.0,
+            width: 100.0,  // unusually small
+            height: 50.0,  // unusually small
+            is_maximized: false,
+        };
+
+        let bounds = crate::app::window_state_to_bounds(&state);
+        let inner = bounds.get_bounds();
+        assert!(inner.size.width >= gpui::px(400.0));
+        assert!(inner.size.height >= gpui::px(300.0));
     }
 }
 

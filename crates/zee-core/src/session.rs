@@ -16,7 +16,7 @@ pub struct SessionEditorState {
     pub unsaved_content: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct UpdateSession {
     pub files: Vec<SessionEditorState>,
     #[serde(default)]
@@ -29,6 +29,8 @@ pub struct UpdateSession {
     pub sidebar_visible: bool,
     #[serde(default = "default_sidebar_tab")]
     pub sidebar_tab: String,
+    #[serde(default)]
+    pub window_state: Option<crate::window_state::WindowState>,
 }
 
 fn default_sidebar_tab() -> String {
@@ -128,6 +130,13 @@ mod tests {
             expanded_folders: vec![PathBuf::from("/tmp/my_project/src")],
             sidebar_visible: true,
             sidebar_tab: "outline".to_string(),
+            window_state: Some(crate::window_state::WindowState {
+                x: 100.0,
+                y: 150.0,
+                width: 1200.0,
+                height: 800.0,
+                is_maximized: false,
+            }),
         };
 
         let serialized = serde_json::to_string(&session).unwrap();
@@ -149,6 +158,7 @@ mod tests {
             expanded_folders: vec![],
             sidebar_visible: false,
             sidebar_tab: "files".to_string(),
+            window_state: None,
         };
         session.save().expect("Save session should succeed");
         assert!(UpdateSession::exists());

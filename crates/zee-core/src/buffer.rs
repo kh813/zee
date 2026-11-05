@@ -1475,6 +1475,24 @@ impl Editor {
         self.transform_selection_or_buffer(|text| text.replace(&spaces, "\t"));
     }
 
+    pub fn is_markdown_or_text(&self) -> bool {
+        if let Some(ref h) = self.syntax_highlighter {
+            let name = h.def.meta.name.to_lowercase();
+            if name == "markdown" || name == "plain text" || name == "text" {
+                return true;
+            }
+            return false;
+        }
+        if let Some(ref path) = self.path {
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                let ext_lower = ext.to_lowercase();
+                return ext_lower == "md" || ext_lower == "markdown" || ext_lower == "txt" || ext_lower == "text";
+            }
+            return true;
+        }
+        true
+    }
+
     pub fn insert_newline_with_auto_indent(&mut self, tab_size: usize, expand_tab: bool) {
         if let Some(range) = self.selection.clone() {
             self.delete(range);
@@ -1519,7 +1537,68 @@ impl Editor {
             return;
         }
 
-        // Case 2: Block opener: {, (, [, or :
+        // Case 2: Markdown bullet or numbered list auto-continuation
+        if self.is_markdown_or_text() {
+            let after_indent_before_cursor = if before_cursor.len() >= base_indent.len() {
+                &before_cursor[base_indent.len()..]
+            } else {
+                ""
+            };
+
+            let bullet_opt = if after_indent_before_cursor.starts_with("* ") {
+                Some("* ")
+            } else if after_indent_before_cursor.starts_with("- ") {
+                Some("- ")
+            } else if after_indent_before_cursor.starts_with("+ ") {
+                Some("+ ")
+            } else {
+                None
+            };
+
+            if let Some(marker) = bullet_opt {
+                let content_after = &after_indent_before_cursor[marker.len()..];
+                let after_cursor_trimmed = after_cursor.trim();
+                // If user pressed Enter on an empty bullet line (e.g. `* ` with no text),
+                // delete the bullet marker to end the list.
+                if content_after.trim().is_empty() && after_cursor_trimmed.is_empty() {
+                    let marker_start = line_start_char + base_indent.chars().count();
+                    let marker_end = line_start_char + before_cursor.chars().count();
+                    self.delete(marker_start..marker_end);
+                    return;
+                }
+
+                let to_insert = format!("\n{}{}", base_indent, marker);
+                self.insert(self.cursor, &to_insert);
+                return;
+            }
+
+            // Numbered list auto-continuation (e.g. `1. `, `2. `)
+            let bytes = after_indent_before_cursor.as_bytes();
+            let mut num_end = 0;
+            while num_end < bytes.len() && bytes[num_end].is_ascii_digit() {
+                num_end += 1;
+            }
+            if num_end > 0 && num_end + 1 < bytes.len() && bytes[num_end] == b'.' && (bytes[num_end + 1] == b' ' || bytes[num_end + 1] == b'\t') {
+                if let Ok(num) = after_indent_before_cursor[..num_end].parse::<usize>() {
+                    let marker_len = num_end + 2;
+                    let content_after = &after_indent_before_cursor[marker_len..];
+                    let after_cursor_trimmed = after_cursor.trim();
+                    if content_after.trim().is_empty() && after_cursor_trimmed.is_empty() {
+                        let marker_start = line_start_char + base_indent.chars().count();
+                        let marker_end = line_start_char + before_cursor.chars().count();
+                        self.delete(marker_start..marker_end);
+                        return;
+                    }
+
+                    let next_marker = format!("{}. ", num + 1);
+                    let to_insert = format!("\n{}{}", base_indent, next_marker);
+                    self.insert(self.cursor, &to_insert);
+                    return;
+                }
+            }
+        }
+
+        // Case 3: Block opener: {, (, [, or :
         let opens_block = trimmed_before.ends_with('{')
             || trimmed_before.ends_with('(')
             || trimmed_before.ends_with('[')
@@ -3049,11 +3128,11 @@ mod tests {
     fn test_syntax_detection_markdown() {
         let temp_dir = std::env::temp_dir();
         let md_file = temp_dir.join("test_led_syntax.md");
-        std::fs::write(&md_file, "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6\n`code`\n**bold**\n```\nlet x = 1;\n```\n").unwrap();
+        std::fs::write(&md_file, "# Heading 1\n## Heading 2\n### Heading 3\n#### Heading 4\n##### Heading 5\n###### Heading 6\n`code`\n**bold**\n```\nlet x = 1;\n```\n* bullet\n- hyphen\n").unwrap();
 
         let editor = Editor::from_file(&md_file).unwrap();
         assert!(editor.syntax_highlighter.is_some());
-        assert_eq!(editor.line_tokens.len(), 12);
+        assert_eq!(editor.line_tokens.len(), 14);
         // Verify Heading1 through Heading6 tokens
         assert_eq!(editor.line_tokens[0].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading1);
         assert_eq!(editor.line_tokens[1].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading2);
@@ -3067,6 +3146,11 @@ mod tests {
         assert_eq!(editor.line_tokens[7].as_ref().unwrap()[0].token, crate::syntax::TokenType::Bold);
         // Verify code block tokens (keyword)
         assert_eq!(editor.line_tokens[8].as_ref().unwrap()[0].token, crate::syntax::TokenType::Keyword);
+        // Verify list marker tokens (list_marker)
+        assert_eq!(editor.line_tokens[11].as_ref().unwrap()[0].token, crate::syntax::TokenType::ListMarker);
+        assert_eq!(editor.line_tokens[11].as_ref().unwrap()[0].byte_range, 0..1);
+        assert_eq!(editor.line_tokens[12].as_ref().unwrap()[0].token, crate::syntax::TokenType::ListMarker);
+        assert_eq!(editor.line_tokens[12].as_ref().unwrap()[0].byte_range, 0..1);
         let _ = std::fs::remove_file(&md_file);
     }
 
@@ -4270,6 +4354,47 @@ mod tests {
         editor.cursor = 15; // right between { and }
         editor.insert_newline_with_auto_indent(4, true);
         assert_eq!(editor.rope.to_string(), "    fn test() {\n        \n    }");
+    }
+
+    #[test]
+    fn test_auto_indent_markdown_bullet_asterisk() {
+        let mut editor = Editor::new();
+        editor.path = Some(std::path::PathBuf::from("notes.md"));
+        editor.insert(0, "* item 1");
+        editor.cursor = editor.rope.len_chars();
+        editor.insert_newline_with_auto_indent(4, true);
+        assert_eq!(editor.rope.to_string(), "* item 1\n* ");
+        assert_eq!(editor.cursor, editor.rope.len_chars());
+
+        // Press Enter again on the empty bullet line -> should delete the bullet marker
+        editor.insert_newline_with_auto_indent(4, true);
+        assert_eq!(editor.rope.to_string(), "* item 1\n");
+    }
+
+    #[test]
+    fn test_auto_indent_markdown_bullet_hyphen_indented() {
+        let mut editor = Editor::new();
+        editor.path = Some(std::path::PathBuf::from("README.md"));
+        editor.insert(0, "    - nested item");
+        editor.cursor = editor.rope.len_chars();
+        editor.insert_newline_with_auto_indent(4, true);
+        assert_eq!(editor.rope.to_string(), "    - nested item\n    - ");
+        assert_eq!(editor.cursor, editor.rope.len_chars());
+
+        // Press Enter on empty nested bullet line -> should delete nested bullet marker
+        editor.insert_newline_with_auto_indent(4, true);
+        assert_eq!(editor.rope.to_string(), "    - nested item\n    ");
+    }
+
+    #[test]
+    fn test_auto_indent_markdown_numbered_list() {
+        let mut editor = Editor::new();
+        editor.path = Some(std::path::PathBuf::from("doc.md"));
+        editor.insert(0, "1. step one");
+        editor.cursor = editor.rope.len_chars();
+        editor.insert_newline_with_auto_indent(4, true);
+        assert_eq!(editor.rope.to_string(), "1. step one\n2. ");
+        assert_eq!(editor.cursor, editor.rope.len_chars());
     }
 
     #[test]

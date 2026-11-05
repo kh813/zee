@@ -429,6 +429,7 @@ impl App {
             zee_core::syntax::TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
             zee_core::syntax::TokenType::Bold => None,
             zee_core::syntax::TokenType::Link => theme.syntax.link.or(theme.syntax.function),
+            zee_core::syntax::TokenType::ListMarker => theme.syntax.list_marker.or(theme.syntax.comment),
         };
         self.to_ct_color(color.unwrap_or(theme.editor.foreground))
     }
@@ -6228,7 +6229,7 @@ impl App {
 
         let mut token_colors = std::collections::HashMap::new();
         use zee_core::syntax::TokenType::*;
-        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode, Bold, Link] {
+        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode, Bold, Link, ListMarker] {
             token_colors.insert(t, self.get_token_color(t));
         }
 
@@ -6945,7 +6946,7 @@ mod tests {
     fn test_markdown_bold_and_heading1_rendering() {
         let temp_dir = std::env::temp_dir();
         let md_path = temp_dir.join("test_md_rendering.md");
-        std::fs::write(&md_path, "# Header 1\n**bold text**\n[link text](#url)\n").unwrap();
+        std::fs::write(&md_path, "# Header 1\n**bold text**\n[link text](#url)\n* bullet item\n").unwrap();
 
         let mut app = App::new(vec![md_path.clone()]).expect("Failed to init App");
         assert_eq!(app.buffers.len(), 1);
@@ -6957,7 +6958,7 @@ mod tests {
 
         let (ex, ey, _ew, _eh) = app.layout.editor_bounds();
 
-        // 1. Line 0: '# Header 1' should have heading1 color
+        // 1. Line 0: '# Header 1' should have heading1 color (bright green #16a34a)
         let header_cell = app.renderer.get_cell(ex, ey);
         assert_eq!(header_cell.ch, '#');
         let expected_heading1_fg = app.to_ct_color(app.theme.syntax.heading1.expect("heading1 color should be set"));
@@ -6982,6 +6983,12 @@ mod tests {
         assert_eq!(link_cell.ch, '[');
         let expected_link_fg = app.to_ct_color(app.theme.syntax.link.expect("link color should be set"));
         assert_eq!(link_cell.fg, expected_link_fg, "Link should have theme link color");
+
+        // 5. Line 3: '* bullet item' -> '*' should have list_marker color (muted gray #94a3b8)
+        let bullet_cell = app.renderer.get_cell(ex, ey + 3);
+        assert_eq!(bullet_cell.ch, '*');
+        let expected_bullet_fg = app.to_ct_color(app.theme.syntax.list_marker.expect("list_marker color should be set"));
+        assert_eq!(bullet_cell.fg, expected_bullet_fg, "Bullet marker '*' should have list_marker color");
 
         let _ = std::fs::remove_file(&md_path);
     }
@@ -9038,6 +9045,28 @@ mod tests {
         let buffer = &app.buffers[app.active_buffer];
         let text = buffer.rope.to_string();
         assert!(text.contains("    fn test() {\n        "), "Auto-indent should indent block opener: {:?}", text);
+    }
+
+    #[test]
+    fn test_auto_bullet_on_enter_in_tui() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        let input = "* first item";
+        for c in input.chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+
+        // Press Enter
+        app.handle_key(make_key(KeyCode::Enter));
+
+        let buffer = &app.buffers[app.active_buffer];
+        let text = buffer.rope.to_string();
+        assert_eq!(text, "* first item\n* ");
+
+        // Press Enter again on the empty bullet -> bullet should be canceled
+        app.handle_key(make_key(KeyCode::Enter));
+        let buffer = &app.buffers[app.active_buffer];
+        let text_after = buffer.rope.to_string();
+        assert_eq!(text_after, "* first item\n");
     }
 
     #[test]

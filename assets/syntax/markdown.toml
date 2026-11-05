@@ -28,6 +28,10 @@ token = "heading1"
 pattern = "^#.*"
 
 [[rule]]
+token = "list_marker"
+pattern = "^[ \\t]*([*\\-+]|\\d+\\.)[ \\t]"
+
+[[rule]]
 token = "bold"
 pattern = "\\*\\*[^\\*\\r\\n]+?\\*\\*"
 

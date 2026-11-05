@@ -49,8 +49,8 @@ echo -e "${GREEN}✓ Windows (GUI x64) cross-check passed!${NC}\n"
 # ------------------------------------------------------------------------------
 echo -e "${BOLD}[3/3] Linux (CLI x64) Verification...${NC}"
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    echo "Running Linux x64 CLI unit tests inside Docker (cached container)..."
-    docker run --rm --platform linux/amd64 \
+    echo "Running Linux CLI unit tests inside Docker (cached container)..."
+    docker run --rm \
         -v zee_cargo_registry:/usr/local/cargo/registry \
         -v zee_cargo_git:/usr/local/cargo/git \
         -v zee_target_linux:/workspace/target_docker \
@@ -59,7 +59,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         -e CARGO_TARGET_DIR=/workspace/target_docker \
         rust:slim \
         sh -c "cargo test -p zee-core --lib --quiet && cargo test -p zee-tui --lib --quiet"
-    echo -e "${GREEN}✓ Linux (CLI x64) container tests passed!${NC}\n"
+    echo -e "${GREEN}✓ Linux container tests passed!${NC}\n"
 else
     echo -e "${YELLOW}⚠ Docker is not running. Skipped Linux x64 container tests.${NC}"
     echo -e "${YELLOW}  (Start Docker Desktop to enable automated Linux tests)${NC}\n"

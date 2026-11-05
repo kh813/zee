@@ -26,6 +26,7 @@ pub enum TokenType {
     InlineCode,
     Bold,
     Link,
+    ListMarker,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -251,7 +252,8 @@ impl SyntaxHighlighter {
                 LineState::Normal => {
                     let mut best_match: Option<(usize, usize, usize)> = None; // (rule_index, start, end)
                     for (i, rule) in self.rules.iter().enumerate() {
-                        if let Some(m) = rule.start_re.find(&line[offset..]) {
+                        if let Some(caps) = rule.start_re.captures(&line[offset..]) {
+                            let m = caps.get(0).unwrap();
                             if best_match.is_none() || m.start() < best_match.unwrap().1 {
                                 best_match = Some((i, m.start(), m.end()));
                             }
@@ -313,37 +315,40 @@ impl SyntaxHighlighter {
         while offset < line.len() {
             match state {
                 LineState::Normal => {
-                    let mut best_match: Option<(usize, usize, usize)> = None;
+                    let mut best_match: Option<(usize, usize, usize, usize, usize)> = None; // (rule_index, match_start, match_end, span_start, span_end)
                     for (i, rule) in self.rules.iter().enumerate() {
-                        if let Some(m) = rule.start_re.find(&line[offset..]) {
+                        if let Some(caps) = rule.start_re.captures(&line[offset..]) {
+                            let m = caps.get(0).unwrap();
                             if best_match.is_none() || m.start() < best_match.unwrap().1 {
-                                best_match = Some((i, m.start(), m.end()));
+                                let (s_start, s_end) = if let Some(g1) = caps.get(1) {
+                                    (g1.start(), g1.end())
+                                } else {
+                                    (m.start(), m.end())
+                                };
+                                best_match = Some((i, m.start(), m.end(), s_start, s_end));
                             }
                         }
                     }
 
-                    if let Some((i, m_start, m_end)) = best_match {
-                        if m_start > 0 {
-                            // Text before match
-                            // We don't push spans for text yet, we'll merge them at the end.
-                        }
+                    if let Some((i, _m_start, m_end, s_start, s_end)) = best_match {
                         let rule = &self.rules[i];
-                        let abs_start = offset + m_start;
-                        let abs_end = offset + m_end;
+                        let abs_span_start = offset + s_start;
+                        let abs_span_end = offset + s_end;
+                        let advance_end = offset + m_end;
                         
                         if rule.end_re.is_some() {
                             state = LineState::InsideRegion { rule_index: i };
                             spans.push(TokenSpan {
-                                byte_range: abs_start..abs_end,
+                                byte_range: abs_span_start..abs_span_end,
                                 token: rule.token,
                             });
-                            offset = abs_end;
+                            offset = advance_end;
                         } else {
                             spans.push(TokenSpan {
-                                byte_range: abs_start..abs_end,
+                                byte_range: abs_span_start..abs_span_end,
                                 token: rule.token,
                             });
-                            offset = abs_end;
+                            offset = advance_end;
                         }
                     } else {
                         break;

@@ -212,6 +212,7 @@ impl EditorView {
             TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
             TokenType::Bold => None,
             TokenType::Link => theme.syntax.link.or(theme.syntax.function),
+            TokenType::ListMarker => theme.syntax.list_marker.or(theme.syntax.comment),
         };
         led_color_to_gpui(color.unwrap_or(theme.editor.foreground))
     }

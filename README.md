@@ -96,8 +96,27 @@ Whether launching the GUI app on a Mac/Windows workstation or editing over SSH o
 
 ## 📦 Installation & Download / インストールとダウンロード
 
-Pre-compiled standalone packages and installers are available on the [Releases page](https://github.com/kh813/zee/releases).  
-ビルド済みバイナリは [GitHub Releases](https://github.com/kh813/zee/releases) からダウンロードできます。
+### 🍺 Homebrew (macOS)
+Easily install the macOS GUI app (`Zee.app`) and terminal CLI via Homebrew:  
+Homebrew を使用して、macOS GUI アプリおよびターミナル CLI コマンドを一発でインストールできます:
+
+```bash
+brew install kh813/tap/zee
+```
+
+### 🪟 WinGet (Windows 10 / 11)
+Install the standalone Windows app with a single command via Windows Package Manager:  
+Windows 10 / 11 の標準パッケージマネージャー (winget) でワンライナーインストールできます:
+
+```powershell
+winget install kh813.zee
+```
+
+---
+
+### 📥 Standalone Binaries / ビルド済みバイナリ
+Pre-compiled standalone packages and installers are also available on the [Releases page](https://github.com/kh813/zee/releases).  
+ビルド済みバイナリは [GitHub Releases](https://github.com/kh813/zee/releases) からも直接ダウンロードできます。
 
 | Package / パッケージ | Platform / OS | Edition / 内容 | Description / 説明 |
 | :--- | :--- | :--- | :--- |

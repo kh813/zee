@@ -96,12 +96,18 @@ Whether launching the GUI app on a Mac/Windows workstation or editing over SSH o
 
 ## 📦 Installation & Download / インストールとダウンロード
 
-### 🍺 Homebrew (macOS)
-Easily install the macOS GUI app (`Zee.app`) and terminal CLI via Homebrew:  
-Homebrew を使用して、macOS GUI アプリおよびターミナル CLI コマンドを一発でインストールできます:
+### 🍺 Homebrew (macOS / Linux)
+Install the macOS Desktop GUI app (`Zee.app` & `zeeg`) or Terminal CLI (`zee` & `zee-cli`) via Homebrew:  
+Homebrew を使用して、macOS デスクトップ GUI 版（`Zee.app` / `zeeg`）とターミナル CLI 版（`zee` / `zee-cli`）をそれぞれ（または両方同時に）インストールできます:
 
 ```bash
+# Desktop GUI Edition (macOS: installs /Applications/Zee.app and `zeeg` command)
+# デスクトップ GUI 版（Zee.app と zeeg コマンドをインストール）
 brew install kh813/tap/zee
+
+# Terminal CLI Edition (macOS & Linux: installs `zee` and `zee-cli` commands)
+# ターミナル CLI 版（zee および zee-cli コマンドをインストール）
+brew install kh813/tap/zee-cli
 ```
 
 ### 🪟 WinGet (Windows 10 / 11)

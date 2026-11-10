@@ -61,8 +61,13 @@ cli:
 	@echo "==> Building TUI / CLI (zee and zee-cli)..."
 	cargo build --release -p zee-tui --bin zee-cli
 	cargo build --release -p zee-tui --bin zee
+	@rm -f $(DIST_DIR)/zee-cli $(DIST_DIR)/$(ZEE_TUI_BIN)
 	@cp target/release/zee-cli $(DIST_DIR)/zee-cli
 	@cp target/release/$(ZEE_TUI_BIN) $(DIST_DIR)/$(ZEE_TUI_BIN)
+	@if [ "$(OS_TYPE)" = "macos" ]; then \
+		codesign --force --sign - $(DIST_DIR)/zee-cli 2>/dev/null || true; \
+		codesign --force --sign - $(DIST_DIR)/$(ZEE_TUI_BIN) 2>/dev/null || true; \
+	fi
 	@echo "Built $(DIST_DIR)/$(ZEE_TUI_BIN) and $(DIST_DIR)/zee-cli"
 
 gui: $(GUI_TARGET)
@@ -94,9 +99,9 @@ macos-gui:
 	@echo '    <key>CFBundlePackageType</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <string>APPL</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>CFBundleShortVersionString</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
-	@echo '    <string>0.1.7</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    <string>0.3.10</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>CFBundleVersion</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
-	@echo '    <string>0.1.7</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    <string>0.3.10</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>CFBundleIconFile</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <string>zee.icns</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>NSHighResolutionCapable</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
@@ -138,6 +143,8 @@ macos-gui:
 	@echo '    </array>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '</dict>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '</plist>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@xattr -cr $(DIST_DIR)/Zee.app 2>/dev/null || true
+	@codesign --force --deep --sign - $(DIST_DIR)/Zee.app 2>/dev/null || true
 	@touch $(DIST_DIR)/Zee.app
 	@echo "Built $(DIST_DIR)/Zee.app"
 
@@ -170,11 +177,21 @@ install: local
 	@INSTALL_DIR=$${HOME}/.local/bin; \
 	mkdir -p $$INSTALL_DIR; \
 	if [ "$(OS_TYPE)" != "windows" ]; then \
+		rm -f $$INSTALL_DIR/$(ZEE_TUI_BIN); \
 		cp $(DIST_DIR)/$(ZEE_TUI_BIN) $$INSTALL_DIR/; \
+		if [ "$(OS_TYPE)" = "macos" ]; then \
+			xattr -cr $$INSTALL_DIR/$(ZEE_TUI_BIN) 2>/dev/null || true; \
+			codesign --force --sign - $$INSTALL_DIR/$(ZEE_TUI_BIN) 2>/dev/null || true; \
+		fi; \
 		echo "Installed $(ZEE_TUI_BIN) to $$INSTALL_DIR/"; \
 	fi; \
 	if [ -f $(DIST_DIR)/$(ZEE_GUI_BIN) ]; then \
+		rm -f $$INSTALL_DIR/$(ZEE_GUI_BIN); \
 		cp $(DIST_DIR)/$(ZEE_GUI_BIN) $$INSTALL_DIR/; \
+		if [ "$(OS_TYPE)" = "macos" ]; then \
+			xattr -cr $$INSTALL_DIR/$(ZEE_GUI_BIN) 2>/dev/null || true; \
+			codesign --force --sign - $$INSTALL_DIR/$(ZEE_GUI_BIN) 2>/dev/null || true; \
+		fi; \
 		echo "Installed $(ZEE_GUI_BIN) to $$INSTALL_DIR/"; \
 	fi; \
 	if [ "$(OS_TYPE)" = "linux" ]; then \
@@ -193,6 +210,8 @@ install: local
 		mkdir -p $${HOME}/Applications; \
 		rm -rf $${HOME}/Applications/Zee.app; \
 		cp -r $(DIST_DIR)/Zee.app $${HOME}/Applications/; \
+		xattr -cr $${HOME}/Applications/Zee.app 2>/dev/null || true; \
+		codesign --force --deep --sign - $${HOME}/Applications/Zee.app 2>/dev/null || true; \
 		echo "Installed Zee.app to $${HOME}/Applications/"; \
 	fi
 

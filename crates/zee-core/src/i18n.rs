@@ -653,7 +653,7 @@ impl I18n {
         m.insert("sidebar.prop_size".to_string(), "サイズ".to_string());
         m.insert("sidebar.prop_lines".to_string(), "行数".to_string());
         m.insert("sidebar.prop_chars".to_string(), "文字数".to_string());
-        m.insert("sidebar.prop_encoding".to_string(), "エンコーディング".to_string());
+        m.insert("sidebar.prop_encoding".to_string(), "エンコード".to_string());
         m.insert("sidebar.prop_line_ending".to_string(), "改行コード".to_string());
         m.insert("sidebar.no_file".to_string(), "（ファイルなし）".to_string());
         m.insert("sidebar.no_files".to_string(), "（ファイルなし）".to_string());

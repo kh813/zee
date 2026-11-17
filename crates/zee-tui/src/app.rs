@@ -8488,6 +8488,15 @@ mod tests {
                                 );
                             }
                         }
+                        // Verify right-most content column before border (sx + sw - 2) on property rows has at least 1 trailing space
+                        if py >= sy + sh.saturating_sub(6) {
+                            let right_pad_cell = app.renderer.get_cell(sx + sw - 2, py);
+                            assert_eq!(
+                                right_pad_cell.ch, ' ',
+                                "Sidebar property row y={} in theme '{}' should leave at least 1 space column before right border, found '{}'",
+                                py, theme.meta.name, right_pad_cell.ch
+                            );
+                        }
                     }
                 }
             }

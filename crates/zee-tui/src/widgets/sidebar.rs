@@ -830,8 +830,8 @@ impl Sidebar {
                         col_used += w;
                     }
 
-                    // Remaining width for value
-                    let val_available = content_w.saturating_sub(label_len);
+                    // Remaining width for value (reserve 1 column of right padding before border)
+                    let val_available = content_w.saturating_sub(label_len + 1);
                     let mut val_col = 0;
                     for ch in val.chars() {
                         let w = ch.width().unwrap_or(1);

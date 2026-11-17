@@ -8465,6 +8465,32 @@ mod tests {
                         }
                     }
                 }
+
+                // 3. Verify Sidebar Properties (File Info) contrast
+                app.sidebar.visible = true;
+                app.sidebar.show_properties = true;
+                app.layout.sidebar_width = 26;
+                app.renderer.clear();
+                app.render_sidebar();
+                let (sx, sy, sw, sh) = app.layout.sidebar_bounds();
+                if sw > 0 && sh >= 12 {
+                    let prop_y_start = sy + sh.saturating_sub(7);
+                    for py in prop_y_start..(sy + sh) {
+                        for px in sx..(sx + sw) {
+                            let cell = app.renderer.get_cell(px, py);
+                            if cell.ch != ' ' && cell.ch != '│' && cell.ch != '─' && cell.ch != '\0' {
+                                let fg_rgb = ct_color_to_rgb(cell.fg);
+                                let bg_rgb = ct_color_to_rgb(cell.bg);
+                                let ratio = contrast_ratio(fg_rgb, bg_rgb);
+                                assert!(
+                                    ratio >= 2.5,
+                                    "Sidebar file info char '{}' at ({},{}) in theme '{}' (256-col: {}) has low contrast ratio {:.2}:1 (fg: {:?}, bg: {:?})",
+                                    cell.ch, px, py, theme.meta.name, is_apple_term, ratio, cell.fg, cell.bg
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
         std::env::remove_var("TERM_PROGRAM");

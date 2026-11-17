@@ -451,6 +451,7 @@ impl Sidebar {
         let fg = Self::to_crossterm_color(theme.ui.status_bar_fg, is_td);
         let accent = Self::to_crossterm_color(theme.ui.tab_active_fg, is_td);
         let border_color = Self::to_crossterm_color(theme.ui.dialog_border, is_td);
+        let muted_fg = Self::to_crossterm_color(theme.editor.line_number, is_td);
         let sel_bg = if is_focused {
             Self::to_crossterm_color(theme.editor.selection, is_td)
         } else {
@@ -542,7 +543,7 @@ impl Sidebar {
 
         // Render hidden file indicator '.*' on the right of header
         if files_active && content_w >= 16 {
-            let dot_fg = if self.file_tree.show_hidden { accent } else { border_color };
+            let dot_fg = if self.file_tree.show_hidden { accent } else { muted_fg };
             let dot_x = content_start_x + content_w as u16 - 3;
             renderer.set_cell(dot_x, by, Cell { ch: '.', fg: dot_fg, bg, bold: self.file_tree.show_hidden, underline: false, width: 1 });
             renderer.set_cell(dot_x + 1, by, Cell { ch: '*', fg: dot_fg, bg, bold: self.file_tree.show_hidden, underline: false, width: 1 });
@@ -645,7 +646,7 @@ impl Sidebar {
                             y,
                             Cell {
                                 ch,
-                                fg: border_color,
+                                fg: muted_fg,
                                 bg,
                                 bold: false,
                                 underline: false,
@@ -808,7 +809,7 @@ impl Sidebar {
                             y,
                             Cell {
                                 ch,
-                                fg: border_color,
+                                fg,
                                 bg,
                                 bold: false,
                                 underline: false,

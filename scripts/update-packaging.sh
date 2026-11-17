@@ -66,11 +66,9 @@ cask "zee" do
   app "Zee.app"
   binary "#{appdir}/Zee.app/Contents/MacOS/zeeg", target: "zeeg"
 
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-cr", "#{appdir}/Zee.app"]
-    system_command "/usr/bin/codesign",
-                   args: ["--force", "--deep", "--sign", "-", "#{appdir}/Zee.app"]
+  postflight_steps do
+    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{appdir}}/Zee.app"], must_succeed: false
+    run "/usr/bin/codesign", args: ["--force", "--deep", "--sign", "-", "{{appdir}}/Zee.app"], must_succeed: false
   end
 
   uninstall quit: "dev.hiroshi.zeeg"

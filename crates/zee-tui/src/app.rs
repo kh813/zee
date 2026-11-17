@@ -5735,10 +5735,10 @@ impl App {
                 }
                 MenuItem::Action { label, shortcut, .. } => {
                     // Left and right borders
-                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
-                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg, ..Default::default() });
+                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg, ..Default::default() });
 
-                    // Background fill
+                    // Background fill (inside border only)
                     for dx in 1..=inner_w {
                         self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
                     }
@@ -5775,10 +5775,10 @@ impl App {
                 }
                 MenuItem::Toggle { label, checked, is_radio, .. } => {
                     // Left and right borders
-                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
-                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg, ..Default::default() });
+                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg, ..Default::default() });
 
-                    // Background fill
+                    // Background fill (inside border only)
                     for dx in 1..=inner_w {
                         self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
                     }
@@ -5800,10 +5800,10 @@ impl App {
                 }
                 MenuItem::Submenu { label, menu: sub } => {
                     // Left and right borders
-                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
-                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg: item_bg, ..Default::default() });
+                    self.renderer.set_cell(x, iy, Cell { ch: '│', fg: border_fg, bg, ..Default::default() });
+                    self.renderer.set_cell(right_x, iy, Cell { ch: '│', fg: border_fg, bg, ..Default::default() });
 
-                    // Background fill
+                    // Background fill (inside border only)
                     for dx in 1..=inner_w {
                         self.renderer.set_cell(x + dx, iy, Cell { ch: ' ', bg: item_bg, ..Default::default() });
                     }
@@ -8799,52 +8799,81 @@ mod tests {
             let top_y = first_y - 1;
             let bot_y = rects.last().unwrap().1 + 1;
 
-            // 1. Top border
-            assert_eq!(app.renderer.get_cell(box_x, top_y).ch, '┌');
-            assert_eq!(app.renderer.get_cell(right_x, top_y).ch, '┐');
+                // 1. Top border
+                let top_left = app.renderer.get_cell(box_x, top_y);
+                let top_right = app.renderer.get_cell(right_x, top_y);
+                assert_eq!(top_left.ch, '┌');
+                assert_eq!(top_right.ch, '┐');
 
-            // 2. Each menu item row
-            for &(item_x, row_y, item_w, _, _, item_idx) in &rects {
-                let item = &menu.items[item_idx];
-                let item_right = item_x + item_w - 1;
+                // 2. Each menu item row
+                for &(item_x, row_y, item_w, _, _, item_idx) in &rects {
+                    let item = &menu.items[item_idx];
+                    let item_right = item_x + item_w - 1;
 
-                match item {
-                    MenuItem::Separator => {
-                        assert_eq!(app.renderer.get_cell(item_x, row_y).ch, '├');
-                        assert_eq!(app.renderer.get_cell(item_right, row_y).ch, '┤');
-                    }
-                    _ => {
-                        let left_cell = app.renderer.get_cell(item_x, row_y);
-                        let right_cell = app.renderer.get_cell(item_right, row_y);
-                        let margin_cell = app.renderer.get_cell(item_right - 1, row_y);
+                    match item {
+                        MenuItem::Separator => {
+                            let left_sep = app.renderer.get_cell(item_x, row_y);
+                            let right_sep = app.renderer.get_cell(item_right, row_y);
+                            assert_eq!(left_sep.ch, '├');
+                            assert_eq!(right_sep.ch, '┤');
+                            assert_eq!(left_sep.bg, top_left.bg);
+                            assert_eq!(right_sep.bg, top_left.bg);
+                        }
+                        _ => {
+                            let left_cell = app.renderer.get_cell(item_x, row_y);
+                            let right_cell = app.renderer.get_cell(item_right, row_y);
+                            let inner_left_cell = app.renderer.get_cell(item_x + 1, row_y);
+                            let margin_cell = app.renderer.get_cell(item_right - 1, row_y);
 
-                        assert_eq!(
-                            left_cell.ch,
-                            '│',
-                            "Menu '{}' item {} row {} left border must be '│', got '{}'",
-                            menu.label, item_idx, row_y, left_cell.ch
-                        );
-                        assert_eq!(
-                            right_cell.ch,
-                            '│',
-                            "Menu '{}' item {} row {} right border must be '│', got '{}'",
-                            menu.label, item_idx, row_y, right_cell.ch
-                        );
-                        assert_eq!(
-                            margin_cell.ch,
-                            ' ',
-                            "Menu '{}' item {} row {} must have at least one blank space before border ('menu item |'), got '{}'",
-                            menu.label, item_idx, row_y, margin_cell.ch
-                        );
+                            assert_eq!(
+                                left_cell.ch,
+                                '│',
+                                "Menu '{}' item {} row {} left border must be '│', got '{}'",
+                                menu.label, item_idx, row_y, left_cell.ch
+                            );
+                            assert_eq!(
+                                right_cell.ch,
+                                '│',
+                                "Menu '{}' item {} row {} right border must be '│', got '{}'",
+                                menu.label, item_idx, row_y, right_cell.ch
+                            );
+                            // Left and right borders must retain the normal border background and foreground
+                            // even when the menu item is selected (only the interior is highlighted).
+                            assert_eq!(
+                                left_cell.bg, top_left.bg,
+                                "Menu '{}' item {} row {} left border bg must remain normal dropdown bg",
+                                menu.label, item_idx, row_y
+                            );
+                            assert_eq!(
+                                right_cell.bg, top_left.bg,
+                                "Menu '{}' item {} row {} right border bg must remain normal dropdown bg",
+                                menu.label, item_idx, row_y
+                            );
+                            assert_eq!(left_cell.fg, top_left.fg);
+                            assert_eq!(right_cell.fg, top_left.fg);
+
+                            if item_idx == app.selected_item {
+                                assert_ne!(
+                                    inner_left_cell.bg, left_cell.bg,
+                                    "Selected menu item interior must have active highlight bg distinct from border bg"
+                                );
+                            }
+
+                            assert_eq!(
+                                margin_cell.ch,
+                                ' ',
+                                "Menu '{}' item {} row {} must have at least one blank space before border ('menu item |'), got '{}'",
+                                menu.label, item_idx, row_y, margin_cell.ch
+                            );
+                        }
                     }
                 }
-            }
 
-            // 3. Bottom border
-            assert_eq!(app.renderer.get_cell(box_x, bot_y).ch, '└');
-            assert_eq!(app.renderer.get_cell(right_x, bot_y).ch, '┘');
+                // 3. Bottom border
+                assert_eq!(app.renderer.get_cell(box_x, bot_y).ch, '└');
+                assert_eq!(app.renderer.get_cell(right_x, bot_y).ch, '┘');
+            }
         }
-    }
 
     #[test]
     fn test_dialog_border_and_margin_integrity() {

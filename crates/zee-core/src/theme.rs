@@ -275,9 +275,9 @@ impl Theme {
             editor: EditorColors {
                 background: Color::Rgb(0, 0, 0), // Special: will be Reset in TUI
                 foreground: Color::Rgb(255, 255, 255), // Special: will be Reset in TUI
-                cursor: Color::Rgb(255, 255, 255),
-                selection: Color::Ansi(8),
-                line_number: Color::Ansi(8),
+                cursor: Color::Ansi(252),
+                selection: Color::Ansi(238),
+                line_number: Color::Ansi(246),
                 current_line: None,
             },
             ui: UiColors {
@@ -294,33 +294,33 @@ impl Theme {
                 status_bar_fg: Color::Ansi(252),
                 panel_bg: Color::Ansi(235),
                 panel_fg: Color::Ansi(252),
-                panel_error_fg: Color::Ansi(1),
+                panel_error_fg: Color::Ansi(9),
                 dialog_bg: Color::Ansi(236),
                 dialog_border: Color::Ansi(75),
                 button_active_bg: Color::Ansi(24),
                 button_active_fg: Color::Ansi(15),
             },
             syntax: SyntaxColors {
-                keyword: Some(Color::Ansi(5)),     // Magenta
-                type_name: Some(Color::Ansi(3)),   // Yellow
-                function: Some(Color::Ansi(4)),    // Blue
-                string: Some(Color::Ansi(2)),      // Green
+                keyword: Some(Color::Ansi(13)),    // Bright Magenta
+                type_name: Some(Color::Ansi(14)),  // Bright Cyan
+                function: Some(Color::Ansi(75)),   // Sky Blue
+                string: Some(Color::Ansi(10)),     // Bright Green
                 number: Some(Color::Ansi(11)),     // Bright Yellow
-                comment: Some(Color::Ansi(8)),     // Bright Black (Gray)
-                operator: Some(Color::Ansi(6)),    // Cyan
+                comment: Some(Color::Ansi(246)),   // Medium-Light Gray
+                operator: Some(Color::Ansi(14)),   // Bright Cyan
                 punctuation: Some(Color::Ansi(7)), // White
                 constant: Some(Color::Ansi(11)),
-                attribute: Some(Color::Ansi(5)),
-                error: Some(Color::Ansi(1)),       // Red
-                heading1: Some(Color::Ansi(2)),    // Green / Teal
-                heading2: Some(Color::Ansi(4)),    // Blue
-                heading3: Some(Color::Ansi(1)),    // Red
+                attribute: Some(Color::Ansi(13)),
+                error: Some(Color::Ansi(9)),       // Bright Red
+                heading1: Some(Color::Ansi(10)),   // Bright Green
+                heading2: Some(Color::Ansi(75)),   // Sky Blue
+                heading3: Some(Color::Ansi(9)),    // Bright Red
                 heading4: Some(Color::Ansi(11)),   // Bright Yellow / Gold
-                heading5: Some(Color::Ansi(8)),    // Gray / Slate
-                heading6: Some(Color::Ansi(5)),    // Magenta / Violet
+                heading5: Some(Color::Ansi(246)),  // Medium-Light Gray
+                heading6: Some(Color::Ansi(13)),   // Bright Magenta / Violet
                 inline_code: Some(Color::Ansi(13)), // Bright Magenta / Pink
                 link: None,
-                list_marker: Some(Color::Ansi(8)), // Gray
+                list_marker: Some(Color::Ansi(246)), // Medium-Light Gray
             },
         }
     }
@@ -425,7 +425,7 @@ impl Default for Theme {
                 tab_active_fg: Color::Rgb(255, 255, 255),
                 tab_inactive_bg: Color::Rgb(26, 27, 38),
                 tab_inactive_fg: Color::Rgb(120, 124, 153),
-                status_bar_bg: Color::Rgb(22, 22, 30),
+            status_bar_bg: Color::Rgb(22, 22, 30),
                 status_bar_fg: Color::Rgb(192, 202, 245),
                 panel_bg: Color::Rgb(22, 22, 30),
                 panel_fg: Color::Rgb(192, 202, 245),
@@ -533,5 +533,131 @@ mod tests {
         assert_eq!(theme.editor.foreground, Color::Rgb(200, 200, 200));
         assert_eq!(theme.editor.line_number, Color::Ansi(8));
         assert_eq!(theme.syntax.keyword, Some(Color::Rgb(187, 154, 247)));
+    }
+
+    #[test]
+    fn test_builtin_themes_contrast_ratios() {
+        fn ansi256_to_rgb(idx: u8) -> (u8, u8, u8) {
+            if idx < 16 {
+                let table = [
+                    (0, 0, 0), (170, 0, 0), (0, 170, 0), (170, 85, 0),
+                    (0, 0, 170), (170, 0, 170), (0, 170, 170), (170, 170, 170),
+                    (85, 85, 85), (255, 85, 85), (85, 255, 85), (255, 255, 85),
+                    (85, 85, 255), (255, 85, 255), (85, 255, 255), (255, 255, 255),
+                ];
+                return table[idx as usize];
+            }
+            if idx >= 232 {
+                let v = (idx - 232) * 10 + 8;
+                return (v, v, v);
+            }
+            let idx = idx - 16;
+            let r = (idx / 36) % 6;
+            let g = (idx / 6) % 6;
+            let b = idx % 6;
+            let conv = |v: u8| if v == 0 { 0 } else { v * 40 + 55 };
+            (conv(r), conv(g), conv(b))
+        }
+
+        fn color_to_rgb(c: Color, use_256: bool) -> (u8, u8, u8) {
+            if use_256 {
+                return ansi256_to_rgb(c.to_ansi256());
+            }
+            match c {
+                Color::Rgb(r, g, b) => (r, g, b),
+                Color::Ansi(i) => ansi256_to_rgb(i),
+            }
+        }
+
+        fn relative_luminance((r, g, b): (u8, u8, u8)) -> f64 {
+            let chan = |v: u8| {
+                let s = (v as f64) / 255.0;
+                if s <= 0.03928 {
+                    s / 12.92
+                } else {
+                    ((s + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * chan(r) + 0.7152 * chan(g) + 0.0722 * chan(b)
+        }
+
+        fn contrast_ratio(c1: (u8, u8, u8), c2: (u8, u8, u8)) -> f64 {
+            let l1 = relative_luminance(c1);
+            let l2 = relative_luminance(c2);
+            let (lighter, darker) = if l1 > l2 { (l1, l2) } else { (l2, l1) };
+            (lighter + 0.05) / (darker + 0.05)
+        }
+
+        for theme in Theme::builtins() {
+            for use_256 in [false, true] {
+                let bg = color_to_rgb(theme.editor.background, use_256);
+                let cl = color_to_rgb(theme.editor.current_line.unwrap_or(theme.editor.background), use_256);
+                let fg = color_to_rgb(theme.editor.foreground, use_256);
+                let cur = color_to_rgb(theme.editor.cursor, use_256);
+                let sel = color_to_rgb(theme.editor.selection, use_256);
+                let ln = color_to_rgb(theme.editor.line_number, use_256);
+
+                let check = |label: &str, c1: (u8, u8, u8), c2: (u8, u8, u8), min_ratio: f64| {
+                    let ratio = contrast_ratio(c1, c2);
+                    assert!(
+                        ratio >= min_ratio,
+                        "Built-in theme '{}' (256-col: {}) failed contrast check for {}: {:.2}:1 < {:.2}:1 ({:?} vs {:?})",
+                        theme.meta.name, use_256, label, ratio, min_ratio, c1, c2
+                    );
+                };
+
+                // Editor core colors & Vi block cursor
+                check("editor.foreground vs background", fg, bg, 3.5);
+                check("editor.foreground vs current_line", fg, cl, 3.5);
+                check("editor.foreground vs selection", fg, sel, 3.0);
+                check("editor.line_number vs background", ln, bg, 2.5);
+                check("editor.line_number vs current_line", ln, cl, 2.5);
+                check("editor.cursor vs background (Vi block cursor)", cur, bg, 5.0);
+                check("editor.cursor vs current_line (Vi block cursor)", cur, cl, 5.0);
+                check("editor.background (cursor inverted text) vs cursor", bg, cur, 5.0);
+
+                // UI colors
+                check("ui.menu_bar_fg vs menu_bar_bg", color_to_rgb(theme.ui.menu_bar_fg, use_256), color_to_rgb(theme.ui.menu_bar_bg, use_256), 3.5);
+                check("ui.menu_item_active_fg vs menu_item_active_bg", color_to_rgb(theme.ui.menu_item_active_fg, use_256), color_to_rgb(theme.ui.menu_item_active_bg, use_256), 3.0);
+                check("ui.tab_active_fg vs tab_active_bg", color_to_rgb(theme.ui.tab_active_fg, use_256), color_to_rgb(theme.ui.tab_active_bg, use_256), 3.5);
+                check("ui.tab_inactive_fg vs tab_inactive_bg", color_to_rgb(theme.ui.tab_inactive_fg, use_256), color_to_rgb(theme.ui.tab_inactive_bg, use_256), 2.5);
+                check("ui.status_bar_fg vs status_bar_bg", color_to_rgb(theme.ui.status_bar_fg, use_256), color_to_rgb(theme.ui.status_bar_bg, use_256), 3.5);
+                check("ui.panel_fg vs panel_bg", color_to_rgb(theme.ui.panel_fg, use_256), color_to_rgb(theme.ui.panel_bg, use_256), 3.0);
+                check("ui.panel_error_fg vs panel_bg", color_to_rgb(theme.ui.panel_error_fg, use_256), color_to_rgb(theme.ui.panel_bg, use_256), 2.5);
+                check("ui.panel_fg vs dialog_bg", color_to_rgb(theme.ui.panel_fg, use_256), color_to_rgb(theme.ui.dialog_bg, use_256), 3.0);
+                check("editor.line_number vs dialog_bg", ln, color_to_rgb(theme.ui.dialog_bg, use_256), 2.5);
+                check("ui.button_active_fg vs button_active_bg", color_to_rgb(theme.ui.button_active_fg, use_256), color_to_rgb(theme.ui.button_active_bg, use_256), 3.0);
+
+                // Syntax tokens
+                let syn_tokens: [(&str, Option<Color>); 19] = [
+                    ("syntax.keyword", theme.syntax.keyword),
+                    ("syntax.type_name", theme.syntax.type_name),
+                    ("syntax.function", theme.syntax.function),
+                    ("syntax.string", theme.syntax.string),
+                    ("syntax.number", theme.syntax.number),
+                    ("syntax.comment", theme.syntax.comment),
+                    ("syntax.operator", theme.syntax.operator),
+                    ("syntax.punctuation", theme.syntax.punctuation),
+                    ("syntax.constant", theme.syntax.constant),
+                    ("syntax.attribute", theme.syntax.attribute),
+                    ("syntax.error", theme.syntax.error),
+                    ("syntax.heading1", theme.syntax.heading1),
+                    ("syntax.heading2", theme.syntax.heading2),
+                    ("syntax.heading3", theme.syntax.heading3),
+                    ("syntax.heading4", theme.syntax.heading4),
+                    ("syntax.heading5", theme.syntax.heading5),
+                    ("syntax.heading6", theme.syntax.heading6),
+                    ("syntax.inline_code", theme.syntax.inline_code),
+                    ("syntax.list_marker", theme.syntax.list_marker),
+                ];
+                for (name, opt_col) in syn_tokens {
+                    if let Some(col) = opt_col {
+                        let sc = color_to_rgb(col, use_256);
+                        check(&format!("{} vs background", name), sc, bg, 2.5);
+                        check(&format!("{} vs current_line", name), sc, cl, 2.5);
+                    }
+                }
+            }
+        }
     }
 }

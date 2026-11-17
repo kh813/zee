@@ -574,11 +574,21 @@ impl Sidebar {
                     let is_selected = item_idx == self.selected_file_idx;
                     let is_current_file = active_buffer_path.is_some_and(|p| p == item.path);
 
+                    let is_light_bg = matches!(
+                        theme.ui.status_bar_bg,
+                        theme::Color::Rgb(r, g, b) if (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) > 128_000
+                    );
+                    let dir_fg = if is_light_bg {
+                        Self::to_crossterm_color(theme::Color::Rgb(11, 92, 115), is_td)
+                    } else {
+                        Color::Cyan
+                    };
+
                     let item_bg = if is_selected { sel_bg } else { bg };
                     let item_fg = if is_current_file {
                         accent
                     } else if item.is_dir {
-                        Color::Cyan
+                        dir_fg
                     } else {
                         fg
                     };

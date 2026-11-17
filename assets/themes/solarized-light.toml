@@ -5,6 +5,7 @@ name = "Solarized Light"
 background = "#fdf6e3"
 foreground = "#586e75"
 cursor = "#073642"
+vi_normal_cursor = "#00478f"
 selection = "#eee8d5"
 line_number = "#586e75"
 

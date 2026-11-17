@@ -134,6 +134,35 @@ impl Color {
             }
         }
     }
+
+    pub fn ansi256_to_rgb(idx: u8) -> (u8, u8, u8) {
+        if idx < 16 {
+            let table = [
+                (0, 0, 0), (170, 0, 0), (0, 170, 0), (170, 85, 0),
+                (0, 0, 170), (170, 0, 170), (0, 170, 170), (170, 170, 170),
+                (85, 85, 85), (255, 85, 85), (85, 255, 85), (255, 255, 85),
+                (85, 85, 255), (255, 85, 255), (85, 255, 255), (255, 255, 255),
+            ];
+            return table[idx as usize];
+        }
+        if idx >= 232 {
+            let v = (idx - 232) * 10 + 8;
+            return (v, v, v);
+        }
+        let idx = idx - 16;
+        let r = (idx / 36) % 6;
+        let g = (idx / 6) % 6;
+        let b = idx % 6;
+        let conv = |v: u8| if v == 0 { 0 } else { v * 40 + 55 };
+        (conv(r), conv(g), conv(b))
+    }
+
+    pub fn to_rgb_tuple(&self) -> (u8, u8, u8) {
+        match *self {
+            Color::Rgb(r, g, b) => (r, g, b),
+            Color::Ansi(i) => Self::ansi256_to_rgb(i),
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for Color {
@@ -276,6 +305,7 @@ impl Theme {
                 background: Color::Rgb(0, 0, 0), // Special: will be Reset in TUI
                 foreground: Color::Rgb(255, 255, 255), // Special: will be Reset in TUI
                 cursor: Color::Ansi(252),
+                vi_normal_cursor: Some(Color::Ansi(117)),
                 selection: Color::Ansi(238),
                 line_number: Color::Ansi(246),
                 current_line: None,
@@ -338,9 +368,40 @@ pub struct EditorColors {
     pub background: Color,
     pub foreground: Color,
     pub cursor: Color,
+    #[serde(default)]
+    pub vi_normal_cursor: Option<Color>,
     pub selection: Color,
     pub line_number: Color,
     pub current_line: Option<Color>,
+}
+
+impl EditorColors {
+    /// Returns the cursor color to use in Vi Normal/Visual (Command) mode,
+    /// ensuring it is visibly distinct from the Insert mode cursor (`self.cursor`)
+    /// while maintaining high WCAG contrast against `self.background`.
+    pub fn vi_command_cursor(&self) -> Color {
+        if let Some(c) = self.vi_normal_cursor {
+            return c;
+        }
+        let (br, bg, bb) = self.background.to_rgb_tuple();
+        let is_light_bg = (br as u32 * 299 + bg as u32 * 587 + bb as u32 * 114) > 140_000;
+        let (cr, cg, cb) = self.cursor.to_rgb_tuple();
+        if is_light_bg {
+            let candidate = Color::Rgb(0, 71, 143);
+            if (cr as i32 - 0).abs() + (cg as i32 - 71).abs() + (cb as i32 - 143).abs() < 60 {
+                Color::Rgb(30, 41, 59)
+            } else {
+                candidate
+            }
+        } else {
+            let candidate = Color::Rgb(125, 207, 255);
+            if (cr as i32 - 125).abs() + (cg as i32 - 207).abs() + (cb as i32 - 255).abs() < 60 {
+                Color::Rgb(245, 224, 220)
+            } else {
+                candidate
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -411,6 +472,7 @@ impl Default for Theme {
                 background: Color::Rgb(26, 27, 38),
                 foreground: Color::Rgb(192, 202, 245),
                 cursor: Color::Rgb(192, 202, 245),
+                vi_normal_cursor: Some(Color::Rgb(125, 207, 255)),
                 selection: Color::Rgb(40, 52, 87),
                 line_number: Color::Rgb(120, 124, 153),
                 current_line: Some(Color::Rgb(30, 32, 48)),
@@ -594,6 +656,7 @@ mod tests {
                 let cl = color_to_rgb(theme.editor.current_line.unwrap_or(theme.editor.background), use_256);
                 let fg = color_to_rgb(theme.editor.foreground, use_256);
                 let cur = color_to_rgb(theme.editor.cursor, use_256);
+                let vi_cur = color_to_rgb(theme.editor.vi_command_cursor(), use_256);
                 let sel = color_to_rgb(theme.editor.selection, use_256);
                 let ln = color_to_rgb(theme.editor.line_number, use_256);
 
@@ -606,15 +669,22 @@ mod tests {
                     );
                 };
 
-                // Editor core colors & Vi block cursor
+                // Editor core colors & Vi Insert / Command mode cursors
                 check("editor.foreground vs background", fg, bg, 3.5);
                 check("editor.foreground vs current_line", fg, cl, 3.5);
                 check("editor.foreground vs selection", fg, sel, 3.0);
                 check("editor.line_number vs background", ln, bg, 2.5);
                 check("editor.line_number vs current_line", ln, cl, 2.5);
-                check("editor.cursor vs background (Vi block cursor)", cur, bg, 5.0);
-                check("editor.cursor vs current_line (Vi block cursor)", cur, cl, 5.0);
-                check("editor.background (cursor inverted text) vs cursor", bg, cur, 5.0);
+                check("editor.cursor vs background (Insert cursor)", cur, bg, 5.0);
+                check("editor.cursor vs current_line (Insert cursor)", cur, cl, 5.0);
+                check("editor.vi_command_cursor vs background (Vi block cursor)", vi_cur, bg, 5.0);
+                check("editor.vi_command_cursor vs current_line (Vi block cursor)", vi_cur, cl, 5.0);
+                check("editor.background (cursor inverted text) vs vi_command_cursor", bg, vi_cur, 5.0);
+                assert_ne!(
+                    cur, vi_cur,
+                    "Built-in theme '{}' (256-col: {}) must have distinct cursor colors for Vi Command mode ({:?}) vs Insert mode ({:?})",
+                    theme.meta.name, use_256, vi_cur, cur
+                );
 
                 // UI colors
                 check("ui.menu_bar_fg vs menu_bar_bg", color_to_rgb(theme.ui.menu_bar_fg, use_256), color_to_rgb(theme.ui.menu_bar_bg, use_256), 3.5);

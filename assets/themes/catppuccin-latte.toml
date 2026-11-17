@@ -5,6 +5,7 @@ name = "Catppuccin Latte"
 background = "#eff1f5"
 foreground = "#4c4f69"
 cursor = "#313244"
+vi_normal_cursor = "#00478f"
 selection = "#acb0be"
 line_number = "#6c6f85"
 

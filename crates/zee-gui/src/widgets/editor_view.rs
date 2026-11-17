@@ -4737,7 +4737,11 @@ impl EditorView {
         }
 
         let is_block_cursor = workspace.config.vi_mode && editor.vi_mode != zee_core::ViMode::Insert;
-        let cursor_color = led_color_to_gpui(theme.editor.cursor);
+        let cursor_color = if is_block_cursor {
+            led_color_to_gpui(theme.editor.vi_command_cursor())
+        } else {
+            led_color_to_gpui(theme.editor.cursor)
+        };
 
         if is_block_cursor {
             let cursor_w = measured_char_w.unwrap_or(self.ascii_width_px);
@@ -4854,7 +4858,11 @@ impl EditorView {
         }
 
         let is_block_cursor = workspace.config.vi_mode && editor.vi_mode != zee_core::ViMode::Insert;
-        let cursor_color = led_color_to_gpui(theme.editor.cursor);
+        let cursor_color = if is_block_cursor {
+            led_color_to_gpui(theme.editor.vi_command_cursor())
+        } else {
+            led_color_to_gpui(theme.editor.cursor)
+        };
 
         if is_block_cursor {
             let line = editor.rope.line(line_idx);

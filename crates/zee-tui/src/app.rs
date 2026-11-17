@@ -103,6 +103,7 @@ pub struct App {
     pub pending_op_count: usize,
     pub adaptive_ime_active: bool,
     pub needs_clear: bool,
+    pub cursor_screen_pos: Option<(u16, u16)>,
     pub available_update: Option<String>,
     pub update_rx: std::sync::mpsc::Receiver<String>,
 }
@@ -281,6 +282,7 @@ impl App {
             pending_op_count: 0,
             adaptive_ime_active: false,
             needs_clear: false,
+            cursor_screen_pos: None,
             available_update: cached_update,
             update_rx,
         };
@@ -1071,6 +1073,7 @@ impl App {
             let mut stdout = io::stdout();
             let _ = execute!(stdout, event::PopKeyboardEnhancementFlags);
             let _ = terminal::disable_raw_mode();
+            let _ = write!(stdout, "\x1b]112\x07");
             let _ = execute!(
                 stdout,
                 LeaveAlternateScreen,
@@ -1087,6 +1090,7 @@ impl App {
     fn cleanup_terminal(&self, stdout: &mut Stdout) -> Result<()> {
         let _ = execute!(stdout, event::PopKeyboardEnhancementFlags);
         terminal::disable_raw_mode()?;
+        let _ = write!(stdout, "\x1b]112\x07");
         execute!(
             stdout,
             LeaveAlternateScreen,
@@ -5553,51 +5557,30 @@ impl App {
                     execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                 }
             } else if self.focus == Focus::Editor && self.current_dialog.is_none() {
-                let (ex, ey, ew, eh) = self.layout.editor_bounds();
                 let buffer = &self.buffers[self.active_buffer];
-                let (line, col) = buffer.char_to_line_col(buffer.cursor);
-                
-                if line >= buffer.scroll_row {
-                    let mut visual_x = 0;
-                    let line_slice = buffer.rope.line(line);
-                    let tab_size = self.config.tab_size;
-                    for (i, c) in line_slice.chars().enumerate() {
-                        if i >= col { break; }
-                        if c == '\t' {
-                            visual_x += tab_size - (visual_x % tab_size);
+                let is_insert_mode = if self.config.vi_mode {
+                    buffer.vi_mode == zee_core::ViMode::Insert
+                } else {
+                    true
+                };
+                if let Some((rx, ry)) = self.cursor_screen_pos {
+                    if is_insert_mode {
+                        let (cr, cg, cb) = self.theme.editor.cursor.to_rgb_tuple();
+                        write!(writer, "\x1b]12;#{:02x}{:02x}{:02x}\x07", cr, cg, cb)?;
+                        let style = if self.is_ime_active() {
+                            crossterm::cursor::SetCursorStyle::BlinkingUnderScore
                         } else {
-                            visual_x += c.width().unwrap_or(0);
-                        }
-                    }
-
-                    if visual_x >= buffer.scroll_col && visual_x < buffer.scroll_col + ew as usize {
-                        let rx = ex + (visual_x - buffer.scroll_col) as u16;
-                        let ry = ey + (line - buffer.scroll_row) as u16;
-                        if ry < ey + eh {
-                            let is_insert_mode = if self.config.vi_mode {
-                                buffer.vi_mode == zee_core::ViMode::Insert
-                            } else {
-                                true
-                            };
-                            if is_insert_mode {
-                                let style = if self.is_ime_active() {
-                                    crossterm::cursor::SetCursorStyle::BlinkingUnderScore
-                                } else {
-                                    crossterm::cursor::SetCursorStyle::BlinkingBar
-                                };
-                                execute!(writer, style)?;
-                                execute!(writer, cursor::Show, cursor::MoveTo(rx, ry))?;
-                            } else {
-                                // In Vi Normal/Visual mode, a high-contrast software block cursor is already
-                                // rendered into the cell buffer using theme.editor.cursor; hide the terminal's
-                                // hardware block cursor so the terminal profile's cursor color does not override it.
-                                execute!(writer, cursor::Hide, cursor::MoveTo(rx, ry))?;
-                            }
-                        } else {
-                            execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
-                        }
+                            crossterm::cursor::SetCursorStyle::BlinkingBar
+                        };
+                        execute!(writer, style)?;
+                        execute!(writer, cursor::Show, cursor::MoveTo(rx, ry))?;
                     } else {
-                        execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
+                        // In Vi Normal/Visual mode, a high-contrast software block cursor is already
+                        // rendered into the cell buffer using theme.editor.vi_command_cursor(); hide the terminal's
+                        // hardware block cursor so the terminal profile's cursor color does not override it.
+                        let (cr, cg, cb) = self.theme.editor.vi_command_cursor().to_rgb_tuple();
+                        write!(writer, "\x1b]12;#{:02x}{:02x}{:02x}\x07", cr, cg, cb)?;
+                        execute!(writer, cursor::Hide, cursor::MoveTo(rx, ry))?;
                     }
                 } else {
                     execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
@@ -6335,7 +6318,7 @@ impl App {
         let gutter_fg = self.to_ct_color(self.theme.editor.line_number);
         let selection_bg = self.to_ct_color(self.theme.editor.selection);
         let selection_fg = editor_fg;
-        let cursor_bg = self.to_ct_color(self.theme.editor.cursor);
+        let cursor_bg = self.to_ct_color(self.theme.editor.vi_command_cursor());
         let cursor_fg = if editor_bg == Color::Reset {
             Color::AnsiValue(234)
         } else {
@@ -6357,7 +6340,8 @@ impl App {
 
         let focus = self.focus;
         let is_ime_active = self.is_ime_active();
-        let App { ref mut renderer, ref mut buffers, .. } = *self;
+        self.cursor_screen_pos = None;
+        let App { ref mut renderer, ref mut buffers, ref mut cursor_screen_pos, .. } = *self;
         let buffer = &mut buffers[active_buffer_idx];
 
         if word_wrap {
@@ -6477,6 +6461,7 @@ impl App {
 
                         let mut cell_underline = false;
                         if is_cursor_cell {
+                            *cursor_screen_pos = Some((rx, ry));
                             if !is_insert_mode {
                                 bg = cursor_bg;
                                 fg = cursor_fg;
@@ -6530,6 +6515,7 @@ impl App {
                         if (has_newline_at_end || is_eof_without_newline) && visual_x < ew {
                             let eol_char_idx = line_start_char + range.end;
                             if buffer.cursor == eol_char_idx && focus == Focus::Editor {
+                                *cursor_screen_pos = Some((ex + visual_x, ry));
                                 let is_insert_mode = if self.config.vi_mode {
                                     buffer.vi_mode == zee_core::ViMode::Insert
                                 } else {
@@ -6697,6 +6683,7 @@ impl App {
 
                         let mut cell_underline = false;
                         if is_cursor_cell {
+                            *cursor_screen_pos = Some((rx, ry));
                             if !is_insert_mode {
                                 bg = cursor_bg;
                                 fg = cursor_fg;
@@ -6749,15 +6736,18 @@ impl App {
                      let ends_with_newline = line.len_chars() > 0 && (line.char(line.len_chars()-1) == '\n' || line.char(line.len_chars()-1) == '\r');
                      if !ends_with_newline && buffer.cursor == last_char_idx && focus == Focus::Editor
                          && visual_x >= buffer.scroll_col as u16 && visual_x < buffer.scroll_col as u16 + ew {
+                             let rx = ex + (visual_x - buffer.scroll_col as u16);
+                             let ry = ey + dy;
+                             *cursor_screen_pos = Some((rx, ry));
                              let is_insert_mode = if self.config.vi_mode {
                                  buffer.vi_mode == zee_core::ViMode::Insert
                              } else {
                                  true
                              };
                              if !is_insert_mode {
-                                 renderer.set_cell(ex + (visual_x - buffer.scroll_col as u16), ey + dy, Cell { ch: ' ', bg: cursor_bg, fg: cursor_fg, ..Default::default() });
+                                 renderer.set_cell(rx, ry, Cell { ch: ' ', bg: cursor_bg, fg: cursor_fg, ..Default::default() });
                              } else if is_ime_active {
-                                 renderer.set_cell(ex + (visual_x - buffer.scroll_col as u16), ey + dy, Cell { ch: '_', bg: line_bg, fg: ime_cursor_fg, underline: true, ..Default::default() });
+                                 renderer.set_cell(rx, ry, Cell { ch: '_', bg: line_bg, fg: ime_cursor_fg, underline: true, ..Default::default() });
                              }
                              visual_x += 1;
                          }
@@ -8850,28 +8840,46 @@ mod tests {
 
         for theme in zee_core::theme::Theme::builtins() {
             app.theme = theme.clone();
-            let cursor_color = app.to_ct_color(app.theme.editor.cursor);
+            let insert_cursor_color = app.to_ct_color(app.theme.editor.cursor);
+            let normal_cursor_color = app.to_ct_color(app.theme.editor.vi_command_cursor());
             let editor_bg = app.to_ct_color(app.theme.editor.background);
             let expected_cursor_fg = if editor_bg == crossterm::style::Color::Reset {
                 crossterm::style::Color::AnsiValue(234)
             } else {
                 editor_bg
             };
-            assert_ne!(cursor_color, editor_bg, "Cursor color must differ from editor bg in theme '{}'", theme.meta.name);
+            assert_ne!(normal_cursor_color, editor_bg, "Vi Command cursor color must differ from editor bg in theme '{}'", theme.meta.name);
+            assert_ne!(insert_cursor_color, editor_bg, "Vi Insert cursor color must differ from editor bg in theme '{}'", theme.meta.name);
+            assert_ne!(
+                normal_cursor_color, insert_cursor_color,
+                "Vi Command mode cursor color ({:?}) must differ from Insert mode cursor color ({:?}) in theme '{}'",
+                normal_cursor_color, insert_cursor_color, theme.meta.name
+            );
+
+            let (nr, ng, nb) = app.theme.editor.vi_command_cursor().to_rgb_tuple();
+            let normal_osc12 = format!("\x1b]12;#{:02x}{:02x}{:02x}\x07", nr, ng, nb);
+            let (ir, ig, ib) = app.theme.editor.cursor.to_rgb_tuple();
+            let insert_osc12 = format!("\x1b]12;#{:02x}{:02x}{:02x}\x07", ir, ig, ib);
+            assert_ne!(normal_osc12, insert_osc12);
 
             let (ex, ey, _, _) = app.layout.editor_bounds();
 
             // 1. Normal Mode on regular char, EOL '\n', empty line '\n', and EOF:
-            // cursor should be block inverted in cell buffer AND hardware cursor hidden in output stream
+            // cursor should be block inverted in cell buffer using vi_command_cursor() AND hardware cursor hidden in output stream
             app.buffers[app.active_buffer].vi_mode = zee_core::ViMode::Normal;
             for &(pos, rx, ry) in &[(0usize, ex, ey), (11usize, ex + 11, ey), (12usize, ex, ey + 1), (17usize, ex + 4, ey + 2)] {
                 app.buffers[app.active_buffer].cursor = pos;
                 let mut out = Vec::new();
                 app.render_to_writer(&mut out).expect("render_to_writer failed");
                 let normal_cell = app.renderer.get_cell(rx, ry);
-                assert_eq!(normal_cell.bg, cursor_color, "Normal mode at pos {} in theme '{}' should invert background as block", pos, theme.meta.name);
+                assert_eq!(normal_cell.bg, normal_cursor_color, "Normal mode at pos {} in theme '{}' should invert background as block with vi_command_cursor", pos, theme.meta.name);
                 assert_eq!(normal_cell.fg, expected_cursor_fg, "Normal mode at pos {} in theme '{}' should invert foreground", pos, theme.meta.name);
                 let out_str = String::from_utf8_lossy(&out);
+                assert!(
+                    out_str.contains(&normal_osc12),
+                    "Normal mode in theme '{}' should emit OSC 12 for vi_command_cursor",
+                    theme.meta.name
+                );
                 assert!(
                     out_str.ends_with("\x1b[?25l") || out_str.contains("\x1b[?25l\x1b["),
                     "Normal mode in theme '{}' should hide hardware cursor so terminal profile cursor color does not override software block cursor",
@@ -8879,15 +8887,16 @@ mod tests {
                 );
             }
 
-            // 2. Insert Mode: cursor cell should NOT be block inverted, and hardware cursor should be shown
+            // 2. Insert Mode: cursor cell should NOT be block inverted, and hardware cursor should be shown with Insert mode OSC 12 color
             app.buffers[app.active_buffer].cursor = 0;
             app.buffers[app.active_buffer].vi_mode = zee_core::ViMode::Insert;
             let mut out = Vec::new();
             app.render_to_writer(&mut out).expect("render_to_writer failed");
             let insert_cell = app.renderer.get_cell(ex, ey);
-            assert_ne!(insert_cell.bg, cursor_color, "Insert mode in theme '{}' should keep regular line background", theme.meta.name);
+            assert_ne!(insert_cell.bg, normal_cursor_color, "Insert mode in theme '{}' should keep regular line background", theme.meta.name);
             assert_ne!(insert_cell.fg, expected_cursor_fg, "Insert mode in theme '{}' should keep regular text foreground", theme.meta.name);
             let out_str = String::from_utf8_lossy(&out);
+            assert!(out_str.contains(&insert_osc12), "Insert mode in theme '{}' should emit OSC 12 for insert cursor color", theme.meta.name);
             assert!(out_str.contains("\x1b[?25h"), "Insert mode in theme '{}' should show hardware bar/underscore cursor", theme.meta.name);
         }
     }

@@ -5,6 +5,7 @@ name = "Catppuccin Mocha"
 background = "#1e1e2e"
 foreground = "#cdd6f4"
 cursor = "#f5e0dc"
+vi_normal_cursor = "#89dceb"
 selection = "#585b70"
 line_number = "#9399b2"
 

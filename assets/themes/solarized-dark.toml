@@ -5,6 +5,7 @@ name = "Solarized Dark"
 background = "#002b36"
 foreground = "#839496"
 cursor = "#93a1a1"
+vi_normal_cursor = "#7dd3fc"
 selection = "#073642"
 line_number = "#839496"
 

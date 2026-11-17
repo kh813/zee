@@ -2951,6 +2951,7 @@ pub fn normalize_vi_char(c: char) -> char {
         // Japanese IME Romaji/Hiragana key outputs
         'い' | 'イ' => 'i',
         'あ' | 'ア' => 'a',
+        'え' | 'エ' => 'e',
         'お' | 'オ' => 'o',
         'う' | 'ウ' => 'u',
         // Japanese Nakaguro (slash key on Japanese layout)

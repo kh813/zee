@@ -50,7 +50,17 @@ impl Renderer {
         self.width = width;
         self.height = height;
         let size = (width as usize) * (height as usize);
-        self.prev_buffer = vec![Cell::default(); size];
+        self.prev_buffer = vec![
+            Cell {
+                ch: '\0',
+                fg: Color::Reset,
+                bg: Color::Reset,
+                bold: false,
+                underline: false,
+                width: 1,
+            };
+            size
+        ];
         self.curr_buffer = vec![Cell::default(); size];
     }
 
@@ -166,6 +176,13 @@ impl Renderer {
 
                 let step = (curr.width as u16).max(1);
 
+                // Avoid printing to the bottom-right corner cell (width - 1, height - 1)
+                // which triggers auto-margin line wrap / vertical scroll in many terminals.
+                if y + 1 == self.height && x + step >= self.width && self.width > 1 && self.height > 1 {
+                    x += step;
+                    continue;
+                }
+
                 if curr != prev {
                     if term_cursor != Some((x, y)) {
                         writer.queue(cursor::MoveTo(x, y))?;
@@ -193,7 +210,14 @@ impl Renderer {
                     }
 
                     writer.queue(style::Print(curr.ch))?;
-                    term_cursor = Some((x + step, y));
+                    // Non-ASCII characters (CJK, box-drawing, triangles ▼/►) can have
+                    // East Asian Ambiguous width discrepancies across terminal fonts/locales;
+                    // force an explicit MoveTo on the next cell to prevent horizontal drift or wrap.
+                    if curr.ch.is_ascii() {
+                        term_cursor = Some((x + step, y));
+                    } else {
+                        term_cursor = None;
+                    }
                 }
                 x += step;
             }

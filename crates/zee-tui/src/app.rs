@@ -857,9 +857,20 @@ impl App {
         let (_sx, _sy, _sw, sh) = self.layout.sidebar_bounds();
         let viewport_h = sh.saturating_sub(1) as usize;
 
-        match key.code {
-            KeyCode::Esc => {
+        let norm_code = match key.code {
+            KeyCode::Char(c) => KeyCode::Char(zee_core::normalize_vi_char(c)),
+            other => other,
+        };
+
+        match norm_code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Char('i') => {
                 self.focus = Focus::Editor;
+            }
+            KeyCode::Char(':') if self.config.vi_mode => {
+                self.focus = Focus::Editor;
+                self.is_vi_cmd_mode = true;
+                self.vi_cmd = ":".to_string();
+                self.vi_message = None;
             }
             KeyCode::Tab => {
                 self.sidebar.active_tab = match self.sidebar.active_tab {
@@ -873,16 +884,16 @@ impl App {
             KeyCode::Char('2') => {
                 self.sidebar.active_tab = crate::widgets::sidebar::SidebarTab::Outline;
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 self.sidebar.select_prev(viewport_h);
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 self.sidebar.select_next(viewport_h);
             }
             KeyCode::Left => {
                 self.sidebar.handle_left();
             }
-            KeyCode::Right => {
+            KeyCode::Right | KeyCode::Char('l') => {
                 self.sidebar.handle_right();
             }
             KeyCode::Enter | KeyCode::Char(' ') => {
@@ -988,6 +999,18 @@ impl App {
                 self.available_update = Some(ver);
             }
 
+            if let Ok((tw, th)) = terminal::size() {
+                if tw > 0 && th > 0 && (tw != self.width || th != self.height) {
+                    self.width = tw;
+                    self.height = th;
+                    self.renderer.resize(tw, th);
+                    self.layout.width = tw;
+                    self.layout.height = th;
+                    self.recompute_layout();
+                    self.needs_clear = true;
+                }
+            }
+
             if self.width < 40 || self.height < 24 {
                 self.render_too_small(&mut stdout)?;
             } else {
@@ -1009,6 +1032,7 @@ impl App {
                         self.layout.width = w;
                         self.layout.height = h;
                         self.recompute_layout();
+                        self.needs_clear = true;
                     }
                     _ => {}
                 }
@@ -1082,6 +1106,12 @@ impl App {
             return;
         }
 
+        let normalized_char = match key.code {
+            KeyCode::Char(c) => Some(zee_core::normalize_vi_char(c)),
+            _ => None,
+        };
+        let normalized_lower_char = normalized_char.map(|c| c.to_ascii_lowercase());
+
         // Custom keybinding overrides from config.toml [keybindings]
         if self.focus != Focus::Dialog {
             let mut key_str = String::new();
@@ -1095,7 +1125,7 @@ impl App {
                 key_str.push_str("shift-");
             }
             let key_code_str = match key.code {
-                KeyCode::Char(c) => Some(c.to_lowercase().to_string()),
+                KeyCode::Char(_) => normalized_lower_char.map(|c| c.to_string()),
                 KeyCode::F(n) => Some(format!("f{}", n)),
                 KeyCode::Esc => Some("escape".to_string()),
                 KeyCode::Enter => Some("enter".to_string()),
@@ -1131,36 +1161,65 @@ impl App {
             return;
         }
 
+        let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let has_alt = key.modifiers.contains(KeyModifiers::ALT);
+        let has_shift = key.modifiers.contains(KeyModifiers::SHIFT);
+
         // Global shortcuts (Ctrl+...) only if not in a dialog
-        if self.focus != Focus::Dialog && key.modifiers == KeyModifiers::CONTROL {
+        if self.focus != Focus::Dialog && has_ctrl && !has_alt && !has_shift {
             // When inside Find panel, intercept Ctrl+P and Ctrl+N for search navigation
-            if self.focus == Focus::Panel && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P') | KeyCode::Char('n') | KeyCode::Char('N')) {
+            if self.focus == Focus::Panel && matches!(normalized_lower_char, Some('p') | Some('n')) {
                 self.handle_panel_key(key);
                 return;
             }
-            match key.code {
-                KeyCode::Char('q') => { self.perform_action(Action::Exit); return; }
-                KeyCode::Char('t') | KeyCode::Char('n') => { self.perform_action(Action::New); return; }
-                KeyCode::Char('o') => { self.perform_action(Action::Open); return; }
-                KeyCode::Char('p') => { self.perform_action(Action::FuzzyFinder); return; }
-                KeyCode::Char('s') => { self.perform_action(Action::Save); return; }
-                KeyCode::Char('w') => { self.perform_action(Action::Close); return; }
-                KeyCode::Char('z') => { self.perform_action(Action::Undo); return; }
-                KeyCode::Char('y') => {
-                    if !self.config.vi_mode {
-                        self.perform_action(Action::Redo);
+            if let Some(ch) = normalized_lower_char {
+                match ch {
+                    'q' => { self.perform_action(Action::Exit); return; }
+                    't' | 'n' => { self.perform_action(Action::New); return; }
+                    'o' => { self.perform_action(Action::Open); return; }
+                    'p' => { self.perform_action(Action::FuzzyFinder); return; }
+                    's' => { self.perform_action(Action::Save); return; }
+                    'w' => { self.perform_action(Action::Close); return; }
+                    'z' => { self.perform_action(Action::Undo); return; }
+                    'y' => {
+                        if !self.config.vi_mode {
+                            self.perform_action(Action::Redo);
+                            return;
+                        }
+                    }
+                    'f' => { self.perform_action(Action::Find); return; }
+                    'r' => { self.perform_action(Action::Replace); return; }
+                    'b' => { self.perform_action(Action::ToggleSidebar); return; }
+                    'h' => { self.perform_action(Action::About); return; }
+                    'e' => { self.perform_action(Action::ToggleViMode); return; }
+                    'l' => { self.needs_clear = true; return; }
+                    ',' => { self.perform_action(Action::OpenSettings); return; }
+                    '/' | '_' => { self.perform_action(Action::ToggleComment); return; }
+                    ']' => {
+                        self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
+                        self.update_active_outline();
+                        self.refresh_menus();
+                        self.recompute_layout();
+                        if self.layout.panel_height > 0 {
+                            self.run_search();
+                        }
                         return;
                     }
+                    '[' => {
+                        self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
+                        self.update_active_outline();
+                        self.refresh_menus();
+                        self.recompute_layout();
+                        if self.layout.panel_height > 0 {
+                            self.run_search();
+                        }
+                        return;
+                    }
+                    _ => {}
                 }
-                KeyCode::Char('f') => { self.perform_action(Action::Find); return; }
-                KeyCode::Char('r') => { self.perform_action(Action::Replace); return; }
-                KeyCode::Char('b') => { self.perform_action(Action::ToggleSidebar); return; }
-                KeyCode::Char('h') => { self.perform_action(Action::About); return; }
-                KeyCode::Char('e') => { self.perform_action(Action::ToggleViMode); return; }
-                KeyCode::Char('l') => { self.needs_clear = true; return; }
-                KeyCode::Char(',') => { self.perform_action(Action::OpenSettings); return; }
-                KeyCode::Char('/') | KeyCode::Char('_') => { self.perform_action(Action::ToggleComment); return; }
-                KeyCode::Tab | KeyCode::PageDown | KeyCode::Char(']') => {
+            }
+            match key.code {
+                KeyCode::Tab | KeyCode::PageDown => {
                     self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
                     self.update_active_outline();
                     self.refresh_menus();
@@ -1170,7 +1229,7 @@ impl App {
                     }
                     return;
                 }
-                KeyCode::PageUp | KeyCode::Char('[') => {
+                KeyCode::PageUp => {
                     self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
                     self.update_active_outline();
                     self.refresh_menus();
@@ -1183,44 +1242,65 @@ impl App {
                 _ => {}
             }
         }
-        if self.focus != Focus::Dialog && key.modifiers == (KeyModifiers::CONTROL | KeyModifiers::SHIFT) {
-            match key.code {
-                KeyCode::Char('O') | KeyCode::Char('o') => { self.perform_action(Action::OpenFolder); return; }
-                KeyCode::Char('F') | KeyCode::Char('f') => { self.perform_action(Action::ProjectSearch); return; }
-                KeyCode::Char('S') | KeyCode::Char('s') => { self.perform_action(Action::SaveAs); return; }
-                KeyCode::Char('R') | KeyCode::Char('r') => { self.perform_action(Action::ReloadFile); return; }
-                KeyCode::Tab | KeyCode::BackTab | KeyCode::Char('[') | KeyCode::Char('{') => {
-                    self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
-                    self.update_active_outline();
-                    self.refresh_menus();
-                    self.recompute_layout();
-                    if self.layout.panel_height > 0 {
-                        self.run_search();
+        if self.focus != Focus::Dialog && has_ctrl && has_shift && !has_alt {
+            if let Some(ch) = normalized_lower_char {
+                match ch {
+                    'q' => { self.perform_action(Action::Exit); return; }
+                    'o' => { self.perform_action(Action::OpenFolder); return; }
+                    'f' => { self.perform_action(Action::ProjectSearch); return; }
+                    's' => { self.perform_action(Action::SaveAs); return; }
+                    'r' => { self.perform_action(Action::ReloadFile); return; }
+                    '[' | '{' => {
+                        self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
+                        self.update_active_outline();
+                        self.refresh_menus();
+                        self.recompute_layout();
+                        if self.layout.panel_height > 0 {
+                            self.run_search();
+                        }
+                        return;
                     }
-                    return;
-                }
-                KeyCode::Char(']') | KeyCode::Char('}') => {
-                    self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
-                    self.update_active_outline();
-                    self.refresh_menus();
-                    self.recompute_layout();
-                    if self.layout.panel_height > 0 {
-                        self.run_search();
+                    ']' | '}' => {
+                        self.active_buffer = (self.active_buffer + 1) % self.buffers.len();
+                        self.update_active_outline();
+                        self.refresh_menus();
+                        self.recompute_layout();
+                        if self.layout.panel_height > 0 {
+                            self.run_search();
+                        }
+                        return;
                     }
-                    return;
+                    _ => {}
                 }
-                _ => {}
+            }
+            if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+                self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
+                self.update_active_outline();
+                self.refresh_menus();
+                self.recompute_layout();
+                if self.layout.panel_height > 0 {
+                    self.run_search();
+                }
+                return;
             }
         }
 
         // Handle Alt shortcuts for menus, sidebar, and tabs (only if not in a dialog)
-        if self.focus != Focus::Dialog && key.modifiers == KeyModifiers::ALT {
+        if self.focus != Focus::Dialog && has_alt && !has_ctrl {
+            if let Some(ch) = normalized_lower_char {
+                match ch {
+                    'f' => { self.open_menu(0); return; }
+                    'e' => { self.open_menu(1); return; }
+                    'v' => { self.open_menu(2); return; }
+                    'p' => { self.open_menu(3); return; }
+                    'h' => { self.open_menu(4); return; }
+                    '1' => { self.perform_action(Action::ToggleFiles); return; }
+                    '2' => { self.perform_action(Action::ToggleOutline); return; }
+                    'i' => { self.perform_action(Action::ToggleViMode); return; }
+                    _ => {}
+                }
+            }
             match key.code {
-                KeyCode::Char('f') => { self.open_menu(0); return; }
-                KeyCode::Char('e') => { self.open_menu(1); return; }
-                KeyCode::Char('v') => { self.open_menu(2); return; }
-                KeyCode::Char('p') => { self.open_menu(3); return; }
-                KeyCode::Char('h') => { self.open_menu(4); return; }
                 KeyCode::Left => {
                     self.active_buffer = if self.active_buffer == 0 { self.buffers.len() - 1 } else { self.active_buffer - 1 };
                     self.update_active_outline();
@@ -1239,18 +1319,6 @@ impl App {
                     if self.layout.panel_height > 0 {
                         self.run_search();
                     }
-                    return;
-                }
-                KeyCode::Char('1') => {
-                    self.perform_action(Action::ToggleFiles);
-                    return;
-                }
-                KeyCode::Char('2') => {
-                    self.perform_action(Action::ToggleOutline);
-                    return;
-                }
-                KeyCode::Char('i') | KeyCode::Char('I') => {
-                    self.perform_action(Action::ToggleViMode);
                     return;
                 }
                 _ => {}
@@ -4846,6 +4914,7 @@ impl App {
                 }
                 self.refresh_menus();
                 self.recompute_layout();
+                self.needs_clear = true;
             }
             Action::ToggleOutline => {
                 if !self.sidebar.visible {
@@ -4875,9 +4944,11 @@ impl App {
                     if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
                         buffer.search_status = None;
                     }
-                    if self.focus == Focus::Panel {
-                        self.focus = Focus::Editor;
-                    }
+                }
+                if self.focus != Focus::Dialog {
+                    self.active_menu = None;
+                    self.submenu_stack.clear();
+                    self.focus = Focus::Editor;
                 }
 
                 self.config.vi_mode = !self.config.vi_mode;
@@ -4892,6 +4963,7 @@ impl App {
                 self.vi_cmd.clear();
                 self.vi_message = None;
                 self.recompute_layout();
+                self.needs_clear = true;
             }
 
             Action::ToggleTrimTrailingWhitespace => {
@@ -5406,7 +5478,12 @@ impl App {
 
     pub fn render_to_writer<W: std::io::Write>(&mut self, writer: &mut W) -> Result<()> {
         if self.needs_clear {
-            let _ = execute!(writer, crossterm::terminal::Clear(crossterm::terminal::ClearType::All));
+            let _ = execute!(
+                writer,
+                crossterm::style::SetAttribute(crossterm::style::Attribute::Reset),
+                crossterm::terminal::Clear(crossterm::terminal::ClearType::All),
+                crossterm::cursor::MoveTo(0, 0)
+            );
             self.renderer.invalidate();
             self.needs_clear = false;
         }
@@ -5460,10 +5537,10 @@ impl App {
                         execute!(writer, crossterm::cursor::SetCursorStyle::BlinkingBlock)?;
                         execute!(writer, cursor::Show, cursor::MoveTo(cur_x, cy))?;
                     } else {
-                        execute!(writer, cursor::Hide)?;
+                        execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                     }
                 } else {
-                    execute!(writer, cursor::Hide)?;
+                    execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                 }
             } else if self.focus == Focus::Editor && self.current_dialog.is_none() {
                 let (ex, ey, ew, eh) = self.layout.editor_bounds();
@@ -5504,13 +5581,13 @@ impl App {
                             execute!(writer, style)?;
                             execute!(writer, cursor::Show, cursor::MoveTo(rx, ry))?;
                         } else {
-                            execute!(writer, cursor::Hide)?;
+                            execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                         }
                     } else {
-                        execute!(writer, cursor::Hide)?;
+                        execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                     }
                 } else {
-                    execute!(writer, cursor::Hide)?;
+                    execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                 }
             } else if self.focus == Focus::Panel && self.current_dialog.is_none() {
                 // Focus hardware cursor on find panel input
@@ -5539,7 +5616,7 @@ impl App {
                 if cursor_x > 0 {
                     execute!(writer, cursor::Show, cursor::MoveTo(cursor_x, cursor_y))?;
                 } else {
-                    execute!(writer, cursor::Hide)?;
+                    execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                 }
             } else if self.focus == Focus::Dialog || self.current_dialog.is_some() {
                 if let Some(ref dialog) = self.current_dialog {
@@ -5547,14 +5624,16 @@ impl App {
                         let (x, y, _dw, _dh) = self.layout.dialog_bounds(dialog.dimensions());
                         execute!(writer, cursor::Show, cursor::MoveTo(x + dx, y + dy))?;
                     } else {
-                        execute!(writer, cursor::Hide)?;
+                        execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                     }
                 } else {
-                    execute!(writer, cursor::Hide)?;
+                    execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
                 }
             } else {
-                execute!(writer, cursor::Hide)?;
+                execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
             }
+        } else {
+            execute!(writer, cursor::Hide, cursor::MoveTo(0, 0))?;
         }
         writer.flush()?;
         Ok(())
@@ -9151,6 +9230,34 @@ mod tests {
         app.perform_action(Action::ConvertSpacesToTabs);
         let text2 = app.buffers[app.active_buffer].rope.to_string();
         assert_eq!(text2, "\t\thello\n\tworld");
+    }
+
+    #[test]
+    fn test_toggle_vi_mode_from_sidebar_focus_and_ime_ctrl_shortcuts() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.focus = Focus::Sidebar;
+        app.needs_clear = false;
+
+        // Pressing Ctrl+E while focus is on Sidebar should toggle Vi mode, move focus to Editor, and set needs_clear
+        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL));
+        assert!(app.config.vi_mode);
+        assert_eq!(app.focus, Focus::Editor);
+        assert!(app.needs_clear);
+
+        // Render and verify needs_clear is consumed and menu bar at y=0 is intact
+        let mut buf = Vec::new();
+        app.render_to_writer(&mut buf).expect("render failed");
+        assert!(!app.needs_clear);
+
+        // Full-width / Kana Ctrl+E ('え' / 'Ｅ' -> 'e') should also toggle Vi mode back off
+        app.handle_key(KeyEvent::new(KeyCode::Char('え'), KeyModifiers::CONTROL));
+        assert!(!app.config.vi_mode);
+        assert!(app.needs_clear);
+
+        // Full-width Ctrl+Q ('ｑ' -> 'q') should exit cleanly
+        assert!(app.running);
+        app.handle_key(KeyEvent::new(KeyCode::Char('ｑ'), KeyModifiers::CONTROL));
+        assert!(!app.running);
     }
 }
 

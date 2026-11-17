@@ -195,6 +195,14 @@ impl LineEnding {
             LineEnding::Cr => "CR",
         }
     }
+
+    pub fn menu_label(&self) -> &'static str {
+        match self {
+            LineEnding::Lf => "LF (Mac, Linux/UNIX)",
+            LineEnding::Crlf => "CR/LF (Windows)",
+            LineEnding::Cr => "CR",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

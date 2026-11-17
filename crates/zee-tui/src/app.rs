@@ -477,11 +477,11 @@ impl App {
         }).collect();
 
         let line_ending_items = vec![
-            (LineEnding::Lf, "LF"),
-            (LineEnding::Crlf, "CRLF"),
-            (LineEnding::Cr, "CR"),
-        ].into_iter().map(|(le, label)| {
-            MenuItem::Toggle { label: label.to_string(), action: Action::SetLineEnding(le), checked: cur_le == le, is_radio: true }
+            LineEnding::Lf,
+            LineEnding::Crlf,
+            LineEnding::Cr,
+        ].into_iter().map(|le| {
+            MenuItem::Toggle { label: le.menu_label().to_string(), action: Action::SetLineEnding(le), checked: cur_le == le, is_radio: true }
         }).collect();
 
         let theme_items = themes.iter().map(|t| {

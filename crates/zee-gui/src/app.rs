@@ -1190,9 +1190,9 @@ pub fn build_native_menus(
                 MenuItem::submenu(Menu {
                     name: i18n.get("menu.view.line_ending").into(),
                     items: vec![
-                        MenuItem::action("LF", SetLineEndingLf {}),
-                        MenuItem::action("CRLF", SetLineEndingCrlf {}),
-                        MenuItem::action("CR", SetLineEndingCr {}),
+                        MenuItem::action(zee_core::LineEnding::Lf.menu_label(), SetLineEndingLf {}),
+                        MenuItem::action(zee_core::LineEnding::Crlf.menu_label(), SetLineEndingCrlf {}),
+                        MenuItem::action(zee_core::LineEnding::Cr.menu_label(), SetLineEndingCr {}),
                     ],
                     disabled: false,
                 }),

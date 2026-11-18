@@ -4133,7 +4133,6 @@ impl EditorView {
         line_str
     }
 
-    #[cfg(target_os = "windows")]
     fn slice_visual_line<'a>(line_str: &'a str, range: &std::ops::Range<usize>) -> (usize, usize, &'a str) {
         let char_offsets: Vec<usize> = line_str.char_indices().map(|(b, _)| b).collect();
         let total_chars = char_offsets.len();
@@ -4151,7 +4150,6 @@ impl EditorView {
         (byte_start, byte_end, &line_str[byte_start..byte_end])
     }
 
-    #[cfg(target_os = "windows")]
     fn build_visual_line_runs(
         &self,
         line_idx: usize,
@@ -4534,7 +4532,6 @@ impl EditorView {
             )
     }
 
-    #[cfg(target_os = "windows")]
     fn render_visual_line_content(
         &self,
         line_idx: usize,
@@ -4558,117 +4555,6 @@ impl EditorView {
                 .child(StyledText::new(v_text.to_string()).with_runs(runs))
                 .into_any_element(),
         ]
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    fn render_visual_line_content(
-        &self,
-        line_idx: usize,
-        range: std::ops::Range<usize>,
-        line_str: &str,
-        workspace: &Workspace,
-        editor: &zee_core::buffer::Editor,
-    ) -> Vec<AnyElement> {
-        let theme = &workspace.theme;
-        let line_height = px(workspace.config.line_height);
-
-        let char_offsets: Vec<usize> = line_str.char_indices().map(|(b, _)| b).collect();
-        let total_chars = char_offsets.len();
-        let byte_start = if range.start >= total_chars {
-            line_str.len()
-        } else {
-            char_offsets[range.start]
-        };
-        let byte_end = if range.end >= total_chars {
-            line_str.len()
-        } else {
-            char_offsets[range.end]
-        };
-        let v_text = &line_str[byte_start..byte_end];
-        let v_len_chars = v_text.chars().count();
-
-        let line_start_char = editor.rope.line_to_char(line_idx);
-        let v_start_char = line_start_char + range.start;
-        let v_end_char = line_start_char + range.end;
-
-        let global_selection = if editor.vi_mode == zee_core::ViMode::VisualBlock {
-            let ranges = editor.get_visual_block_ranges();
-            ranges.into_iter().find(|r| (r.start < v_end_char && r.end > v_start_char) || (r.start >= v_start_char && r.start <= v_end_char))
-        } else {
-            editor.selection.clone()
-        };
-
-        let v_selection: Option<std::ops::Range<usize>> = if let Some(ref sel) = global_selection {
-            let sel_min = sel.start.min(sel.end);
-            let sel_max = sel.start.max(sel.end);
-            if sel_min < v_end_char && sel_max > v_start_char {
-                let s = sel_min.saturating_sub(v_start_char).min(v_len_chars);
-                let e = sel_max.saturating_sub(v_start_char).min(v_len_chars);
-                if s < e {
-                    Some(s..e)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let mut elements = Vec::new();
-
-        let render_chunk = |text: &str, chunk_start_char: usize, token_color: Option<Rgba>, is_bold: bool, elements: &mut Vec<AnyElement>| {
-            if text.is_empty() { return; }
-            self.render_chunk_internal(text, chunk_start_char, token_color, is_bold, v_selection.clone(), theme, line_height, elements);
-        };
-
-        if let Some(Some(tokens)) = editor.line_tokens.get(line_idx) {
-            let mut last_v_offset = 0;
-            for token in tokens {
-                let tok_start = token.byte_range.start.clamp(byte_start, byte_end);
-                let tok_end = token.byte_range.end.clamp(byte_start, byte_end);
-                if tok_end > tok_start {
-                    let v_tok_start = tok_start - byte_start;
-                    let v_tok_end = tok_end - byte_start;
-
-                    if v_tok_start > last_v_offset {
-                        let text = &v_text[last_v_offset..v_tok_start];
-                        let start_char = v_text[..last_v_offset].chars().count();
-                        render_chunk(text, start_char, None, false, &mut elements);
-                    }
-
-                    let text = &v_text[v_tok_start..v_tok_end];
-                    let start_char = v_text[..v_tok_start].chars().count();
-                    if token.token == TokenType::Bold && text.starts_with("**") && text.ends_with("**") && text.len() >= 4 {
-                        let marker_color = Some(self.token_color(TokenType::Comment, theme));
-                        // Leading '**'
-                        render_chunk(&text[..2], start_char, marker_color, false, &mut elements);
-                        // Inner content
-                        let inner = &text[2..text.len() - 2];
-                        let inner_start_char = start_char + 2;
-                        render_chunk(inner, inner_start_char, None, true, &mut elements);
-                        // Trailing '**'
-                        let trailing_start_char = start_char + text[..text.len() - 2].chars().count();
-                        render_chunk(&text[text.len() - 2..], trailing_start_char, marker_color, false, &mut elements);
-                    } else {
-                        let is_bold = token.token == TokenType::Bold;
-                        let tok_color = if is_bold { None } else { Some(self.token_color(token.token, theme)) };
-                        render_chunk(text, start_char, tok_color, is_bold, &mut elements);
-                    }
-                    last_v_offset = v_tok_end;
-                }
-            }
-            if last_v_offset < v_text.len() {
-                let text = &v_text[last_v_offset..];
-                let start_char = v_text[..last_v_offset].chars().count();
-                render_chunk(text, start_char, None, false, &mut elements);
-            }
-        } else {
-            render_chunk(v_text, 0, None, false, &mut elements);
-        }
-
-        elements
     }
 
     #[cfg(target_os = "windows")]
@@ -4928,97 +4814,6 @@ impl EditorView {
                 )
             }
         }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[allow(clippy::too_many_arguments)]
-    fn render_chunk_internal(
-        &self,
-        text: &str,
-        start_char: usize,
-        token_color: Option<Rgba>,
-        is_bold: bool,
-        selection: Option<std::ops::Range<usize>>,
-        theme: &Theme,
-        line_height: Pixels,
-        elements: &mut Vec<AnyElement>,
-    ) {
-        if text.is_empty() { return; }
-
-        let text_color = token_color.unwrap_or(led_color_to_gpui(theme.editor.foreground));
-        let sel_bg = with_alpha(led_color_to_gpui(theme.editor.selection), 0.75);
-
-        let chunk_chars: Vec<char> = text.chars().collect();
-        let chunk_len = chunk_chars.len();
-        let weight = if is_bold {
-            gpui::FontWeight::BOLD
-        } else {
-            gpui::FontWeight::NORMAL
-        };
-
-        if let Some(ref sel) = selection {
-            let sel_start = sel.start.saturating_sub(start_char);
-            let sel_end = sel.end.saturating_sub(start_char);
-
-            if sel_start < chunk_len && sel_end > 0 {
-                let highlight_start = sel_start;
-                let highlight_end = sel_end.min(chunk_len);
-
-                if highlight_start > 0 {
-                    elements.push(
-                        div()
-                            .h(line_height)
-                            .flex()
-                            .items_center()
-                            .text_color(text_color)
-                            .font_family(self.font_family.clone())
-                            .font_weight(weight)
-                            .child(chunk_chars[..highlight_start].iter().collect::<String>())
-                            .into_any_element()
-                    );
-                }
-
-                elements.push(
-                    div()
-                        .h(line_height)
-                        .flex()
-                        .items_center()
-                        .bg(sel_bg)
-                        .text_color(text_color)
-                        .font_family(self.font_family.clone())
-                        .font_weight(weight)
-                        .child(chunk_chars[highlight_start..highlight_end].iter().collect::<String>())
-                        .into_any_element()
-                );
-
-                if highlight_end < chunk_len {
-                    elements.push(
-                        div()
-                            .h(line_height)
-                            .flex()
-                            .items_center()
-                            .text_color(text_color)
-                            .font_family(self.font_family.clone())
-                            .font_weight(weight)
-                            .child(chunk_chars[highlight_end..].iter().collect::<String>())
-                            .into_any_element()
-                    );
-                }
-                return;
-            }
-        }
-
-        elements.push(
-            div()
-                .h(line_height)
-                .flex()
-                .items_center()
-                .text_color(text_color)
-                .font_family(self.font_family.clone())
-                .font_weight(weight)
-                .child(text.to_string())
-                .into_any_element()
-        );
     }
 }
 

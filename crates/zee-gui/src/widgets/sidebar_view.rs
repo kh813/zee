@@ -9,6 +9,7 @@ use zee_core::i18n::I18n;
 
 #[derive(Clone)]
 struct ActiveFileProps {
+    #[allow(dead_code)]
     file_name: String,
     size_str: String,
     lines: usize,
@@ -983,7 +984,6 @@ impl SidebarView {
                     .flex()
                     .flex_col()
                     .gap_0p5()
-                    .child(add_row(self.i18n.get("sidebar.prop_file").to_string(), p.file_name))
                     .child(add_row(self.i18n.get("sidebar.prop_size").to_string(), p.size_str))
                     .child(add_row(self.i18n.get("sidebar.prop_lines").to_string(), format!("{}", p.lines)))
                     .child(add_row(self.i18n.get("sidebar.prop_chars").to_string(), format!("{}", p.chars)))

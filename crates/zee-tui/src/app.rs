@@ -4195,11 +4195,71 @@ impl App {
                     PanelField::ReplaceAllBtn => self.replace_all(),
                 }
             }
+            KeyCode::Left => {
+                match self.find_panel.focused_field {
+                    PanelField::Next => self.find_panel.focused_field = PanelField::Prev,
+                    PanelField::Close => self.find_panel.focused_field = PanelField::Next,
+                    PanelField::Prev => self.find_panel.focused_field = PanelField::FindInput,
+                    PanelField::ReplaceAllBtn => self.find_panel.focused_field = PanelField::ReplaceBtn,
+                    PanelField::ReplaceBtn => self.find_panel.focused_field = PanelField::ReplaceInput,
+                    PanelField::Regex => self.find_panel.focused_field = PanelField::WholeWord,
+                    PanelField::WholeWord => self.find_panel.focused_field = PanelField::MatchCase,
+                    PanelField::MatchCase => {
+                        if self.find_panel.is_replace_mode {
+                            self.find_panel.focused_field = PanelField::ReplaceInput;
+                        } else {
+                            self.find_panel.focused_field = PanelField::FindInput;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyCode::Right => {
+                match self.find_panel.focused_field {
+                    PanelField::FindInput => self.find_panel.focused_field = PanelField::Prev,
+                    PanelField::Prev => self.find_panel.focused_field = PanelField::Next,
+                    PanelField::Next => self.find_panel.focused_field = PanelField::Close,
+                    PanelField::ReplaceInput => self.find_panel.focused_field = PanelField::ReplaceBtn,
+                    PanelField::ReplaceBtn => self.find_panel.focused_field = PanelField::ReplaceAllBtn,
+                    PanelField::MatchCase => self.find_panel.focused_field = PanelField::WholeWord,
+                    PanelField::WholeWord => self.find_panel.focused_field = PanelField::Regex,
+                    _ => {}
+                }
+            }
             KeyCode::Up => {
                 match self.find_panel.focused_field {
                     PanelField::FindInput => self.find_prev(),
+                    PanelField::Prev => self.find_prev(),
+                    PanelField::Next => self.find_prev(),
                     PanelField::ReplaceInput => {
                         self.find_panel.focused_field = PanelField::FindInput;
+                    }
+                    PanelField::ReplaceBtn => {
+                        self.find_panel.focused_field = PanelField::Prev;
+                    }
+                    PanelField::ReplaceAllBtn => {
+                        self.find_panel.focused_field = PanelField::Next;
+                    }
+                    PanelField::MatchCase => {
+                        if self.find_panel.is_replace_mode {
+                            self.find_panel.focused_field = PanelField::ReplaceInput;
+                        } else {
+                            self.find_panel.focused_field = PanelField::FindInput;
+                        }
+                    }
+                    PanelField::WholeWord => {
+                        if self.find_panel.is_replace_mode {
+                            self.find_panel.focused_field = PanelField::ReplaceBtn;
+                        } else {
+                            self.find_panel.focused_field = PanelField::Prev;
+                        }
+                    }
+                    PanelField::Regex => {
+                        if self.find_panel.is_replace_mode {
+                            self.find_panel.focused_field = PanelField::ReplaceAllBtn;
+                        } else {
+                            self.find_panel.focused_field = PanelField::Next;
+                        }
                     }
                     _ => {}
                 }
@@ -4212,6 +4272,36 @@ impl App {
                         } else {
                             self.find_next();
                         }
+                    }
+                    PanelField::Prev => {
+                        if self.find_panel.is_replace_mode {
+                            self.find_panel.focused_field = PanelField::ReplaceBtn;
+                        } else {
+                            self.find_panel.focused_field = PanelField::MatchCase;
+                        }
+                    }
+                    PanelField::Next => {
+                        if self.find_panel.is_replace_mode {
+                            self.find_panel.focused_field = PanelField::ReplaceAllBtn;
+                        } else {
+                            self.find_panel.focused_field = PanelField::WholeWord;
+                        }
+                    }
+                    PanelField::Close => {
+                        if self.find_panel.is_replace_mode {
+                            self.find_panel.focused_field = PanelField::ReplaceAllBtn;
+                        } else {
+                            self.find_panel.focused_field = PanelField::Regex;
+                        }
+                    }
+                    PanelField::ReplaceInput => {
+                        self.find_panel.focused_field = PanelField::MatchCase;
+                    }
+                    PanelField::ReplaceBtn => {
+                        self.find_panel.focused_field = PanelField::WholeWord;
+                    }
+                    PanelField::ReplaceAllBtn => {
+                        self.find_panel.focused_field = PanelField::Regex;
                     }
                     _ => {}
                 }
@@ -4276,6 +4366,115 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn handle_panel_click(&mut self, x: u16, y: u16) {
+        use crate::widgets::find_panel::PanelField;
+        self.focus = Focus::Panel;
+
+        let (px, py, _pw, _ph) = self.layout.panel_bounds();
+        let find_label = format!("{}: ", self.i18n.get("panel.find"));
+        let rep_label = format!("{}: ", self.i18n.get("panel.replace"));
+        let find_label_w: u16 = find_label.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let rep_label_w: u16 = rep_label.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let label_w = find_label_w.max(rep_label_w);
+        let input_x = px + 1 + label_w;
+        let input_w = 30;
+
+        if y == py {
+            // Row 1: Find input & buttons
+            if x >= input_x && x < input_x + input_w {
+                self.find_panel.focused_field = PanelField::FindInput;
+                return;
+            }
+
+            let mut cur_x = input_x + input_w + 2;
+            let prev_w: u16 = format!(" {} ", self.i18n.get("panel.prev")).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+            if x >= cur_x && x < cur_x + prev_w {
+                self.find_panel.focused_field = PanelField::Prev;
+                self.find_prev();
+                return;
+            }
+            cur_x += prev_w + 1;
+
+            let next_w: u16 = format!(" {} ", self.i18n.get("panel.next")).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+            if x >= cur_x && x < cur_x + next_w {
+                self.find_panel.focused_field = PanelField::Next;
+                self.find_next();
+                return;
+            }
+            cur_x += next_w + 1;
+
+            let close_w: u16 = format!(" {} ", self.i18n.get("panel.close")).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+            if x >= cur_x && x < cur_x + close_w {
+                self.layout.panel_height = 0;
+                self.focus = Focus::Editor;
+                self.recompute_layout();
+                if let Some(buffer) = self.buffers.get_mut(self.active_buffer) {
+                    buffer.search_status = None;
+                    if self.config.vi_mode {
+                        buffer.vi_mode = zee_core::ViMode::Normal;
+                    }
+                }
+                return;
+            }
+        } else if self.find_panel.is_replace_mode && y == py + 1 {
+            // Row 2 in replace mode: Replace input & buttons
+            if x >= input_x && x < input_x + input_w {
+                self.find_panel.focused_field = PanelField::ReplaceInput;
+                return;
+            }
+
+            let mut cur_x = input_x + input_w + 2;
+            let rep_w: u16 = format!(" {} ", self.i18n.get("panel.replace_one")).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+            if x >= cur_x && x < cur_x + rep_w {
+                self.find_panel.focused_field = PanelField::ReplaceBtn;
+                self.replace_current();
+                return;
+            }
+            cur_x += rep_w + 1;
+
+            let rep_all_w: u16 = format!(" {} ", self.i18n.get("panel.replace_all")).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+            if x >= cur_x && x < cur_x + rep_all_w {
+                self.find_panel.focused_field = PanelField::ReplaceAllBtn;
+                self.replace_all();
+                return;
+            }
+        } else {
+            // Toggles Row (Row 3 if replace mode, else Row 2)
+            let toggle_y = if self.find_panel.is_replace_mode { py + 2 } else { py + 1 };
+            if y == toggle_y {
+                let mut cur_x = px + 1;
+                let mc_str = format!("[{}] {}", if self.find_panel.flags.match_case { "x" } else { " " }, self.i18n.get("panel.match_case"));
+                let mc_w: u16 = mc_str.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+                if x >= cur_x && x < cur_x + mc_w {
+                    self.find_panel.focused_field = PanelField::MatchCase;
+                    self.find_panel.flags.match_case = !self.find_panel.flags.match_case;
+                    self.run_search();
+                    return;
+                }
+                cur_x += mc_w + 2;
+
+                let ww_str = format!("[{}] {}", if self.find_panel.flags.whole_word { "x" } else { " " }, self.i18n.get("panel.whole_word"));
+                let ww_w: u16 = ww_str.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+                if x >= cur_x && x < cur_x + ww_w {
+                    self.find_panel.focused_field = PanelField::WholeWord;
+                    self.find_panel.flags.whole_word = !self.find_panel.flags.whole_word;
+                    self.run_search();
+                    return;
+                }
+                cur_x += ww_w + 2;
+
+                let re_str = format!("[{}] {}", if self.find_panel.flags.use_regex { "x" } else { " " }, self.i18n.get("panel.use_regex"));
+                let re_w: u16 = re_str.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+                if x >= cur_x && x < cur_x + re_w {
+                    self.find_panel.focused_field = PanelField::Regex;
+                    self.find_panel.flags.use_regex = !self.find_panel.flags.use_regex;
+                    self.run_search();
+                    return;
+                }
+            }
         }
     }
 
@@ -5361,6 +5560,16 @@ impl App {
                             }
                             crate::widgets::sidebar::SidebarAction::None => {}
                         }
+                        return;
+                    }
+
+                    // Find / Replace Panel
+                    let (px, py, pw, ph) = self.layout.panel_bounds();
+                    if ph > 0 && x >= px && x < px + pw && y >= py && y < py + ph {
+                        if self.focus == Focus::Menu {
+                            self.close_menu();
+                        }
+                        self.handle_panel_click(x, y);
                         return;
                     }
 
@@ -7234,6 +7443,119 @@ mod tests {
     }
 
     #[test]
+    fn test_find_panel_mouse_and_key_navigation() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        use crate::widgets::find_panel::PanelField;
+
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        if let Some(buffer) = app.buffers.get_mut(app.active_buffer) {
+            buffer.insert(0, "apple banana apple cherry apple");
+        }
+
+        // Open Find panel (Ctrl+F)
+        app.handle_key(make_ctrl_key(KeyCode::Char('f')));
+        assert_eq!(app.focus, Focus::Panel);
+        assert_eq!(app.find_panel.focused_field, PanelField::FindInput);
+
+        // Type search text
+        for c in "apple".chars() {
+            app.handle_key(make_key(KeyCode::Char(c)));
+        }
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(0));
+
+        // 1. Tab and BackTab navigation
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.find_panel.focused_field, PanelField::MatchCase);
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.find_panel.focused_field, PanelField::WholeWord);
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.find_panel.focused_field, PanelField::Regex);
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.find_panel.focused_field, PanelField::Prev);
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.find_panel.focused_field, PanelField::Next);
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.find_panel.focused_field, PanelField::Close);
+        app.handle_key(make_key(KeyCode::Tab));
+        assert_eq!(app.find_panel.focused_field, PanelField::FindInput);
+
+        app.handle_key(make_key(KeyCode::BackTab));
+        assert_eq!(app.find_panel.focused_field, PanelField::Close);
+
+        // 2. Arrow key navigation
+        app.find_panel.focused_field = PanelField::FindInput;
+        app.handle_key(make_key(KeyCode::Right));
+        assert_eq!(app.find_panel.focused_field, PanelField::Prev);
+        app.handle_key(make_key(KeyCode::Right));
+        assert_eq!(app.find_panel.focused_field, PanelField::Next);
+        app.handle_key(make_key(KeyCode::Right));
+        assert_eq!(app.find_panel.focused_field, PanelField::Close);
+        app.handle_key(make_key(KeyCode::Left));
+        assert_eq!(app.find_panel.focused_field, PanelField::Next);
+        app.handle_key(make_key(KeyCode::Left));
+        assert_eq!(app.find_panel.focused_field, PanelField::Prev);
+        app.handle_key(make_key(KeyCode::Left));
+        assert_eq!(app.find_panel.focused_field, PanelField::FindInput);
+
+        // Arrow down from Prev navigates to MatchCase
+        app.find_panel.focused_field = PanelField::Prev;
+        app.handle_key(make_key(KeyCode::Down));
+        assert_eq!(app.find_panel.focused_field, PanelField::MatchCase);
+        app.handle_key(make_key(KeyCode::Right));
+        assert_eq!(app.find_panel.focused_field, PanelField::WholeWord);
+        app.handle_key(make_key(KeyCode::Right));
+        assert_eq!(app.find_panel.focused_field, PanelField::Regex);
+        app.handle_key(make_key(KeyCode::Up));
+        assert_eq!(app.find_panel.focused_field, PanelField::Next);
+
+        // 3. Mouse click navigation
+        let (px, py, _pw, _ph) = app.layout.panel_bounds();
+        let find_label = format!("{}: ", app.i18n.get("panel.find"));
+        let rep_label = format!("{}: ", app.i18n.get("panel.replace"));
+        let find_label_w: u16 = find_label.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let rep_label_w: u16 = rep_label.chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let label_w = find_label_w.max(rep_label_w);
+        let input_x = px + 1 + label_w;
+        let input_w = 30;
+
+        // Click on Next button
+        let prev_w: u16 = format!(" {} ", app.i18n.get("panel.prev")).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let next_btn_x = input_x + input_w + 2 + prev_w + 1 + 1;
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: next_btn_x,
+            row: py,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert_eq!(app.find_panel.focused_field, PanelField::Next);
+        assert_eq!(app.buffers[app.active_buffer].current_match_idx, Some(1));
+
+        // Click on MatchCase toggle on row py + 1
+        let mc_btn_x = px + 2;
+        let old_mc = app.find_panel.flags.match_case;
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: mc_btn_x,
+            row: py + 1,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert_eq!(app.find_panel.focused_field, PanelField::MatchCase);
+        assert_eq!(app.find_panel.flags.match_case, !old_mc);
+
+        // Click on Close button
+        let next_w: u16 = format!(" {} ", app.i18n.get("panel.next")).chars().map(|c| c.width().unwrap_or(0) as u16).sum();
+        let close_btn_x = input_x + input_w + 2 + prev_w + 1 + next_w + 1 + 1;
+        app.handle_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: close_btn_x,
+            row: py,
+            modifiers: KeyModifiers::empty(),
+        });
+        assert_eq!(app.layout.panel_height, 0);
+        assert_eq!(app.focus, Focus::Editor);
+    }
+
+    #[test]
     fn test_menu_submenu_navigation() {
         let mut app = App::new(vec![]).expect("Failed to init App");
 
@@ -8647,7 +8969,7 @@ mod tests {
                             }
                         }
                         // Verify right-most content column before border (sx + sw - 2) on property rows has at least 1 trailing space
-                        if py >= sy + sh.saturating_sub(6) {
+                        if py >= sy + sh.saturating_sub(5) {
                             let right_pad_cell = app.renderer.get_cell(sx + sw - 2, py);
                             assert_eq!(
                                 right_pad_cell.ch, ' ',

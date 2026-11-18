@@ -551,8 +551,8 @@ impl Sidebar {
 
         // Calculate heights for content vs properties panel
         let total_bh = bh as usize;
-        let prop_h = if total_bh >= 12 && self.show_properties {
-            7
+        let prop_h = if total_bh >= 11 && self.show_properties {
+            6
         } else if total_bh >= 5 {
             1
         } else {
@@ -779,10 +779,9 @@ impl Sidebar {
             }
 
             // Properties details (if expanded)
-            if self.show_properties && prop_h >= 7 {
+            if self.show_properties && prop_h >= 6 {
                 let rows: Vec<(String, String)> = if let Some(p) = active_props {
                     vec![
-                        (i18n.get("sidebar.prop_file").to_string(), p.file_name.clone()),
                         (i18n.get("sidebar.prop_size").to_string(), p.size_str.clone()),
                         (i18n.get("sidebar.prop_lines").to_string(), p.lines.to_string()),
                         (i18n.get("sidebar.prop_chars").to_string(), p.chars.to_string()),
@@ -791,7 +790,6 @@ impl Sidebar {
                     ]
                 } else {
                     vec![
-                        (i18n.get("sidebar.prop_file").to_string(), i18n.get("sidebar.no_file").to_string()),
                         (i18n.get("sidebar.prop_size").to_string(), "-".to_string()),
                         (i18n.get("sidebar.prop_lines").to_string(), "-".to_string()),
                         (i18n.get("sidebar.prop_chars").to_string(), "-".to_string()),

@@ -736,6 +736,8 @@ impl App {
     }
 
     pub fn recompute_layout(&mut self) {
+        self.layout.width = self.width;
+        self.layout.height = self.height;
         self.layout.recompute(
             &self.menus,
             &self.buffers,
@@ -7938,11 +7940,13 @@ mod tests {
     fn test_vi_mode_screen_and_sentence_motions() {
         let mut app = App::new(vec![]).expect("Failed to init App");
         app.config.vi_mode = true;
+        app.width = 80;
         app.height = 24;
+        app.renderer.resize(80, 24);
         app.recompute_layout();
         app.buffers[0].vi_mode = zee_core::ViMode::Normal;
         
-        let text = (0..50).map(|i| format!("Line {}. Another sentence! Yet another?", i)).collect::<Vec<_>>().join("\n");
+        let text = (0..100).map(|i| format!("Line {}. Another sentence! Yet another?", i)).collect::<Vec<_>>().join("\n");
         app.buffers[0].insert(0, &text);
         app.buffers[0].cursor = 0;
 

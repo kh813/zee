@@ -26,5 +26,4 @@ anyhow    = { workspace = true }
 base64    = "0.22"
 unicode-width = { workspace = true }
 chrono    = { workspace = true }
-humantime = { workspace = true }
 arboard = "3.6.1"

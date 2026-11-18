@@ -1840,6 +1840,64 @@ mod tests {
         assert!(inner.size.width >= gpui::px(400.0));
         assert!(inner.size.height >= gpui::px(300.0));
     }
+
+    #[test]
+    fn test_slice_visual_line_multibyte_markdown() {
+        use crate::widgets::editor_view::EditorView;
+
+        // String from crash report: Japanese text enclosed in markdown bold markers
+        let line = "**「作曲フェーズ」**";
+        let total_chars = line.chars().count();
+        assert_eq!(total_chars, 12); // '*' '*' '「' '作' '曲' 'フ' 'ェ' 'ー' 'ズ' '」' '*' '*'
+
+        // 1. Full line slice [0..12]
+        let (bs, be, text) = EditorView::slice_visual_line(line, &(0..12));
+        assert_eq!(bs, 0);
+        assert_eq!(be, line.len());
+        assert_eq!(text, line);
+
+        // 2. Inner text without bold markers [2..10] ("「作曲フェーズ」")
+        let (bs, be, text) = EditorView::slice_visual_line(line, &(2..10));
+        assert_eq!(bs, 2);
+        assert_eq!(text, "「作曲フェーズ」");
+        assert_eq!(be, 2 + "「作曲フェーズ」".len());
+
+        // 3. Leading bold markers [0..2] ("**")
+        let (bs, be, text) = EditorView::slice_visual_line(line, &(0..2));
+        assert_eq!(bs, 0);
+        assert_eq!(be, 2);
+        assert_eq!(text, "**");
+
+        // 4. Trailing bold markers [10..12] ("**")
+        let (bs, be, text) = EditorView::slice_visual_line(line, &(10..12));
+        assert_eq!(text, "**");
+        assert_eq!(be, line.len());
+        assert_eq!(bs, be - 2);
+
+        // 5. Mixed ASCII, emoji, and Japanese text
+        let mixed = "🦀 **Rustの魅力** 🚀";
+        let m_chars = mixed.chars().count();
+        let (bs, be, text) = EditorView::slice_visual_line(mixed, &(0..m_chars));
+        assert_eq!(bs, 0);
+        assert_eq!(be, mixed.len());
+        assert_eq!(text, mixed);
+
+        // Slice only the inner bold portion "Rustの魅力" (4 chars prefix "🦀 **", 7 chars "Rustの魅力" -> 4..11)
+        let (bs, be, text) = EditorView::slice_visual_line(mixed, &(4..11));
+        assert_eq!(text, "Rustの魅力");
+        assert_eq!(be - bs, "Rustの魅力".len());
+
+        // 6. Beyond boundaries should clamp cleanly without panic
+        let (bs, be, text) = EditorView::slice_visual_line(line, &(0..999));
+        assert_eq!(bs, 0);
+        assert_eq!(be, line.len());
+        assert_eq!(text, line);
+
+        let (bs, be, text) = EditorView::slice_visual_line(line, &(999..1000));
+        assert_eq!(bs, line.len());
+        assert_eq!(be, line.len());
+        assert_eq!(text, "");
+    }
 }
 
 

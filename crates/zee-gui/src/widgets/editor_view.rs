@@ -4133,7 +4133,7 @@ impl EditorView {
         line_str
     }
 
-    fn slice_visual_line<'a>(line_str: &'a str, range: &std::ops::Range<usize>) -> (usize, usize, &'a str) {
+    pub(crate) fn slice_visual_line<'a>(line_str: &'a str, range: &std::ops::Range<usize>) -> (usize, usize, &'a str) {
         let char_offsets: Vec<usize> = line_str.char_indices().map(|(b, _)| b).collect();
         let total_chars = char_offsets.len();
         let byte_start = if range.start >= total_chars {

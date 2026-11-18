@@ -329,8 +329,8 @@ impl Sidebar {
             return SidebarAction::None;
         }
 
-        let prop_h = if total_height >= 12 && self.show_properties {
-            7
+        let prop_h = if total_height >= 11 && self.show_properties {
+            6
         } else if total_height >= 5 {
             1
         } else {
@@ -376,8 +376,8 @@ impl Sidebar {
         if rel_y == 0 {
             return None;
         }
-        let prop_h = if total_height >= 12 && self.show_properties {
-            7
+        let prop_h = if total_height >= 11 && self.show_properties {
+            6
         } else if total_height >= 5 {
             1
         } else {
@@ -910,8 +910,8 @@ mod tests {
 
         assert!(sidebar.show_properties);
 
-        // When total_height is 20, properties header is at y = 20 - 7 = 13
-        let action = sidebar.handle_click(2, 13, false, 26, 20);
+        // When total_height is 20, properties header is at y = 20 - 6 = 14
+        let action = sidebar.handle_click(2, 14, false, 26, 20);
         assert!(matches!(action, SidebarAction::None));
         assert!(!sidebar.show_properties);
 
@@ -919,6 +919,51 @@ mod tests {
         let action = sidebar.handle_click(2, 19, false, 26, 20);
         assert!(matches!(action, SidebarAction::None));
         assert!(sidebar.show_properties);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_sidebar_properties_no_redundant_filename() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_test_sb_no_file_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let sidebar = Sidebar::new(temp_dir.clone(), true, false);
+        let i18n = zee_core::i18n::I18n::load("ja");
+
+        // Verify active file properties rows contain the 5 expected properties and omit prop_file
+        let active_props = Some(crate::widgets::sidebar::ActiveFileProps {
+            file_name: "very_long_markdown_document_name_exceeding_sidebar_width.md".to_string(),
+            size_str: "1.2 KB".to_string(),
+            lines: 42,
+            chars: 1200,
+            encoding: "UTF-8".to_string(),
+            line_ending: "LF".to_string(),
+        });
+
+        let mut renderer = crate::renderer::Renderer::new(30, 20);
+        let theme = zee_core::theme::Theme::default();
+        sidebar.render(&mut renderer, (0, 0, 30, 20), false, &theme, None, false, active_props.as_ref(), &i18n);
+
+        // Verify all 5 property rows are rendered on rows 15..20 (since prop_h = 6: row 14 is header)
+        let mut rendered_text = String::new();
+        for y in 14..20 {
+            for x in 0..30 {
+                let cell = renderer.get_cell(x, y);
+                if cell.width > 0 {
+                    rendered_text.push(cell.ch);
+                }
+            }
+            rendered_text.push('\n');
+        }
+
+        let prop_file_label = format!("{}:", i18n.get("sidebar.prop_file"));
+        assert!(!rendered_text.contains(&prop_file_label), "Sidebar must not display redundant property row '{}'", prop_file_label);
+        assert!(!rendered_text.contains("very_long_markdown_document_name_exceeding_sidebar_width.md"), "Sidebar properties must not display file name");
+        assert!(rendered_text.contains(i18n.get("sidebar.prop_size")));
+        assert!(rendered_text.contains(i18n.get("sidebar.prop_lines")));
+        assert!(rendered_text.contains(i18n.get("sidebar.prop_chars")));
+        assert!(rendered_text.contains(i18n.get("sidebar.prop_encoding")));
+        assert!(rendered_text.contains(i18n.get("sidebar.prop_line_ending")));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

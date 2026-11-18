@@ -9348,6 +9348,48 @@ mod tests {
     }
 
     #[test]
+    fn test_recompute_layout_synchronizes_dimensions() {
+        let mut app = App::new(vec![]).unwrap();
+        app.width = 120;
+        app.height = 40;
+        app.recompute_layout();
+
+        assert_eq!(app.layout.width, 120);
+        assert_eq!(app.layout.height, 40);
+
+        let (_sx, sy, sw, sh) = app.layout.status_bounds();
+        assert_eq!(sw, 120);
+        assert_eq!(sh, 1);
+        assert_eq!(sy, 39);
+
+        // Enable Vi mode -> cmdline is added
+        app.config.vi_mode = true;
+        app.recompute_layout();
+
+        let (_sx, sy, sw, sh) = app.layout.status_bounds();
+        assert_eq!(sw, 120);
+        assert_eq!(sh, 1);
+        assert_eq!(sy, 38);
+
+        let (_cx, cy, cw, ch) = app.layout.cmdline_bounds();
+        assert_eq!(cw, 120);
+        assert_eq!(ch, 1);
+        assert_eq!(cy, 39);
+
+        // Resize down to 80x24
+        app.width = 80;
+        app.height = 24;
+        app.recompute_layout();
+
+        assert_eq!(app.layout.width, 80);
+        assert_eq!(app.layout.height, 24);
+        let (_, cy, cw, ch) = app.layout.cmdline_bounds();
+        assert_eq!(cw, 80);
+        assert_eq!(ch, 1);
+        assert_eq!(cy, 23);
+    }
+
+    #[test]
     fn test_dialog_and_menu_close_sets_needs_clear() {
         let mut app = App::new(vec![]).unwrap();
         app.needs_clear = false;

@@ -826,31 +826,54 @@ impl App {
         Ok(editor)
     }
 
+    pub fn add_buffer(&mut self, mut editor: Editor) {
+        editor.vi_mode = if self.config.vi_mode {
+            zee_core::ViMode::Normal
+        } else {
+            zee_core::ViMode::Insert
+        };
+        if let Some(path) = &editor.path {
+            let mut recent = zee_core::recent::RecentFiles::load();
+            recent.add(path);
+
+            if let Some(idx) = self.buffers.iter().position(|b| b.path.as_ref() == Some(path)) {
+                self.active_buffer = idx;
+                return;
+            }
+        }
+
+        // If there is only 1 buffer and it is an untitled, unmodified empty buffer, replace it with the new/opened file
+        if self.buffers.len() == 1 {
+            let first = &self.buffers[0];
+            if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
+                self.buffers[0] = editor;
+                self.active_buffer = 0;
+                return;
+            }
+        }
+
+        // If the active buffer is an untitled, unmodified empty buffer, replace it
+        if self.active_buffer < self.buffers.len() {
+            let active = &self.buffers[self.active_buffer];
+            if !active.is_modified() && active.path.is_none() && active.rope.len_chars() == 0 {
+                self.buffers[self.active_buffer] = editor;
+                return;
+            }
+        }
+
+        self.buffers.push(editor);
+        self.active_buffer = self.buffers.len() - 1;
+    }
+
     pub fn open_or_switch_to_file(&mut self, path: PathBuf) {
         if let Some(idx) = self.buffers.iter().position(|b| b.path.as_ref() == Some(&path)) {
             self.active_buffer = idx;
         } else {
             match self.editor_from_file(&path) {
                 Ok(mut editor) => {
-                    let ext = path.extension().and_then(|e| e.to_str());
-                    if let Some(ext) = ext {
-                        if let Some(def) = self.syntax_defs.iter().find(|s| s.meta.extensions.iter().any(|e| e == ext)) {
-                            if let Ok(highlighter) = zee_core::syntax::SyntaxHighlighter::new(def.clone()) {
-                                editor.update_syntax(Some(highlighter));
-                            }
-                        }
-                    }
-                    if self.buffers.len() == 1
-                        && self.buffers[0].path.is_none()
-                        && !self.buffers[0].is_modified()
-                        && self.buffers[0].rope.len_chars() == 0
-                    {
-                        self.buffers[0] = editor;
-                        self.active_buffer = 0;
-                    } else {
-                        self.buffers.push(editor);
-                        self.active_buffer = self.buffers.len() - 1;
-                    }
+                    let syntax = self.detect_syntax(&path);
+                    editor.update_syntax(syntax);
+                    self.add_buffer(editor);
                 }
                 Err(e) => {
                     self.current_dialog = Some(Box::new(dialog::MessageDialog::new(
@@ -3078,9 +3101,10 @@ impl App {
                     zee_core::ExCommand::Edit { path, force } => {
                         if let Some(p) = path {
                             let path_buf = std::path::PathBuf::from(&p);
-                            if let Ok(editor) = zee_core::buffer::Editor::from_file(&path_buf) {
-                                self.buffers.push(editor);
-                                self.active_buffer = self.buffers.len() - 1;
+                            if let Ok(mut editor) = zee_core::buffer::Editor::from_file(&path_buf) {
+                                let syntax = self.detect_syntax(&path_buf);
+                                editor.update_syntax(syntax);
+                                self.add_buffer(editor);
                                 self.recompute_layout();
                                 self.update_active_outline();
                                 self.vi_message = Some((format!("\"{}\" opened", p), false));
@@ -3674,8 +3698,7 @@ impl App {
                                     Ok(mut buffer) => {
                                         let syntax = self.detect_syntax(&path);
                                         buffer.update_syntax(syntax);
-                                        self.buffers.push(buffer);
-                                        self.active_buffer = self.buffers.len() - 1;
+                                        self.add_buffer(buffer);
                                         self.update_active_outline();
                                         self.refresh_menus();
                                         self.recompute_layout();
@@ -4757,25 +4780,7 @@ impl App {
             Ok(mut buffer) => {
                 let syntax = self.detect_syntax(path);
                 buffer.update_syntax(syntax);
-
-                if self.buffers.len() == 1 {
-                    let first = &self.buffers[0];
-                    if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
-                        self.buffers[0] = buffer;
-                        self.active_buffer = 0;
-                        let mut recent = zee_core::recent::RecentFiles::load();
-                        recent.add(path);
-                        self.update_active_outline();
-                        self.refresh_menus();
-                        self.recompute_layout();
-                        return true;
-                    }
-                }
-
-                self.buffers.push(buffer);
-                self.active_buffer = self.buffers.len() - 1;
-                let mut recent = zee_core::recent::RecentFiles::load();
-                recent.add(path);
+                self.add_buffer(buffer);
                 self.update_active_outline();
                 self.refresh_menus();
                 self.recompute_layout();
@@ -4828,8 +4833,8 @@ impl App {
     fn perform_action(&mut self, action: Action) {
         match action {
             Action::New => {
-                self.buffers.push(self.new_editor());
-                self.active_buffer = self.buffers.len() - 1;
+                let editor = self.new_editor();
+                self.add_buffer(editor);
                 self.update_active_outline();
                 self.recompute_layout();
             }
@@ -4852,20 +4857,7 @@ impl App {
                         }
                     }
 
-                    if self.buffers.len() == 1 {
-                        let first = &self.buffers[0];
-                        if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
-                            self.buffers[0] = buffer;
-                            self.active_buffer = 0;
-                            self.update_active_outline();
-                            self.refresh_menus();
-                            self.recompute_layout();
-                            return;
-                        }
-                    }
-
-                    self.buffers.push(buffer);
-                    self.active_buffer = self.buffers.len() - 1;
+                    self.add_buffer(buffer);
                     self.update_active_outline();
                     self.refresh_menus();
                     self.recompute_layout();
@@ -7177,7 +7169,13 @@ mod tests {
         assert_eq!(app.buffers.len(), 1);
         assert_eq!(app.focus, Focus::Editor);
 
-        // Perform New Buffer
+        // Perform New Buffer on clean buffer reuses it
+        app.perform_action(Action::New);
+        assert_eq!(app.buffers.len(), 1);
+        assert_eq!(app.active_buffer, 0);
+
+        // Modify buffer and perform New Buffer adds second buffer
+        app.buffers[0].insert(0, "edited");
         app.perform_action(Action::New);
         assert_eq!(app.buffers.len(), 2);
         assert_eq!(app.active_buffer, 1);
@@ -8129,7 +8127,9 @@ mod tests {
         assert_eq!(app.buffers.len(), 1);
 
         // Add 2 more buffers
+        app.buffers[0].insert(0, "buf1");
         app.perform_action(Action::New);
+        app.buffers[1].insert(0, "buf2");
         app.perform_action(Action::New);
         assert_eq!(app.buffers.len(), 3);
         assert_eq!(app.active_buffer, 2);
@@ -9912,6 +9912,69 @@ mod tests {
         assert!(app.running);
         app.handle_key(KeyEvent::new(KeyCode::Char('ｑ'), KeyModifiers::CONTROL));
         assert!(!app.running);
+    }
+
+    #[test]
+    fn test_open_file_replaces_clean_initial_buffer_and_keeps_modified() {
+        let temp_dir = std::env::temp_dir().join("zee_test_tui_replace_clean_buf");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let file1 = temp_dir.join("file1.txt");
+        let file2 = temp_dir.join("file2.txt");
+        std::fs::write(&file1, "content of file 1").unwrap();
+        std::fs::write(&file2, "content of file 2").unwrap();
+
+        // 1. Fresh app launch: single clean untitled buffer
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        assert_eq!(app.buffers.len(), 1);
+        assert!(app.buffers[0].path.is_none());
+        assert!(!app.buffers[0].is_modified());
+        assert_eq!(app.buffers[0].rope.len_chars(), 0);
+
+        // 2. Open file1 -> should REPLACE the clean untitled buffer
+        assert!(app.open_path(&file1));
+        assert_eq!(app.buffers.len(), 1);
+        assert_eq!(app.active_buffer, 0);
+        assert_eq!(app.buffers[0].path.as_deref(), Some(file1.as_path()));
+        assert_eq!(app.buffers[0].rope.to_string(), "content of file 1");
+
+        // 3. Open file2 -> file1 has a path, so file2 should be appended as tab 2
+        assert!(app.open_path(&file2));
+        assert_eq!(app.buffers.len(), 2);
+        assert_eq!(app.active_buffer, 1);
+        assert_eq!(app.buffers[1].path.as_deref(), Some(file2.as_path()));
+
+        // 4. Create new clean buffer (Action::New)
+        app.perform_action(Action::New);
+        assert_eq!(app.buffers.len(), 3);
+        assert_eq!(app.active_buffer, 2);
+        assert!(app.buffers[2].path.is_none());
+        assert_eq!(app.buffers[2].rope.len_chars(), 0);
+
+        // 5. Open file1 again while on clean buffer -> switches to existing tab 0
+        assert!(app.open_path(&file1));
+        assert_eq!(app.active_buffer, 0);
+
+        // 6. Test PendingOp::Open replacing clean buffer
+        let mut app2 = App::new(vec![]).expect("Failed to init App");
+        assert_eq!(app2.buffers.len(), 1);
+        app2.pending_op = PendingOp::Open;
+        app2.handle_dialog_result(crate::widgets::dialog::DialogResult::Ok(
+            crate::widgets::dialog::Action::ConfirmPath(file1.clone())
+        ));
+        assert_eq!(app2.buffers.len(), 1);
+        assert_eq!(app2.buffers[0].path.as_deref(), Some(file1.as_path()));
+
+        // 7. Test modified buffer is kept when opening a file
+        let mut app3 = App::new(vec![]).expect("Failed to init App");
+        app3.buffers[0].insert(0, "unsaved user edits");
+        assert!(app3.buffers[0].is_modified());
+        assert!(app3.open_path(&file1));
+        assert_eq!(app3.buffers.len(), 2);
+        assert_eq!(app3.buffers[0].rope.to_string(), "unsaved user edits");
+        assert_eq!(app3.buffers[1].path.as_deref(), Some(file1.as_path()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

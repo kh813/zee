@@ -255,10 +255,8 @@ impl Workspace {
     }
 
     pub fn new_tab(&mut self) {
-        let mut editor = Editor::new();
-        editor.vi_mode = if self.config.vi_mode { zee_core::ViMode::Normal } else { zee_core::ViMode::Insert };
-        self.editors.push(editor);
-        self.active_editor_index = self.editors.len() - 1;
+        let editor = Editor::new();
+        self.add_editor(editor);
     }
 
     pub fn new_from_template(&mut self, template_id: &str) {
@@ -282,15 +280,6 @@ impl Workspace {
                 }
             }
 
-            if self.editors.len() == 1 {
-                let first = &self.editors[0];
-                if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
-                    self.editors[0] = editor;
-                    self.active_editor_index = 0;
-                    return;
-                }
-            }
-
             self.add_editor(editor);
         } else {
             self.new_tab();
@@ -307,23 +296,23 @@ impl Workspace {
                 self.active_editor_index = idx;
                 return;
             }
+        }
 
-            // If there is only 1 tab and it is an untitled, unmodified empty buffer, replace it with the opened file
-            if self.editors.len() == 1 {
-                let first = &self.editors[0];
-                if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
-                    self.editors[0] = editor;
-                    self.active_editor_index = 0;
-                    return;
-                }
+        // If there is only 1 tab and it is an untitled, unmodified empty buffer, replace it with the new/opened file
+        if self.editors.len() == 1 {
+            let first = &self.editors[0];
+            if !first.is_modified() && first.path.is_none() && first.rope.len_chars() == 0 {
+                self.editors[0] = editor;
+                self.active_editor_index = 0;
+                return;
             }
+        }
 
-            if self.active_editor_index < self.editors.len() {
-                let active = &self.editors[self.active_editor_index];
-                if !active.is_modified() && active.path.is_none() && active.rope.len_chars() == 0 {
-                    self.editors[self.active_editor_index] = editor;
-                    return;
-                }
+        if self.active_editor_index < self.editors.len() {
+            let active = &self.editors[self.active_editor_index];
+            if !active.is_modified() && active.path.is_none() && active.rope.len_chars() == 0 {
+                self.editors[self.active_editor_index] = editor;
+                return;
             }
         }
 
@@ -372,28 +361,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_tab_always_adds_new_tab() {
+    fn test_new_tab_replaces_clean_initial_buffer_and_adds_when_modified() {
         let mut workspace = Workspace::new(Config::default());
         assert_eq!(workspace.editors.len(), 1);
         assert_eq!(workspace.active_editor_index, 0);
 
+        // Calling new_tab on clean initial buffer reuses it
+        workspace.new_tab();
+        assert_eq!(workspace.editors.len(), 1);
+        assert_eq!(workspace.active_editor_index, 0);
+
+        // Modify first buffer and new_tab adds a new tab
+        workspace.active_editor_mut().unwrap().insert(0, "content");
         workspace.new_tab();
         assert_eq!(workspace.editors.len(), 2);
         assert_eq!(workspace.active_editor_index, 1);
-
-        workspace.new_tab();
-        assert_eq!(workspace.editors.len(), 3);
-        assert_eq!(workspace.active_editor_index, 2);
     }
 
     #[test]
-    fn test_add_editor_untitled_always_adds_tab() {
+    fn test_add_editor_untitled_replaces_clean_initial_buffer() {
         let mut workspace = Workspace::new(Config::default());
         assert_eq!(workspace.editors.len(), 1);
 
         workspace.add_editor(Editor::new());
-        assert_eq!(workspace.editors.len(), 2);
-        assert_eq!(workspace.active_editor_index, 1);
+        assert_eq!(workspace.editors.len(), 1);
+        assert_eq!(workspace.active_editor_index, 0);
     }
 
     #[test]
@@ -434,6 +426,7 @@ mod tests {
     #[test]
     fn test_close_active_editor_until_empty() {
         let mut workspace = Workspace::new(Config::default());
+        workspace.active_editor_mut().unwrap().insert(0, "tab 1");
         workspace.new_tab();
         assert_eq!(workspace.editors.len(), 2);
 
@@ -456,9 +449,11 @@ mod tests {
         let mut workspace = Workspace::new(config);
         assert_eq!(workspace.editors[0].vi_mode, zee_core::ViMode::Insert);
 
+        workspace.active_editor_mut().unwrap().insert(0, "tab 1");
         workspace.new_tab();
         assert_eq!(workspace.editors[1].vi_mode, zee_core::ViMode::Insert);
 
+        workspace.active_editor_mut().unwrap().insert(0, "tab 2");
         workspace.add_editor(Editor::new());
         assert_eq!(workspace.editors[2].vi_mode, zee_core::ViMode::Insert);
         assert_eq!(workspace.vi_cmd, None);
@@ -772,7 +767,9 @@ mod tests {
         assert_eq!(workspace.active_editor_index, 0);
 
         // Add 2 tabs
+        workspace.active_editor_mut().unwrap().insert(0, "tab 1");
         workspace.new_tab();
+        workspace.active_editor_mut().unwrap().insert(0, "tab 2");
         workspace.new_tab();
         assert_eq!(workspace.editors.len(), 3);
         assert_eq!(workspace.active_editor_index, 2);

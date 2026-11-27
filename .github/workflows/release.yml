@@ -5,12 +5,18 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create & publish from main (e.g. v0.3.15). Leave empty to only warm main release cache."
+        required: false
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
+  RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || 'v0.0.0-cache' }}
 
 permissions:
   contents: write
@@ -64,7 +70,7 @@ jobs:
       - name: Build & Package macOS GUI (Zee.app) and CLI (zee)
         if: matrix.is_macos
         run: |
-          TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
+          TAG_NAME="${RELEASE_TAG:-v0.1.0}"
           VERSION="${TAG_NAME#v}"
           GUI_ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
           CLI_ARCHIVE_NAME="zee-cli-${TAG_NAME}-${{ matrix.platform }}"
@@ -157,7 +163,7 @@ jobs:
         env:
           RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=mold"
         run: |
-          TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
+          TAG_NAME="${RELEASE_TAG:-v0.1.0}"
           ARCHIVE_NAME="zee-cli-${TAG_NAME}-${{ matrix.platform }}"
           cargo build --release -p zee-tui --bin zee --target ${{ matrix.target }}
           strip "target/${{ matrix.target }}/release/zee"
@@ -174,7 +180,7 @@ jobs:
         if: matrix.is_windows
         shell: bash
         run: |
-          TAG_NAME="${GITHUB_REF_NAME:-v0.1.0}"
+          TAG_NAME="${RELEASE_TAG:-v0.1.0}"
           GUI_ARCHIVE_NAME="zee-${TAG_NAME}-${{ matrix.platform }}"
           cargo build --release -p zee-gui --bin zeeg --target ${{ matrix.target }}
 
@@ -190,6 +196,7 @@ jobs:
         run: sccache --show-stats
 
       - name: Upload Artifacts
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-${{ matrix.name }}
@@ -199,6 +206,7 @@ jobs:
   publish-release:
     name: Publish Release
     needs: build-release
+    if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
       - name: Download all built artifacts
@@ -215,9 +223,10 @@ jobs:
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           files: release_assets/*
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}

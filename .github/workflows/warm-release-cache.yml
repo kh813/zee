@@ -1,0 +1,86 @@
+name: Warm Release Cache
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+  schedule:
+    # Refresh weekly so GitHub Actions 7-day cache TTL never evicts main's release caches
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: warm-release-cache
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  warm-cache:
+    name: Warm Cache (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            os: macos-15
+            target: aarch64-apple-darwin
+            is_macos: true
+          - name: linux-x64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            is_linux: true
+          - name: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            is_windows: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "release-${{ matrix.name }}"
+          cache-on-failure: true
+
+      - name: Warm macOS release build cache
+        if: matrix.is_macos
+        run: cargo build --release -p zee-gui --bin zeeg -p zee-tui --bin zee --target ${{ matrix.target }}
+
+      - name: Install mold linker (Linux)
+        if: matrix.is_linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mold clang
+
+      - name: Warm Linux CLI release build cache
+        if: matrix.is_linux
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=mold"
+        run: cargo build --release -p zee-tui --bin zee --target ${{ matrix.target }}
+
+      - name: Warm Windows GUI release build cache
+        if: matrix.is_windows
+        shell: bash
+        run: cargo build --release -p zee-gui --bin zeeg --target ${{ matrix.target }}
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats

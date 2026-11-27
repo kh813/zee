@@ -98,11 +98,16 @@ This script sequentially runs:
   1. Run `./scripts/verify-all-targets.sh` locally on macOS and verify all 3 targets pass.
   2. Commit changes and push to `main` (or a feature branch).
   3. Confirm that GitHub Actions CI (`.github/workflows/ci.yml`) completes successfully across all platforms (`windows-latest`, `ubuntu-latest`, `macos-latest`).
-  4. Only after CI passes, create and push the release tag:
-     ```bash
-     git tag vX.Y.Z
-     git push origin vX.Y.Z
-     ```
+  4. Only after CI passes, publish the release using either:
+     - **Fast path (recommended, reuses & refreshes `main` release cache directly)**:
+       ```bash
+       gh workflow run release.yml -f tag=vX.Y.Z
+       ```
+     - **Tag push path (also falls back to `main`'s warmed release cache)**:
+       ```bash
+       git tag vX.Y.Z
+       git push origin vX.Y.Z
+       ```
 - This guarantees that release packages are never distributed with undetected cross-platform compilation or test failures.
 
 ---

@@ -6,9 +6,9 @@ use zee_core::config::Config;
 use zee_core::i18n::I18n;
 use crate::widgets::editor_view::EditorView;
 use crate::widgets::tab_bar::{
-    DraggedTab, DraggedTabGhost, GlobalTabDragState, TabBar, TabBarEvent,
-    compute_tab_insert_slot, hit_test_window_stack, screen_display_origin,
-    window_content_screen_origin, window_outer_screen_bounds,
+    DraggedTab, DraggedTabGhost, GlobalTabDragState, TabBar, TabBarEvent, TearOffPreviewView,
+    compute_tab_insert_slot, find_display_id_for_global_point, hit_test_window_stack,
+    screen_display_origin, window_content_screen_origin, window_outer_screen_bounds,
 };
 use crate::widgets::status_bar::StatusBar;
 use crate::widgets::{ui_font_family, with_alpha};
@@ -909,6 +909,42 @@ impl WindowView {
             };
 
         let prev_target = prev_state.target_window;
+        let can_tear_off = prev_state
+            .active
+            .as_ref()
+            .map(|d| d.source_tab_count > 1)
+            .unwrap_or(false);
+        let should_show_tearoff = new_target_window.is_none() && can_tear_off;
+        let mut tearoff_preview_window = prev_state.tearoff_preview_window;
+        let mut tearoff_preview_opening = prev_state.tearoff_preview_opening;
+
+        let mut spawn_preview_on_display: Option<Option<DisplayId>> = None;
+        if should_show_tearoff {
+            let desired_display = find_display_id_for_global_point(global_pos, cx);
+            if let Some((preview_hw, existing_disp)) = tearoff_preview_window {
+                if existing_disp != desired_display {
+                    let _ = cx.update_window(preview_hw, |_, preview_win, _| {
+                        preview_win.remove_window();
+                    });
+                    tearoff_preview_window = None;
+                    if !tearoff_preview_opening {
+                        tearoff_preview_opening = true;
+                        spawn_preview_on_display = Some(desired_display);
+                    }
+                }
+            } else if !tearoff_preview_opening {
+                tearoff_preview_opening = true;
+                spawn_preview_on_display = Some(desired_display);
+            }
+        } else {
+            if let Some((preview_hw, _)) = tearoff_preview_window.take() {
+                let _ = cx.update_window(preview_hw, |_, preview_win, _| {
+                    preview_win.remove_window();
+                });
+            }
+            tearoff_preview_opening = false;
+        }
+
         cx.set_global(GlobalTabDragState {
             active: prev_state.active,
             grab_offset: prev_state.grab_offset,
@@ -917,9 +953,74 @@ impl WindowView {
             over_tab_bar: new_over_tab_bar,
             target_local_pos: new_target_local_pos,
             last_global_pos: Some(global_pos),
+            tearoff_preview_window,
+            tearoff_preview_opening,
         });
 
+        if let Some(desired_display) = spawn_preview_on_display {
+            cx.defer(move |cx| {
+                let state_now = cx
+                    .try_global::<GlobalTabDragState>()
+                    .cloned()
+                    .unwrap_or_default();
+                let still_outside = state_now
+                    .active
+                    .as_ref()
+                    .map(|d| d.source_tab_count > 1)
+                    .unwrap_or(false)
+                    && state_now.target_window.is_none();
+                if !still_outside || state_now.tearoff_preview_window.is_some() {
+                    if cx.has_global::<GlobalTabDragState>() {
+                        cx.global_mut::<GlobalTabDragState>().tearoff_preview_opening = false;
+                    }
+                    return;
+                }
+
+                let display_bounds = desired_display
+                    .and_then(|id| cx.find_display(id))
+                    .or_else(|| cx.primary_display())
+                    .map(|d| d.bounds())
+                    .unwrap_or_else(|| Bounds::new(point(px(0.0), px(0.0)), size(px(1440.0), px(900.0))));
+
+                let options = WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(display_bounds)),
+                    titlebar: None,
+                    focus: false,
+                    show: true,
+                    kind: WindowKind::PopUp,
+                    is_movable: false,
+                    is_resizable: false,
+                    is_minimizable: false,
+                    display_id: desired_display,
+                    window_background: WindowBackgroundAppearance::Transparent,
+                    ..Default::default()
+                };
+
+                if let Ok(handle) = cx.open_window(options, |_win, cx| cx.new(|_| TearOffPreviewView)) {
+                    let any_handle: AnyWindowHandle = handle.into();
+                    let still_valid = cx
+                        .try_global::<GlobalTabDragState>()
+                        .map(|s| s.active.is_some() && s.target_window.is_none())
+                        .unwrap_or(false);
+                    if still_valid {
+                        if cx.has_global::<GlobalTabDragState>() {
+                            let st = cx.global_mut::<GlobalTabDragState>();
+                            st.tearoff_preview_window = Some((any_handle, desired_display));
+                            st.tearoff_preview_opening = false;
+                        }
+                    } else {
+                        let _ = cx.update_window(any_handle, |_, w, _| w.remove_window());
+                    }
+                } else if cx.has_global::<GlobalTabDragState>() {
+                    cx.global_mut::<GlobalTabDragState>().tearoff_preview_opening = false;
+                }
+            });
+        }
+
         window.refresh();
+        if let Some((preview_hw, _)) = tearoff_preview_window {
+            let _ = cx.update_window(preview_hw, |_, preview_win, _| preview_win.refresh());
+        }
         if let Some(prev) = prev_target {
             if prev != current_window && Some(prev) != new_target_window {
                 let _ = cx.update_window(prev, |_, other_win, _| other_win.refresh());
@@ -948,6 +1049,13 @@ impl WindowView {
         };
         if dragged.source_window != current_window {
             return;
+        }
+
+        // Dismiss any floating tear-off silhouette overlay immediately.
+        if let Some((preview_hw, _)) = state.tearoff_preview_window {
+            let _ = cx.update_window(preview_hw, |_, preview_win, _| {
+                preview_win.remove_window();
+            });
         }
 
         // Clear drag state immediately so drop executes at most once.

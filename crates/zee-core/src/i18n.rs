@@ -231,6 +231,7 @@ impl I18n {
         m.insert("menu.tabs.reveal_in_explorer".to_string(), "Show in Explorer".to_string());
         m.insert("menu.tabs.reveal_in_file_manager".to_string(), "Open Containing Folder".to_string());
         m.insert("menu.tabs.all_tabs".to_string(), "Open Tabs".to_string());
+        m.insert("tab.tearoff.new_window".to_string(), "New Window".to_string());
 
         m.insert("menu.file".to_string(), "File".to_string());
         m.insert("menu.file.new_tab".to_string(), "New Tab".to_string());
@@ -545,6 +546,7 @@ impl I18n {
         m.insert("menu.tabs.reveal_in_explorer".to_string(), "エクスプローラーで表示".to_string());
         m.insert("menu.tabs.reveal_in_file_manager".to_string(), "保存先フォルダを開く".to_string());
         m.insert("menu.tabs.all_tabs".to_string(), "開いているタブ".to_string());
+        m.insert("tab.tearoff.new_window".to_string(), "新規ウィンドウ".to_string());
 
         m.insert("menu.file".to_string(), "ファイル".to_string());
         m.insert("menu.file.new_tab".to_string(), "新規タブ".to_string());

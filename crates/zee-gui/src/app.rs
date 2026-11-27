@@ -717,13 +717,27 @@ pub fn open_window_with_editor(
             .window_bounds
             .map(|wb| wb.get_bounds().size)
             .unwrap_or_else(|| size(px(1012.0), px(800.0)));
+        let target_display_id = crate::widgets::tab_bar::find_display_id_for_global_point(pos, cx);
+        let disp_origin = target_display_id
+            .and_then(|id| cx.find_display(id))
+            .map(|d| crate::widgets::tab_bar::display_global_bounds(&d).origin)
+            .unwrap_or_else(|| point(px(0.0), px(0.0)));
+        #[cfg(target_os = "macos")]
+        let local_origin = point(
+            (pos.x - disp_origin.x - px(76.0)).max(px(0.0)),
+            (pos.y - disp_origin.y - px(22.0)).max(px(0.0)),
+        );
+        #[cfg(not(target_os = "macos"))]
+        let local_origin = {
+            let _ = disp_origin;
+            point(pos.x - px(76.0), pos.y - px(22.0))
+        };
         let candidate_bounds = Bounds {
-            origin: point((pos.x - px(80.0)).max(px(0.0)), (pos.y - px(24.0)).max(px(0.0))),
+            origin: local_origin,
             size: win_size,
         };
-        if is_bounds_on_any_display(candidate_bounds, cx) {
-            options.window_bounds = Some(WindowBounds::Windowed(candidate_bounds));
-        }
+        options.display_id = target_display_id;
+        options.window_bounds = Some(WindowBounds::Windowed(candidate_bounds));
     }
 
     cx.open_window(options, move |window, cx| {

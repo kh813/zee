@@ -28,16 +28,20 @@ pub struct DraggedTab {
     pub source_tab_count: usize,
     pub is_pinned: bool,
     pub title: String,
+    pub new_window_label: String,
     pub is_modified: bool,
     pub is_read_only: bool,
     pub bg_color: Rgba,
     pub text_color: Rgba,
     pub border_color: Rgba,
     pub accent_color: Rgba,
+    pub editor_bg: Rgba,
+    pub tab_bar_bg: Rgba,
 }
 
 /// App-wide preview state for active tab drag operations so both the source
-/// window and any hovered target window can draw real-time drop indicators.
+/// window, any hovered target window, and the desktop tear-off silhouette
+/// popup can draw real-time visual feedback.
 #[derive(Clone, Debug, Default)]
 pub struct GlobalTabDragState {
     pub active: Option<DraggedTab>,
@@ -47,6 +51,8 @@ pub struct GlobalTabDragState {
     pub over_tab_bar: bool,
     pub target_local_pos: Option<Point<Pixels>>,
     pub last_global_pos: Option<Point<Pixels>>,
+    pub tearoff_preview_window: Option<(AnyWindowHandle, Option<DisplayId>)>,
+    pub tearoff_preview_opening: bool,
 }
 
 impl Global for GlobalTabDragState {}
@@ -157,6 +163,255 @@ impl Render for TabTooltip {
             .border_color(self.border)
             .shadow_md()
             .child(self.text.clone())
+    }
+}
+
+pub const TEAROFF_PREVIEW_WIDTH: f32 = 360.0;
+pub const TEAROFF_PREVIEW_HEIGHT: f32 = 230.0;
+
+/// Compute the top-left position of the floating new-window silhouette inside
+/// a display-sized transparent overlay window, clamped safely within the viewport.
+pub fn compute_tearoff_preview_origin(
+    local_cursor: Point<Pixels>,
+    viewport_size: Size<Pixels>,
+    preview_size: Size<Pixels>,
+) -> Point<Pixels> {
+    let margin = px(8.0);
+    let desired_x = local_cursor.x - px(76.0);
+    let desired_y = local_cursor.y - px(22.0);
+    let max_x = (viewport_size.width - preview_size.width - margin).max(margin);
+    let max_y = (viewport_size.height - preview_size.height - margin).max(margin);
+    point(
+        desired_x.clamp(margin, max_x),
+        desired_y.clamp(margin, max_y),
+    )
+}
+
+/// Return global screen bounds for a given `DisplayId` (used for multi-monitor
+/// tear-off preview overlay placement).
+pub fn display_global_bounds(display: &std::rc::Rc<dyn PlatformDisplay>) -> Bounds<Pixels> {
+    #[cfg(target_os = "macos")]
+    {
+        #[repr(C)]
+        struct CGPoint {
+            x: f64,
+            y: f64,
+        }
+        #[repr(C)]
+        struct CGSize {
+            width: f64,
+            height: f64,
+        }
+        #[repr(C)]
+        struct CGRect {
+            origin: CGPoint,
+            size: CGSize,
+        }
+        #[link(name = "CoreGraphics", kind = "framework")]
+        extern "C" {
+            fn CGDisplayBounds(display: u32) -> CGRect;
+        }
+        let cg_id = u64::from(display.id()) as u32;
+        let rect = unsafe { CGDisplayBounds(cg_id) };
+        Bounds::new(
+            point(px(rect.origin.x as f32), px(rect.origin.y as f32)),
+            size(px(rect.size.width as f32), px(rect.size.height as f32)),
+        )
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        display.bounds()
+    }
+}
+
+/// Find the display whose global bounds contain `global_pos`, falling back to the primary display.
+pub fn find_display_id_for_global_point(global_pos: Point<Pixels>, cx: &App) -> Option<DisplayId> {
+    for display in cx.displays() {
+        if display_global_bounds(&display).contains(&global_pos) {
+            return Some(display.id());
+        }
+    }
+    cx.primary_display().map(|d| d.id())
+}
+
+/// Transparent full-display non-activating popup view that renders a floating
+/// "New Window" silhouette beneath the cursor while dragging a tab outside all
+/// Zee windows.
+pub struct TearOffPreviewView;
+
+impl Render for TearOffPreviewView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let drag_state = cx
+            .try_global::<GlobalTabDragState>()
+            .cloned()
+            .unwrap_or_default();
+
+        let (Some(dragged), Some(global_pos)) = (drag_state.active, drag_state.last_global_pos)
+        else {
+            return div().w_full().h_full();
+        };
+        if drag_state.target_window.is_some() || dragged.source_tab_count <= 1 {
+            return div().w_full().h_full();
+        }
+
+        let disp_origin = screen_display_origin(window, cx);
+        let content_origin =
+            window_content_screen_origin(window.bounds(), window.viewport_size(), disp_origin);
+        let local_cursor = global_pos - content_origin;
+        let preview_size = size(px(TEAROFF_PREVIEW_WIDTH), px(TEAROFF_PREVIEW_HEIGHT));
+        let origin =
+            compute_tearoff_preview_origin(local_cursor, window.viewport_size(), preview_size);
+
+        let skeleton_line = with_alpha(dragged.text_color, 0.14);
+        let skeleton_accent = with_alpha(dragged.accent_color, 0.28);
+
+        div()
+            .relative()
+            .w_full()
+            .h_full()
+            .child(
+                div()
+                    .absolute()
+                    .left(origin.x)
+                    .top(origin.y)
+                    .w(preview_size.width)
+                    .h(preview_size.height)
+                    .flex()
+                    .flex_col()
+                    .overflow_hidden()
+                    .rounded_xl()
+                    .bg(with_alpha(dragged.editor_bg, 0.86))
+                    .border_2()
+                    .border_color(with_alpha(dragged.accent_color, 0.88))
+                    .shadow_lg()
+                    .font_family(ui_font_family())
+                    // Mini titlebar + dragged tab + "+ New Window" badge
+                    .child(
+                        div()
+                            .h(px(34.0))
+                            .w_full()
+                            .px_2p5()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .bg(with_alpha(dragged.tab_bar_bg, 0.94))
+                            .border_b_1()
+                            .border_color(with_alpha(dragged.border_color, 0.6))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .overflow_hidden()
+                                    // Subtle window traffic-light silhouette dots
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .w(px(8.0))
+                                                    .h(px(8.0))
+                                                    .rounded_full()
+                                                    .bg(with_alpha(gpui::rgb(0xff5f57), 0.75)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(8.0))
+                                                    .h(px(8.0))
+                                                    .rounded_full()
+                                                    .bg(with_alpha(gpui::rgb(0xfebc2e), 0.75)),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(8.0))
+                                                    .h(px(8.0))
+                                                    .rounded_full()
+                                                    .bg(with_alpha(gpui::rgb(0x28c840), 0.75)),
+                                            ),
+                                    )
+                                    // Active tab chip inside silhouette
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .h(px(24.0))
+                                            .px_2p5()
+                                            .rounded_t_md()
+                                            .bg(with_alpha(dragged.bg_color, 0.95))
+                                            .text_color(dragged.text_color)
+                                            .text_size(px(11.5))
+                                            .child(dragged.title.clone())
+                                            .children(if dragged.is_modified {
+                                                Some(
+                                                    div()
+                                                        .w(px(5.0))
+                                                        .h(px(5.0))
+                                                        .rounded_full()
+                                                        .bg(dragged.text_color),
+                                                )
+                                            } else {
+                                                None
+                                            }),
+                                    ),
+                            )
+                            // Clear "+ New Window" pill indicator
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_full()
+                                    .bg(with_alpha(dragged.accent_color, 0.22))
+                                    .border_1()
+                                    .border_color(with_alpha(dragged.accent_color, 0.75))
+                                    .text_color(dragged.text_color)
+                                    .text_size(px(10.5))
+                                    .child(format!("+ {}", dragged.new_window_label)),
+                            ),
+                    )
+                    // Subtle skeletal editor content silhouette
+                    .child(
+                        div()
+                            .flex_grow()
+                            .w_full()
+                            .flex()
+                            .flex_row()
+                            .p_3()
+                            .gap_3()
+                            .child(
+                                // Gutter silhouette
+                                div()
+                                    .w(px(20.0))
+                                    .h_full()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2p5()
+                                    .child(div().h(px(7.0)).w(px(14.0)).rounded_sm().bg(skeleton_line))
+                                    .child(div().h(px(7.0)).w(px(14.0)).rounded_sm().bg(skeleton_line))
+                                    .child(div().h(px(7.0)).w(px(14.0)).rounded_sm().bg(skeleton_line))
+                                    .child(div().h(px(7.0)).w(px(14.0)).rounded_sm().bg(skeleton_line))
+                                    .child(div().h(px(7.0)).w(px(14.0)).rounded_sm().bg(skeleton_line)),
+                            )
+                            .child(
+                                // Code line silhouettes
+                                div()
+                                    .flex_grow()
+                                    .h_full()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2p5()
+                                    .child(div().h(px(7.0)).w(px(150.0)).rounded_sm().bg(skeleton_accent))
+                                    .child(div().h(px(7.0)).w(px(230.0)).rounded_sm().bg(skeleton_line))
+                                    .child(div().h(px(7.0)).w(px(195.0)).rounded_sm().bg(skeleton_line))
+                                    .child(div().h(px(7.0)).w(px(120.0)).rounded_sm().bg(skeleton_line))
+                                    .child(div().h(px(7.0)).w(px(210.0)).rounded_sm().bg(skeleton_line)),
+                            ),
+                    ),
+            )
     }
 }
 
@@ -419,6 +674,11 @@ impl Render for TabBar {
         let border_color = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
         let hover_tab_bg = with_alpha(led_color_to_gpui(theme.ui.tab_active_bg), 0.4);
         let accent_color = led_color_to_gpui(theme.editor.cursor);
+        let editor_bg = led_color_to_gpui(theme.editor.background);
+        let tab_bar_bg_color = led_color_to_gpui(theme.ui.tab_bar_bg);
+        let new_window_label = zee_core::i18n::I18n::load(&workspace.config.language)
+            .get("tab.tearoff.new_window")
+            .to_string();
         let tip_bg = led_color_to_gpui(theme.ui.dialog_bg);
         let tip_fg = led_color_to_gpui(theme.editor.foreground);
 
@@ -617,12 +877,15 @@ impl Render for TabBar {
                                         source_tab_count: tab_count,
                                         is_pinned,
                                         title: label.name.clone(),
+                                        new_window_label: new_window_label.clone(),
                                         is_modified,
                                         is_read_only: is_ro,
                                         bg_color,
                                         text_color,
                                         border_color,
                                         accent_color,
+                                        editor_bg,
+                                        tab_bar_bg: tab_bar_bg_color,
                                     };
 
                                     let disambiguator = label.disambiguator.clone();
@@ -684,6 +947,8 @@ impl Render for TabBar {
                                                     over_tab_bar: true,
                                                     target_local_pos: None,
                                                     last_global_pos: None,
+                                                    tearoff_preview_window: None,
+                                                    tearoff_preview_opening: false,
                                                 });
                                                 window.refresh();
                                                 cx.new(|_| DraggedTabGhost::from_dragged(tab))
@@ -977,8 +1242,9 @@ mod tests {
     use gpui::{point, px, size, Bounds, Pixels};
     use super::{
         compute_auto_scroll_offset, compute_insertion_indicator_x, compute_tab_insert_slot,
-        compute_tab_min_scroll_offset, hit_test_window_stack, is_tab_strip_overflowing,
-        window_content_screen_origin, window_outer_screen_bounds,
+        compute_tab_min_scroll_offset, compute_tearoff_preview_origin, hit_test_window_stack,
+        is_tab_strip_overflowing, window_content_screen_origin, window_outer_screen_bounds,
+        TEAROFF_PREVIEW_HEIGHT, TEAROFF_PREVIEW_WIDTH,
     };
 
     #[::core::prelude::v1::test]
@@ -1087,5 +1353,29 @@ mod tests {
         let left_stack = vec![("LEFT", outer_left, content_left)];
         let hit_left = hit_test_window_stack(point(px(-1700.0), px(120.0)), &left_stack);
         assert_eq!(hit_left, Some(("LEFT", point(px(120.0), px(12.0)))));
+    }
+
+    #[::core::prelude::v1::test]
+    fn test_tearoff_preview_origin_anchors_under_cursor_and_clamps_to_viewport() {
+        let vp = size(px(1440.0), px(900.0));
+        let preview = size(px(TEAROFF_PREVIEW_WIDTH), px(TEAROFF_PREVIEW_HEIGHT));
+
+        // Normal middle-of-screen cursor -> anchored cleanly offset under cursor
+        let mid = compute_tearoff_preview_origin(point(px(600.0), px(400.0)), vp, preview);
+        assert_eq!(mid, point(px(524.0), px(378.0)));
+
+        // Top-left edge clamps cleanly to margin (8, 8)
+        let tl = compute_tearoff_preview_origin(point(px(10.0), px(5.0)), vp, preview);
+        assert_eq!(tl, point(px(8.0), px(8.0)));
+
+        // Bottom-right edge clamps inside viewport without overflowing off-screen
+        let br = compute_tearoff_preview_origin(point(px(1430.0), px(890.0)), vp, preview);
+        assert_eq!(
+            br,
+            point(
+                px(1440.0 - TEAROFF_PREVIEW_WIDTH - 8.0),
+                px(900.0 - TEAROFF_PREVIEW_HEIGHT - 8.0)
+            )
+        );
     }
 }

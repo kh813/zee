@@ -349,6 +349,7 @@ impl Theme {
                 heading5: Some(Color::Ansi(246)),  // Medium-Light Gray
                 heading6: Some(Color::Ansi(13)),   // Bright Magenta / Violet
                 inline_code: Some(Color::Ansi(13)), // Bright Magenta / Pink
+                bold: None,
                 link: None,
                 list_marker: Some(Color::Ansi(246)), // Medium-Light Gray
             },
@@ -454,6 +455,8 @@ pub struct SyntaxColors {
     #[serde(default)]
     pub inline_code: Option<Color>,
     #[serde(default)]
+    pub bold: Option<Color>,
+    #[serde(default)]
     pub link: Option<Color>,
     #[serde(default)]
     pub list_marker: Option<Color>,
@@ -516,6 +519,7 @@ impl Default for Theme {
                 heading5: Some(Color::Rgb(86, 95, 137)),
                 heading6: Some(Color::Rgb(157, 124, 216)),
                 inline_code: Some(Color::Rgb(245, 194, 231)),
+                bold: None,
                 link: None,
                 list_marker: Some(Color::Rgb(86, 95, 137)),
             },
@@ -556,10 +560,11 @@ mod tests {
             .expect("Light theme should exist");
         assert_eq!(light.syntax.heading1, Some(Color::Rgb(0x15, 0x80, 0x3d))); // #15803d
         assert_eq!(light.syntax.heading2, Some(Color::Rgb(0x1d, 0x4e, 0xd8))); // #1d4ed8
-        assert_eq!(light.syntax.heading3, Some(Color::Rgb(0xb9, 0x1c, 0x1c))); // #b91c1c
+        assert_eq!(light.syntax.heading3, Some(Color::Rgb(0xcf, 0x6f, 0x34))); // #cf6f34
         assert_eq!(light.syntax.heading4, Some(Color::Rgb(0x7c, 0x3a, 0xed))); // #7c3aed
         assert_eq!(light.syntax.heading5, Some(Color::Rgb(0x4d, 0x7c, 0x0f))); // #4d7c0f
         assert_eq!(light.syntax.heading6, Some(Color::Rgb(0x73, 0x82, 0x96))); // #738296
+        assert_eq!(light.syntax.bold, Some(Color::Rgb(0xea, 0x58, 0x0c)));     // #ea580c
     }
 
     #[test]
@@ -713,7 +718,7 @@ mod tests {
                 check("ui.button_active_fg vs button_active_bg", color_to_rgb(theme.ui.button_active_fg, use_256), color_to_rgb(theme.ui.button_active_bg, use_256), 3.0);
 
                 // Syntax tokens
-                let syn_tokens: [(&str, Option<Color>); 19] = [
+                let syn_tokens: [(&str, Option<Color>); 20] = [
                     ("syntax.keyword", theme.syntax.keyword),
                     ("syntax.type_name", theme.syntax.type_name),
                     ("syntax.function", theme.syntax.function),
@@ -732,6 +737,7 @@ mod tests {
                     ("syntax.heading5", theme.syntax.heading5),
                     ("syntax.heading6", theme.syntax.heading6),
                     ("syntax.inline_code", theme.syntax.inline_code),
+                    ("syntax.bold", theme.syntax.bold),
                     ("syntax.list_marker", theme.syntax.list_marker),
                 ];
                 for (name, opt_col) in syn_tokens {

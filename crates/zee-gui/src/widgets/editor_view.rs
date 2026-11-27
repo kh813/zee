@@ -194,7 +194,7 @@ impl EditorView {
             TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
             TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
             TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
-            TokenType::Bold => None,
+            TokenType::Bold => theme.syntax.bold,
             TokenType::Link => theme.syntax.link.or(theme.syntax.function),
             TokenType::ListMarker => theme.syntax.list_marker.or(theme.syntax.comment),
         };
@@ -4093,7 +4093,7 @@ impl EditorView {
                         if is_marker {
                             (false, self.token_color(TokenType::Comment, theme))
                         } else {
-                            (true, default_fg)
+                            (true, self.token_color(TokenType::Bold, theme))
                         }
                     } else {
                         (false, self.token_color(toks[tok_idx].token, theme))

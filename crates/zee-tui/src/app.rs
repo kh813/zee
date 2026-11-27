@@ -440,7 +440,7 @@ impl App {
             zee_core::syntax::TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
             zee_core::syntax::TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
             zee_core::syntax::TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
-            zee_core::syntax::TokenType::Bold => None,
+            zee_core::syntax::TokenType::Bold => theme.syntax.bold,
             zee_core::syntax::TokenType::Link => theme.syntax.link.or(theme.syntax.function),
             zee_core::syntax::TokenType::ListMarker => theme.syntax.list_marker.or(theme.syntax.comment),
         };
@@ -6622,6 +6622,7 @@ impl App {
                                     fg = *token_colors.get(&zee_core::syntax::TokenType::Comment).unwrap_or(&editor_fg);
                                 } else {
                                     cell_bold = true;
+                                    fg = *token_colors.get(&zee_core::syntax::TokenType::Bold).unwrap_or(&editor_fg);
                                 }
                             } else {
                                 fg = *token_colors.get(&tok).unwrap_or(&editor_fg);
@@ -6844,6 +6845,7 @@ impl App {
                                     fg = *token_colors.get(&zee_core::syntax::TokenType::Comment).unwrap_or(&editor_fg);
                                 } else {
                                     cell_bold = true;
+                                    fg = *token_colors.get(&zee_core::syntax::TokenType::Bold).unwrap_or(&editor_fg);
                                 }
                             } else {
                                 fg = *token_colors.get(&tok).unwrap_or(&editor_fg);
@@ -7339,12 +7341,12 @@ mod tests {
         let comment_fg = app.to_ct_color(app.theme.syntax.comment.expect("comment color should be set"));
         assert_eq!(marker_cell.fg, comment_fg, "Marker '*' must have comment color");
 
-        // 3. Line 1: inner character 'b' in '**bold text**' should have bold=true and fg=editor_fg
+        // 3. Line 1: inner character 'b' in '**bold text**' should have bold=true and theme bold color (or editor_fg fallback)
         let inner_bold_cell = app.renderer.get_cell(ex + 2, ey + 1);
         assert_eq!(inner_bold_cell.ch, 'b');
         assert!(inner_bold_cell.bold, "Inner 'b' must have bold: true");
-        let editor_fg = app.to_ct_color(app.theme.editor.foreground);
-        assert_eq!(inner_bold_cell.fg, editor_fg, "Inner 'b' should keep editor foreground color");
+        let expected_bold_fg = app.to_ct_color(app.theme.syntax.bold.unwrap_or(app.theme.editor.foreground));
+        assert_eq!(inner_bold_cell.fg, expected_bold_fg, "Inner 'b' should use theme bold color");
 
         // 4. Line 2: '[link text](#url)' should have link color (deep forest green)
         let link_cell = app.renderer.get_cell(ex, ey + 2);

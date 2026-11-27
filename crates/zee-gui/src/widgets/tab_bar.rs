@@ -10,6 +10,14 @@ pub enum TabBarEvent {
     Select(usize),
     Close(usize),
     New,
+    TogglePin(usize),
+    ContextMenu {
+        tab_index: usize,
+        position: Point<Pixels>,
+    },
+    ToggleTabListDropdown {
+        anchor_x: Pixels,
+    },
 }
 
 /// Payload carried by GPUI's drag system while a tab is being dragged.
@@ -17,6 +25,8 @@ pub enum TabBarEvent {
 pub struct DraggedTab {
     pub source_window: AnyWindowHandle,
     pub tab_index: usize,
+    pub source_tab_count: usize,
+    pub is_pinned: bool,
     pub title: String,
     pub is_modified: bool,
     pub is_read_only: bool,
@@ -36,6 +46,7 @@ pub struct GlobalTabDragState {
     pub target_insert_index: Option<usize>,
     pub over_tab_bar: bool,
     pub target_local_pos: Option<Point<Pixels>>,
+    pub last_global_pos: Option<Point<Pixels>>,
 }
 
 impl Global for GlobalTabDragState {}
@@ -45,6 +56,7 @@ pub struct DraggedTabGhost {
     title: String,
     is_modified: bool,
     is_read_only: bool,
+    is_pinned: bool,
     bg_color: Rgba,
     text_color: Rgba,
     border_color: Rgba,
@@ -57,6 +69,7 @@ impl DraggedTabGhost {
             title: tab.title.clone(),
             is_modified: tab.is_modified,
             is_read_only: tab.is_read_only,
+            is_pinned: tab.is_pinned,
             bg_color: tab.bg_color,
             text_color: tab.text_color,
             border_color: tab.border_color,
@@ -79,6 +92,16 @@ impl DraggedTabGhost {
             .border_1()
             .border_color(self.accent_color)
             .shadow_md()
+            .children(if self.is_pinned {
+                Some(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(self.accent_color)
+                        .child("●"),
+                )
+            } else {
+                None
+            })
             .child(self.title.clone())
             .children(if self.is_read_only {
                 Some(
@@ -109,6 +132,31 @@ impl DraggedTabGhost {
 impl Render for DraggedTabGhost {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.render_pill()
+    }
+}
+
+/// Hover tooltip view for displaying a tab's full path and status flags.
+struct TabTooltip {
+    text: String,
+    bg: Rgba,
+    fg: Rgba,
+    border: Rgba,
+}
+
+impl Render for TabTooltip {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(self.bg)
+            .text_color(self.fg)
+            .text_size(px(11.5))
+            .font_family(ui_font_family())
+            .border_1()
+            .border_color(self.border)
+            .shadow_md()
+            .child(self.text.clone())
     }
 }
 
@@ -145,6 +193,61 @@ pub fn compute_insertion_indicator_x(
     prev_right + (next_left - prev_right) / 2.0
 }
 
+/// Compute the minimum (most negative) horizontal scroll offset for a tab strip.
+pub fn compute_tab_min_scroll_offset(
+    viewport_bounds: Bounds<Pixels>,
+    tab_bounds: &[Bounds<Pixels>],
+) -> Pixels {
+    if tab_bounds.is_empty() {
+        return px(0.0);
+    }
+    let content_width = tab_bounds[tab_bounds.len() - 1].right() - tab_bounds[0].origin.x;
+    (viewport_bounds.size.width - content_width).min(px(0.0))
+}
+
+/// Return `true` when the painted tabs exceed the visible tab viewport width.
+pub fn is_tab_strip_overflowing(
+    viewport_bounds: Option<Bounds<Pixels>>,
+    tab_bounds: &[Bounds<Pixels>],
+) -> bool {
+    let Some(vp) = viewport_bounds else {
+        return false;
+    };
+    if tab_bounds.is_empty() {
+        return false;
+    }
+    let content_width = tab_bounds[tab_bounds.len() - 1].right() - tab_bounds[0].origin.x;
+    content_width > vp.size.width + px(2.0)
+}
+
+/// Adjust horizontal `current_offset` (`<= 0`) so that `tab_bounds[active_index]`
+/// is completely visible inside `viewport_bounds`, clamping dead space on the right.
+pub fn compute_auto_scroll_offset(
+    current_offset: Pixels,
+    viewport_bounds: Bounds<Pixels>,
+    tab_bounds: &[Bounds<Pixels>],
+    active_index: usize,
+) -> Pixels {
+    if tab_bounds.is_empty() || active_index >= tab_bounds.len() {
+        return px(0.0);
+    }
+    let min_offset = compute_tab_min_scroll_offset(viewport_bounds, tab_bounds);
+    let mut offset = current_offset.clamp(min_offset, px(0.0));
+
+    // Recover unscrolled coordinates relative to viewport left edge
+    let active = tab_bounds[active_index];
+    let active_left = active.origin.x - viewport_bounds.origin.x - current_offset;
+    let active_right = active.right() - viewport_bounds.origin.x - current_offset;
+
+    if active_left + offset < px(0.0) {
+        offset = -active_left;
+    } else if active_right + offset > viewport_bounds.size.width {
+        offset = viewport_bounds.size.width - active_right;
+    }
+
+    offset.clamp(min_offset, px(0.0))
+}
+
 /// Convert a window's GPUI bounds + viewport size + global display origin into
 /// the screen-space origin of the window's content area (top-left of GPUI coordinates).
 pub fn window_content_screen_origin(
@@ -175,11 +278,6 @@ pub fn window_outer_screen_bounds(
 }
 
 /// Return the global screen origin of the display hosting `window`.
-///
-/// On macOS, GPUI's `window.bounds()` is relative to the window's current `NSScreen`,
-/// so we add `CGDisplayBounds(display_id).origin` to obtain consistent multi-monitor
-/// global coordinates. On Windows/Linux, `window.bounds()` is already in global
-/// virtual screen coordinates.
 pub fn screen_display_origin(window: &Window, cx: &App) -> Point<Pixels> {
     #[cfg(target_os = "macos")]
     {
@@ -218,8 +316,6 @@ pub fn screen_display_origin(window: &Window, cx: &App) -> Point<Pixels> {
 
 /// Hit-test a global screen point against a front-to-back ordered list of candidate
 /// windows `(handle, outer_screen_bounds, content_screen_origin)`.
-/// Returns the topmost matching window handle along with the point converted into
-/// that window's local content-area coordinates.
 pub fn hit_test_window_stack<H: Copy>(
     global_pos: Point<Pixels>,
     candidates: &[(H, Bounds<Pixels>, Point<Pixels>)],
@@ -235,8 +331,11 @@ pub fn hit_test_window_stack<H: Copy>(
 pub struct TabBar {
     workspace: Entity<Workspace>,
     scroll_offset: Pixels,
+    last_active_index: usize,
+    last_tab_count: usize,
     pub(crate) tab_bounds: Rc<RefCell<Vec<Bounds<Pixels>>>>,
     pub(crate) bar_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
+    pub(crate) viewport_bounds: Rc<RefCell<Option<Bounds<Pixels>>>>,
 }
 
 impl EventEmitter<TabBarEvent> for TabBar {}
@@ -250,8 +349,11 @@ impl TabBar {
         Self {
             workspace,
             scroll_offset: px(0.0),
+            last_active_index: 0,
+            last_tab_count: 0,
             tab_bounds: Rc::new(RefCell::new(Vec::new())),
             bar_bounds: Rc::new(RefCell::new(None)),
+            viewport_bounds: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -262,9 +364,28 @@ impl TabBar {
         )
     }
 
+    fn clamp_scroll_offset(&mut self, delta: Pixels) {
+        let min_offset = self
+            .viewport_bounds
+            .borrow()
+            .map(|vp| compute_tab_min_scroll_offset(vp, &self.tab_bounds.borrow()))
+            .unwrap_or(px(0.0));
+        self.scroll_offset = (self.scroll_offset + delta).clamp(min_offset, px(0.0));
+    }
+
     fn handle_scroll(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
-        let delta = event.delta.pixel_delta(px(1.0)).x;
-        self.scroll_offset = (self.scroll_offset + delta).min(px(0.0));
+        let px_delta = event.delta.pixel_delta(px(1.0));
+        let delta = if px_delta.x.abs() > px(0.1) {
+            px_delta.x
+        } else {
+            px_delta.y
+        };
+        self.clamp_scroll_offset(delta);
+        cx.notify();
+    }
+
+    fn nudge_scroll(&mut self, delta: Pixels, cx: &mut Context<Self>) {
+        self.clamp_scroll_offset(delta);
         cx.notify();
     }
 }
@@ -275,18 +396,41 @@ impl Render for TabBar {
         let theme = &workspace.theme;
         let active_index = workspace.active_editor_index;
         let tab_count = workspace.editors.len();
+        let pinned_count = workspace.pinned_count();
         let current_window = window.window_handle();
 
+        // Auto-scroll to keep the active tab visible whenever active tab or tab count changes
+        if active_index != self.last_active_index || tab_count != self.last_tab_count {
+            self.last_active_index = active_index;
+            self.last_tab_count = tab_count;
+            if let Some(vp) = *self.viewport_bounds.borrow() {
+                let painted = self.tab_bounds.borrow();
+                if painted.len() == tab_count {
+                    self.scroll_offset =
+                        compute_auto_scroll_offset(self.scroll_offset, vp, &painted, active_index);
+                } else {
+                    let min_off = compute_tab_min_scroll_offset(vp, &painted);
+                    self.scroll_offset = self.scroll_offset.clamp(min_off, px(0.0));
+                }
+            }
+        }
+
+        let display_labels = Workspace::compute_tab_display_labels(&workspace.editors);
         let border_color = with_alpha(led_color_to_gpui(theme.editor.line_number), 0.35);
         let hover_tab_bg = with_alpha(led_color_to_gpui(theme.ui.tab_active_bg), 0.4);
         let accent_color = led_color_to_gpui(theme.editor.cursor);
+        let tip_bg = led_color_to_gpui(theme.ui.dialog_bg);
+        let tip_fg = led_color_to_gpui(theme.editor.foreground);
 
-        let drag_state = cx.try_global::<GlobalTabDragState>().cloned().unwrap_or_default();
-        let dragging_from_here_idx = drag_state
+        let drag_state = cx
+            .try_global::<GlobalTabDragState>()
+            .cloned()
+            .unwrap_or_default();
+        let dragging_from_here = drag_state
             .active
             .as_ref()
             .filter(|d| d.source_window == current_window)
-            .map(|d| d.tab_index);
+            .map(|d| (d.tab_index, d.is_pinned));
         let is_cross_window_target = drag_state
             .active
             .as_ref()
@@ -297,11 +441,27 @@ impl Render for TabBar {
         let insertion_slot_to_draw = if drag_state.active.is_some()
             && drag_state.target_window == Some(current_window)
         {
-            drag_state.target_insert_index.filter(|&slot| {
-                if let Some(from_idx) = dragging_from_here_idx {
-                    Workspace::resolve_same_window_drop_index(from_idx, slot, tab_count).is_some()
+            drag_state.target_insert_index.and_then(|slot| {
+                if let Some((from_idx, is_pinned)) = dragging_from_here {
+                    let clamped = if is_pinned {
+                        slot.min(pinned_count)
+                    } else {
+                        slot.max(pinned_count).min(tab_count)
+                    };
+                    Workspace::resolve_same_window_drop_index(from_idx, clamped, tab_count)
+                        .map(|_| clamped)
                 } else {
-                    true
+                    let is_pinned = drag_state
+                        .active
+                        .as_ref()
+                        .map(|d| d.is_pinned)
+                        .unwrap_or(false);
+                    let clamped = if is_pinned {
+                        slot.min(pinned_count)
+                    } else {
+                        slot.max(pinned_count).min(tab_count)
+                    };
+                    Some(clamped)
                 }
             })
         } else {
@@ -316,6 +476,12 @@ impl Render for TabBar {
 
         let bar_bounds_cell = self.bar_bounds.clone();
         let tab_bounds_cell = self.tab_bounds.clone();
+        let viewport_bounds_cell = self.viewport_bounds.clone();
+
+        let is_overflowing = is_tab_strip_overflowing(
+            *self.viewport_bounds.borrow(),
+            &self.tab_bounds.borrow(),
+        ) || self.scroll_offset < px(0.0);
 
         let indicator_x = insertion_slot_to_draw.map(|slot| {
             let bar_left = self
@@ -327,6 +493,8 @@ impl Render for TabBar {
             let raw_x = compute_insertion_indicator_x(&painted_tabs, slot, bar_left + px(8.0));
             (raw_x - bar_left).max(px(2.0))
         });
+
+        let tab_bounds_for_dblclick = self.tab_bounds.clone();
 
         #[allow(unused_mut)]
         let mut bar = div()
@@ -359,11 +527,37 @@ impl Render for TabBar {
             )
             .child(
                 div()
+                    .relative()
                     .flex()
                     .flex_grow()
                     .h_full()
                     .items_end()
                     .overflow_hidden()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |_this, event: &MouseDownEvent, _, cx| {
+                            if event.click_count >= 2 {
+                                let last_right = tab_bounds_for_dblclick
+                                    .borrow()
+                                    .last()
+                                    .map(|b| b.right())
+                                    .unwrap_or(px(0.0));
+                                if event.position.x > last_right {
+                                    cx.emit(TabBarEvent::New);
+                                }
+                            }
+                        }),
+                    )
+                    .child(
+                        canvas(
+                            move |bounds, _, _| {
+                                *viewport_bounds_cell.borrow_mut() = Some(bounds);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
                     .child(
                         div()
                             .flex()
@@ -377,16 +571,14 @@ impl Render for TabBar {
                             .children(
                                 workspace.editors.iter().enumerate().map(|(idx, editor)| {
                                     let is_active = idx == active_index;
-                                    let is_being_dragged = dragging_from_here_idx == Some(idx);
-                                    let file_name = editor
-                                        .path
-                                        .as_ref()
-                                        .and_then(|p| p.file_name())
-                                        .and_then(|s| s.to_str())
-                                        .unwrap_or("[No Name]")
-                                        .to_string();
+                                    let is_being_dragged =
+                                        dragging_from_here.map(|(i, _)| i) == Some(idx);
+                                    let label = &display_labels[idx];
                                     let is_modified = editor.is_modified();
                                     let is_ro = editor.read_only;
+                                    let is_pinned = editor.pinned;
+                                    let is_last_pinned =
+                                        is_pinned && pinned_count > 0 && idx + 1 == pinned_count && tab_count > pinned_count;
 
                                     let bg_color = if is_active {
                                         led_color_to_gpui(theme.ui.tab_active_bg)
@@ -399,10 +591,32 @@ impl Render for TabBar {
                                         led_color_to_gpui(theme.ui.tab_inactive_fg)
                                     };
 
+                                    let mut status_tags: Vec<&str> = Vec::new();
+                                    if is_pinned {
+                                        status_tags.push("Pinned");
+                                    }
+                                    if is_modified {
+                                        status_tags.push("Modified");
+                                    }
+                                    if is_ro {
+                                        status_tags.push("Read-Only");
+                                    }
+                                    let base_tip = label
+                                        .full_path
+                                        .clone()
+                                        .unwrap_or_else(|| label.name.clone());
+                                    let tooltip_text = if status_tags.is_empty() {
+                                        base_tip
+                                    } else {
+                                        format!("{}  ({})", base_tip, status_tags.join(" · "))
+                                    };
+
                                     let dragged_payload = DraggedTab {
                                         source_window: current_window,
                                         tab_index: idx,
-                                        title: file_name.clone(),
+                                        source_tab_count: tab_count,
+                                        is_pinned,
+                                        title: label.name.clone(),
                                         is_modified,
                                         is_read_only: is_ro,
                                         bg_color,
@@ -411,12 +625,16 @@ impl Render for TabBar {
                                         accent_color,
                                     };
 
+                                    let disambiguator = label.disambiguator.clone();
+                                    let tab_name = label.name.clone();
+
                                     div()
                                         .id(SharedString::from(format!("zee-tab-{}", idx)))
                                         .flex()
                                         .items_center()
                                         .h(px(30.0))
-                                        .px_3()
+                                        .px(if is_pinned { px(9.0) } else { px(12.0) })
+                                        .mr(if is_last_pinned { px(6.0) } else { px(0.0) })
                                         .rounded_t_md()
                                         .bg(if is_being_dragged {
                                             with_alpha(bg_color, 0.45)
@@ -445,19 +663,32 @@ impl Render for TabBar {
                                                 s
                                             }
                                         })
-                                        .on_drag(dragged_payload, move |tab, cursor_offset, window, cx| {
-                                            let src_win = window.window_handle();
-                                            cx.set_global(GlobalTabDragState {
-                                                active: Some(tab.clone()),
-                                                grab_offset: cursor_offset,
-                                                target_window: Some(src_win),
-                                                target_insert_index: Some(tab.tab_index),
-                                                over_tab_bar: true,
-                                                target_local_pos: None,
-                                            });
-                                            window.refresh();
-                                            cx.new(|_| DraggedTabGhost::from_dragged(tab))
+                                        .tooltip(move |_window, cx| {
+                                            cx.new(|_| TabTooltip {
+                                                text: tooltip_text.clone(),
+                                                bg: tip_bg,
+                                                fg: tip_fg,
+                                                border: border_color,
+                                            })
+                                            .into()
                                         })
+                                        .on_drag(
+                                            dragged_payload,
+                                            move |tab, cursor_offset, window, cx| {
+                                                let src_win = window.window_handle();
+                                                cx.set_global(GlobalTabDragState {
+                                                    active: Some(tab.clone()),
+                                                    grab_offset: cursor_offset,
+                                                    target_window: Some(src_win),
+                                                    target_insert_index: Some(tab.tab_index),
+                                                    over_tab_bar: true,
+                                                    target_local_pos: None,
+                                                    last_global_pos: None,
+                                                });
+                                                window.refresh();
+                                                cx.new(|_| DraggedTabGhost::from_dragged(tab))
+                                            },
+                                        )
                                         .on_mouse_down(
                                             MouseButton::Left,
                                             cx.listener(move |this, _, _, cx| {
@@ -468,12 +699,50 @@ impl Render for TabBar {
                                                 cx.emit(TabBarEvent::Select(idx));
                                             }),
                                         )
+                                        .on_mouse_down(
+                                            MouseButton::Middle,
+                                            cx.listener(move |_this, _, _, cx| {
+                                                cx.stop_propagation();
+                                                if !is_pinned {
+                                                    cx.emit(TabBarEvent::Close(idx));
+                                                }
+                                            }),
+                                        )
+                                        .on_mouse_down(
+                                            MouseButton::Right,
+                                            cx.listener(
+                                                move |_this, event: &MouseDownEvent, _, cx| {
+                                                    cx.stop_propagation();
+                                                    cx.emit(TabBarEvent::ContextMenu {
+                                                        tab_index: idx,
+                                                        position: event.position,
+                                                    });
+                                                },
+                                            ),
+                                        )
                                         .child(
                                             div()
                                                 .flex()
                                                 .items_center()
-                                                .gap_2()
-                                                .child(file_name)
+                                                .gap_1p5()
+                                                .children(if is_pinned {
+                                                    Some(
+                                                        div()
+                                                            .w(px(5.0))
+                                                            .h(px(5.0))
+                                                            .rounded_full()
+                                                            .bg(accent_color),
+                                                    )
+                                                } else {
+                                                    None
+                                                })
+                                                .child(tab_name)
+                                                .children(disambiguator.map(|parent| {
+                                                    div()
+                                                        .text_size(px(10.5))
+                                                        .text_color(with_alpha(text_color, 0.58))
+                                                        .child(parent)
+                                                }))
                                                 .children(if is_ro {
                                                     Some(
                                                         div()
@@ -498,7 +767,27 @@ impl Render for TabBar {
                                                     None
                                                 }),
                                         )
-                                        .child(
+                                        .child(if is_pinned {
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .w(px(16.0))
+                                                .h(px(16.0))
+                                                .ml_1p5()
+                                                .rounded_sm()
+                                                .text_size(px(10.5))
+                                                .text_color(with_alpha(text_color, 0.7))
+                                                .hover(|s| s.bg(rgba(0xffffff22)))
+                                                .child("📌")
+                                                .on_mouse_down(
+                                                    MouseButton::Left,
+                                                    cx.listener(move |_this, _, _, cx| {
+                                                        cx.stop_propagation();
+                                                        cx.emit(TabBarEvent::TogglePin(idx));
+                                                    }),
+                                                )
+                                        } else {
                                             div()
                                                 .flex()
                                                 .items_center()
@@ -516,13 +805,70 @@ impl Render for TabBar {
                                                         cx.stop_propagation();
                                                         cx.emit(TabBarEvent::Close(idx));
                                                     }),
-                                                ),
-                                        )
+                                                )
+                                        })
                                 })
                                 .collect::<Vec<_>>(),
                             ),
                     ),
             )
+            // Overflow scroll arrows (< >) when tabs exceed viewport width
+            .children(if is_overflowing {
+                let inactive_fg = led_color_to_gpui(theme.ui.tab_inactive_fg);
+                Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .mb_1()
+                        .ml_1()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .w(px(22.0))
+                                .h(px(24.0))
+                                .rounded_sm()
+                                .text_size(px(12.0))
+                                .text_color(inactive_fg)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgba(0xffffff18)))
+                                .child("‹")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.nudge_scroll(px(140.0), cx);
+                                    }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .w(px(22.0))
+                                .h(px(24.0))
+                                .rounded_sm()
+                                .text_size(px(12.0))
+                                .text_color(inactive_fg)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(rgba(0xffffff18)))
+                                .child("›")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.nudge_scroll(px(-140.0), cx);
+                                    }),
+                                ),
+                        ),
+                )
+            } else {
+                None
+            })
+            // New tab (+) button
             .child(
                 div()
                     .flex()
@@ -531,7 +877,7 @@ impl Render for TabBar {
                     .w(px(26.0))
                     .h(px(26.0))
                     .mb_1()
-                    .ml_2()
+                    .ml_1()
                     .rounded_md()
                     .text_size(px(16.0))
                     .text_color(led_color_to_gpui(theme.ui.tab_inactive_fg))
@@ -543,6 +889,36 @@ impl Render for TabBar {
                         cx.listener(|_this, _, _, cx| {
                             cx.stop_propagation();
                             cx.emit(TabBarEvent::New);
+                        }),
+                    ),
+            )
+            // Tab list dropdown (▾) button for instant navigation across all open tabs
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .h(px(24.0))
+                    .px_1p5()
+                    .mb_1()
+                    .ml_1()
+                    .rounded_md()
+                    .text_size(px(11.0))
+                    .text_color(led_color_to_gpui(theme.ui.tab_inactive_fg))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgba(0xffffff18)).text_color(gpui::rgb(0xffffff)))
+                    .child(if tab_count > 1 {
+                        format!("{} ▾", tab_count)
+                    } else {
+                        "▾".to_string()
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|_this, event: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            cx.emit(TabBarEvent::ToggleTabListDropdown {
+                                anchor_x: event.position.x,
+                            });
                         }),
                     ),
             )
@@ -598,18 +974,19 @@ impl Render for TabBar {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{point, px, size, Bounds};
+    use gpui::{point, px, size, Bounds, Pixels};
     use super::{
-        compute_insertion_indicator_x, compute_tab_insert_slot, hit_test_window_stack,
+        compute_auto_scroll_offset, compute_insertion_indicator_x, compute_tab_insert_slot,
+        compute_tab_min_scroll_offset, hit_test_window_stack, is_tab_strip_overflowing,
         window_content_screen_origin, window_outer_screen_bounds,
     };
 
     #[::core::prelude::v1::test]
     fn test_compute_tab_insert_slot_and_indicator_positions() {
         let tabs = vec![
-            Bounds::new(point(px(8.0), px(6.0)), size(px(100.0), px(30.0))),   // [8..108], mid=58
-            Bounds::new(point(px(112.0), px(6.0)), size(px(100.0), px(30.0))), // [112..212], mid=162
-            Bounds::new(point(px(216.0), px(6.0)), size(px(100.0), px(30.0))), // [216..316], mid=266
+            Bounds::new(point(px(8.0), px(6.0)), size(px(100.0), px(30.0))),
+            Bounds::new(point(px(112.0), px(6.0)), size(px(100.0), px(30.0))),
+            Bounds::new(point(px(216.0), px(6.0)), size(px(100.0), px(30.0))),
         ];
 
         assert_eq!(compute_tab_insert_slot(&tabs, px(0.0)), 0);
@@ -629,8 +1006,41 @@ mod tests {
     }
 
     #[::core::prelude::v1::test]
+    fn test_tab_strip_auto_scroll_and_overflow_detection() {
+        let viewport = Bounds::new(point(px(10.0), px(0.0)), size(px(250.0), px(36.0)));
+        // 4 tabs of 100px each, gap 4px -> total width = 412px > 250px (overflowing)
+        let tabs_at_zero = vec![
+            Bounds::new(point(px(10.0), px(6.0)), size(px(100.0), px(30.0))),  // [0..100]
+            Bounds::new(point(px(114.0), px(6.0)), size(px(100.0), px(30.0))), // [104..204]
+            Bounds::new(point(px(218.0), px(6.0)), size(px(100.0), px(30.0))), // [208..308]
+            Bounds::new(point(px(322.0), px(6.0)), size(px(100.0), px(30.0))), // [312..412]
+        ];
+
+        assert!(is_tab_strip_overflowing(Some(viewport), &tabs_at_zero));
+        assert_eq!(compute_tab_min_scroll_offset(viewport, &tabs_at_zero), px(-162.0));
+
+        // Active tab 0 is already visible -> stays at 0
+        assert_eq!(compute_auto_scroll_offset(px(0.0), viewport, &tabs_at_zero, 0), px(0.0));
+        // Active tab 3 ends at 412 -> must scroll left to 250 - 412 = -162
+        assert_eq!(compute_auto_scroll_offset(px(0.0), viewport, &tabs_at_zero, 3), px(-162.0));
+
+        // Now suppose tabs were painted at offset = -162 and user switches back to tab 0
+        let tabs_scrolled: Vec<Bounds<Pixels>> = tabs_at_zero
+            .iter()
+            .map(|b| Bounds::new(point(b.origin.x - px(162.0), b.origin.y), b.size))
+            .collect();
+        assert_eq!(
+            compute_auto_scroll_offset(px(-162.0), viewport, &tabs_scrolled, 0),
+            px(0.0)
+        );
+
+        // Non-overflowing strip (2 tabs = 204px <= 250px) -> always 0
+        assert!(!is_tab_strip_overflowing(Some(viewport), &tabs_at_zero[..2]));
+        assert_eq!(compute_auto_scroll_offset(px(-50.0), viewport, &tabs_at_zero[..2], 1), px(0.0));
+    }
+
+    #[::core::prelude::v1::test]
     fn test_cross_window_screen_coordinate_mapping_and_z_order_hit_test() {
-        // Primary monitor window A at (100, 100), size 800x600 with 28px macOS titlebar
         let win_a_bounds = Bounds::new(point(px(100.0), px(100.0)), size(px(800.0), px(600.0)));
         let win_a_viewport = size(px(800.0), px(572.0));
         let disp_primary = point(px(0.0), px(0.0));
@@ -638,7 +1048,6 @@ mod tests {
         let content_a = window_content_screen_origin(win_a_bounds, win_a_viewport, disp_primary);
         assert_eq!(content_a, point(px(100.0), px(128.0)));
 
-        // Secondary monitor at x=1920, y=200 hosting window B at display-local (50, 40)
         let win_b_bounds = Bounds::new(point(px(50.0), px(40.0)), size(px(800.0), px(600.0)));
         let win_b_viewport = size(px(800.0), px(572.0));
         let disp_secondary = point(px(1920.0), px(200.0));
@@ -647,32 +1056,26 @@ mod tests {
         assert_eq!(outer_b.origin, point(px(1970.0), px(240.0)));
         assert_eq!(content_b, point(px(1970.0), px(268.0)));
 
-        // Overlapping window C on primary monitor in front of A
         let win_c_bounds = Bounds::new(point(px(500.0), px(100.0)), size(px(600.0), px(500.0)));
         let win_c_viewport = size(px(600.0), px(472.0));
         let outer_c = window_outer_screen_bounds(win_c_bounds, disp_primary);
         let content_c = window_content_screen_origin(win_c_bounds, win_c_viewport, disp_primary);
 
-        // Front-to-back z-order: C, A, B
         let stack = vec![
             ("C", outer_c, content_c),
             ("A", outer_a, content_a),
             ("B", outer_b, content_b),
         ];
 
-        // Overlap region (600, 150) must hit frontmost window C
         let hit_overlap = hit_test_window_stack(point(px(600.0), px(150.0)), &stack);
         assert_eq!(hit_overlap, Some(("C", point(px(100.0), px(22.0)))));
 
-        // Dragging from A into secondary monitor window B at global (2070, 288)
         let hit_b = hit_test_window_stack(point(px(2070.0), px(288.0)), &stack);
         assert_eq!(hit_b, Some(("B", point(px(100.0), px(20.0)))));
 
-        // Outside all windows returns None
         let hit_none = hit_test_window_stack(point(px(1500.0), px(10.0)), &stack);
         assert_eq!(hit_none, None);
 
-        // Negative-coordinate secondary monitor placed to the LEFT of primary (x=-1920)
         let disp_left = point(px(-1920.0), px(0.0));
         let win_left_bounds = Bounds::new(point(px(100.0), px(80.0)), size(px(900.0), px(700.0)));
         let win_left_viewport = size(px(900.0), px(672.0));

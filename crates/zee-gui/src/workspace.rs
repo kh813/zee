@@ -12,9 +12,29 @@ pub enum SidebarTab {
     History,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClosedTabEntry {
+    pub path: Option<PathBuf>,
+    pub unsaved_content: Option<String>,
+    pub cursor: usize,
+    pub scroll_row: usize,
+    pub pinned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabDisplayLabel {
+    pub name: String,
+    pub disambiguator: Option<String>,
+    pub full_path: Option<String>,
+}
+
+const MAX_CLOSED_TABS_HISTORY: usize = 20;
+
 pub struct Workspace {
     pub editors: Vec<Editor>,
     pub active_editor_index: usize,
+    pub closed_tabs: Vec<ClosedTabEntry>,
+    pub has_custom_root: bool,
     pub theme: Theme,
     pub config: Config,
     pub sidebar_visible: bool,
@@ -73,6 +93,8 @@ impl Workspace {
         Self {
             editors: vec![initial_editor],
             active_editor_index: 0,
+            closed_tabs: Vec::new(),
+            has_custom_root: is_custom_root,
             theme,
             config,
             sidebar_visible,
@@ -92,6 +114,7 @@ impl Workspace {
 
     pub fn set_root_path(&mut self, path: PathBuf) {
         self.file_tree.set_root(path);
+        self.has_custom_root = true;
         self.sidebar_visible = true;
         self.sidebar_tab = SidebarTab::Files;
     }
@@ -322,7 +345,8 @@ impl Workspace {
 
     pub fn close_editor(&mut self, index: usize) {
         if index < self.editors.len() {
-            self.editors.remove(index);
+            let removed = self.editors.remove(index);
+            self.record_closed_tab(&removed);
             if self.editors.is_empty() {
                 self.active_editor_index = 0;
             } else if self.active_editor_index >= self.editors.len() {
@@ -330,12 +354,384 @@ impl Workspace {
             } else if self.active_editor_index > index {
                 self.active_editor_index -= 1;
             }
+            self.update_outline();
         }
+    }
+
+    fn record_closed_tab(&mut self, editor: &Editor) {
+        let has_content = editor.rope.len_chars() > 0;
+        if editor.path.is_none() && !has_content {
+            return;
+        }
+        let unsaved_content = if editor.path.is_none() || editor.is_modified() {
+            Some(editor.rope.to_string())
+        } else {
+            None
+        };
+        self.closed_tabs.push(ClosedTabEntry {
+            path: editor.path.clone(),
+            unsaved_content,
+            cursor: editor.cursor,
+            scroll_row: editor.scroll_row,
+            pinned: editor.pinned,
+        });
+        if self.closed_tabs.len() > MAX_CLOSED_TABS_HISTORY {
+            let overflow = self.closed_tabs.len() - MAX_CLOSED_TABS_HISTORY;
+            self.closed_tabs.drain(0..overflow);
+        }
+    }
+
+    /// Reopen the most recently closed tab in this workspace (Cmd+Shift+T / Ctrl+Shift+T).
+    pub fn reopen_closed_tab(&mut self) -> bool {
+        while let Some(entry) = self.closed_tabs.pop() {
+            let editor = if let Some(ref path) = entry.path {
+                if let Ok(mut ed) = Editor::from_file(path) {
+                    if let Some(ref unsaved) = entry.unsaved_content {
+                        ed.delete(0..ed.rope.len_chars());
+                        ed.insert(0, unsaved);
+                        ed.modified_since_save = true;
+                    }
+                    Some(ed)
+                } else if let Some(ref unsaved) = entry.unsaved_content {
+                    let mut ed = Editor::new();
+                    ed.path = Some(path.clone());
+                    ed.insert(0, unsaved);
+                    ed.modified_since_save = true;
+                    Some(ed)
+                } else {
+                    None
+                }
+            } else if let Some(ref unsaved) = entry.unsaved_content {
+                let mut ed = Editor::new();
+                ed.insert(0, unsaved);
+                ed.modified_since_save = !unsaved.is_empty();
+                Some(ed)
+            } else {
+                None
+            };
+
+            if let Some(mut ed) = editor {
+                ed.cursor = entry.cursor.min(ed.rope.len_chars());
+                ed.scroll_row = entry.scroll_row;
+                ed.pinned = entry.pinned;
+                let insert_slot = if ed.pinned {
+                    self.pinned_count()
+                } else {
+                    self.editors.len()
+                };
+                self.insert_editor_at(ed, insert_slot);
+                return true;
+            }
+        }
+        false
     }
 
     pub fn close_active_editor(&mut self) {
         if !self.editors.is_empty() {
             self.close_editor(self.active_editor_index);
+        }
+    }
+
+    /// Number of pinned tabs currently at the left of the tab strip.
+    pub fn pinned_count(&self) -> usize {
+        self.editors.iter().filter(|e| e.pinned).count()
+    }
+
+    /// Toggle pinned state of the tab at `index`, relocating it to the pinned/unpinned boundary
+    /// so pinned tabs always remain grouped on the left. Returns the tab's new index.
+    pub fn toggle_pin_tab(&mut self, index: usize) -> Option<usize> {
+        if index >= self.editors.len() {
+            return None;
+        }
+        let was_pinned = self.editors[index].pinned;
+        let current_pinned = self.pinned_count();
+        self.editors[index].pinned = !was_pinned;
+
+        let target_index = if !was_pinned {
+            // Pinning an unpinned tab -> move to end of pinned group
+            current_pinned.min(self.editors.len().saturating_sub(1))
+        } else {
+            // Unpinning a pinned tab -> move to start of unpinned group
+            current_pinned.saturating_sub(1)
+        };
+
+        if index != target_index {
+            self.move_tab(index, target_index);
+        }
+        Some(target_index)
+    }
+
+    /// Indices of tabs other than `keep_index` that are not pinned.
+    pub fn closable_other_indices(&self, keep_index: usize) -> Vec<usize> {
+        self.editors
+            .iter()
+            .enumerate()
+            .filter(|&(i, e)| i != keep_index && !e.pinned)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Indices of tabs strictly to the right of `index` that are not pinned.
+    pub fn closable_right_indices(&self, index: usize) -> Vec<usize> {
+        self.editors
+            .iter()
+            .enumerate()
+            .filter(|&(i, e)| i > index && !e.pinned)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Close all unmodified tabs among `indices` (in descending order so indices remain valid).
+    /// Returns `Some(first_modified_index)` (in the post-close indices) if any target tab has
+    /// unsaved changes so the caller can focus it and prompt the user.
+    pub fn close_clean_tabs(&mut self, indices: &[usize]) -> Option<usize> {
+        let mut sorted: Vec<usize> = indices
+            .iter()
+            .copied()
+            .filter(|&i| i < self.editors.len())
+            .collect();
+        sorted.sort_unstable();
+        sorted.dedup();
+
+        let mut modified_remaining: Vec<usize> = Vec::new();
+        for &idx in sorted.iter().rev() {
+            if self.editors[idx].is_modified() {
+                modified_remaining.push(idx);
+            } else {
+                self.close_editor(idx);
+                // Shift any previously recorded modified indices above idx down by 1
+                for m in &mut modified_remaining {
+                    if *m > idx {
+                        *m -= 1;
+                    }
+                }
+            }
+        }
+        modified_remaining.sort_unstable();
+        modified_remaining.into_iter().next()
+    }
+
+    /// Compute display labels for all open tabs, automatically adding the shortest
+    /// distinguishing parent path prefix whenever two or more tabs share the same filename.
+    pub fn compute_tab_display_labels(editors: &[Editor]) -> Vec<TabDisplayLabel> {
+        use std::collections::HashMap;
+
+        let base_names: Vec<String> = editors
+            .iter()
+            .map(|e| {
+                e.path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("[No Name]")
+                    .to_string()
+            })
+            .collect();
+
+        let mut groups: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (idx, name) in base_names.iter().enumerate() {
+            if editors[idx].path.is_some() {
+                groups.entry(name.as_str()).or_default().push(idx);
+            }
+        }
+
+        let mut disambiguators: Vec<Option<String>> = vec![None; editors.len()];
+        for (_name, indices) in groups {
+            if indices.len() <= 1 {
+                continue;
+            }
+            // Extract ancestor directory names (closest parent first) for each duplicate tab
+            let ancestors: Vec<Vec<String>> = indices
+                .iter()
+                .map(|&idx| {
+                    let mut parts = Vec::new();
+                    if let Some(mut cur) = editors[idx].path.as_deref().and_then(|p| p.parent()) {
+                        while let Some(os_name) = cur.file_name() {
+                            if let Some(s) = os_name.to_str() {
+                                parts.push(s.to_string());
+                            }
+                            match cur.parent() {
+                                Some(p) if p != cur => cur = p,
+                                _ => break,
+                            }
+                        }
+                    }
+                    parts
+                })
+                .collect();
+
+            let max_depth = ancestors.iter().map(|a| a.len()).max().unwrap_or(0);
+            for (local_i, &tab_idx) in indices.iter().enumerate() {
+                let mut chosen: Option<String> = None;
+                for depth in 1..=max_depth.max(1) {
+                    let candidate = {
+                        let slice = &ancestors[local_i][..depth.min(ancestors[local_i].len())];
+                        let rev: Vec<&str> = slice.iter().rev().map(|s| s.as_str()).collect();
+                        rev.join("/")
+                    };
+                    if candidate.is_empty() {
+                        continue;
+                    }
+                    let unique = indices.iter().enumerate().all(|(other_i, _)| {
+                        if other_i == local_i {
+                            return true;
+                        }
+                        let other_slice =
+                            &ancestors[other_i][..depth.min(ancestors[other_i].len())];
+                        let other_rev: Vec<&str> =
+                            other_slice.iter().rev().map(|s| s.as_str()).collect();
+                        other_rev.join("/") != candidate
+                    });
+                    chosen = Some(candidate);
+                    if unique {
+                        break;
+                    }
+                }
+                disambiguators[tab_idx] = chosen;
+            }
+        }
+
+        editors
+            .iter()
+            .enumerate()
+            .map(|(idx, ed)| TabDisplayLabel {
+                name: base_names[idx].clone(),
+                disambiguator: disambiguators[idx].clone(),
+                full_path: ed.path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            })
+            .collect()
+    }
+
+    /// Compute the dynamic OS window title reflecting active tab, modified state, and folder.
+    pub fn compute_window_title(&self) -> String {
+        let active_part = match self.active_editor() {
+            Some(ed) => {
+                let name = ed
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("[No Name]");
+                if ed.is_modified() {
+                    format!("● {}", name)
+                } else {
+                    name.to_string()
+                }
+            }
+            None => return "Zee".to_string(),
+        };
+
+        let folder_name = if self.has_custom_root {
+            self.file_tree
+                .root_path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .filter(|s| !s.is_empty())
+        } else {
+            None
+        };
+
+        match folder_name {
+            Some(folder) => format!("{} — {} — Zee", active_part, folder),
+            None => format!("{} — Zee", active_part),
+        }
+    }
+
+    /// Capture this workspace's complete state into a serializable `WindowSession`.
+    pub fn to_window_session(
+        &self,
+        window_state: Option<zee_core::window_state::WindowState>,
+    ) -> zee_core::session::WindowSession {
+        let mut files = Vec::with_capacity(self.editors.len());
+        for editor in &self.editors {
+            let unsaved_content = if editor.is_modified() || editor.path.is_none() {
+                Some(editor.rope.to_string())
+            } else {
+                None
+            };
+            files.push(zee_core::session::SessionEditorState {
+                path: editor.path.clone(),
+                cursor: editor.cursor,
+                scroll_row: editor.scroll_row,
+                is_modified: editor.is_modified(),
+                unsaved_content,
+                pinned: editor.pinned,
+            });
+        }
+        let sidebar_tab = match self.sidebar_tab {
+            SidebarTab::Files => "files".to_string(),
+            SidebarTab::Outline => "outline".to_string(),
+            SidebarTab::History => "history".to_string(),
+        };
+        zee_core::session::WindowSession {
+            files,
+            active_index: self.active_editor_index,
+            root_folder: if self.has_custom_root {
+                Some(self.file_tree.root_path.clone())
+            } else {
+                None
+            },
+            expanded_folders: self.file_tree.expanded_paths(),
+            sidebar_visible: self.sidebar_visible,
+            sidebar_tab,
+            window_state,
+        }
+    }
+
+    /// Populate this workspace from a `WindowSession` snapshot.
+    pub fn restore_from_window_session(&mut self, session: &zee_core::session::WindowSession) {
+        self.sidebar_visible = session.sidebar_visible;
+        self.sidebar_tab = match session.sidebar_tab.as_str() {
+            "outline" => SidebarTab::Outline,
+            "history" => SidebarTab::History,
+            _ => SidebarTab::Files,
+        };
+        if !session.expanded_folders.is_empty() {
+            self.file_tree.restore_expanded_paths(&session.expanded_folders);
+        }
+
+        let mut opened_any = false;
+        for file_state in &session.files {
+            let editor = if let Some(path) = &file_state.path {
+                if let Ok(mut ed) = Editor::from_file(path) {
+                    if let Some(unsaved) = &file_state.unsaved_content {
+                        ed.delete(0..ed.rope.len_chars());
+                        ed.insert(0, unsaved);
+                        ed.modified_since_save = file_state.is_modified;
+                    }
+                    Some(ed)
+                } else if let Some(unsaved) = &file_state.unsaved_content {
+                    let mut ed = Editor::new();
+                    ed.path = Some(path.clone());
+                    ed.insert(0, unsaved);
+                    ed.modified_since_save = file_state.is_modified;
+                    Some(ed)
+                } else {
+                    None
+                }
+            } else if let Some(unsaved) = &file_state.unsaved_content {
+                let mut ed = Editor::new();
+                ed.insert(0, unsaved);
+                ed.modified_since_save = file_state.is_modified;
+                Some(ed)
+            } else {
+                None
+            };
+
+            if let Some(mut ed) = editor {
+                ed.cursor = file_state.cursor.min(ed.rope.len_chars());
+                ed.scroll_row = file_state.scroll_row;
+                ed.pinned = file_state.pinned;
+                self.add_editor(ed);
+                opened_any = true;
+            }
+        }
+
+        if session.active_index < self.editors.len() {
+            self.active_editor_index = session.active_index;
+        }
+        if opened_any {
+            self.update_outline();
         }
     }
 
@@ -379,10 +775,20 @@ impl Workspace {
         true
     }
 
-    /// Reorder a tab using a visual insertion slot (`0..=editors.len()`).
+    /// Reorder a tab using a visual insertion slot (`0..=editors.len()`),
+    /// keeping pinned tabs grouped on the left and unpinned tabs on the right.
     pub fn move_tab_to_slot(&mut self, from_index: usize, insert_slot: usize) -> bool {
+        if from_index >= self.editors.len() {
+            return false;
+        }
+        let pinned = self.pinned_count();
+        let clamped_slot = if self.editors[from_index].pinned {
+            insert_slot.min(pinned)
+        } else {
+            insert_slot.max(pinned).min(self.editors.len())
+        };
         if let Some(target_index) =
-            Self::resolve_same_window_drop_index(from_index, insert_slot, self.editors.len())
+            Self::resolve_same_window_drop_index(from_index, clamped_slot, self.editors.len())
         {
             self.move_tab(from_index, target_index)
         } else {
@@ -407,7 +813,7 @@ impl Workspace {
         Some(editor)
     }
 
-    /// Insert an existing editor at `insert_slot` (clamped to `0..=editors.len()`)
+    /// Insert an existing editor at `insert_slot` (respecting pinned/unpinned grouping)
     /// without losing unsaved state, undo history, cursor, or scroll position,
     /// and make it the active tab.
     pub fn insert_editor_at(&mut self, mut editor: Editor, insert_slot: usize) -> usize {
@@ -416,7 +822,12 @@ impl Workspace {
         } else {
             zee_core::ViMode::Insert
         };
-        let pos = insert_slot.min(self.editors.len());
+        let pinned = self.pinned_count();
+        let pos = if editor.pinned {
+            insert_slot.min(pinned)
+        } else {
+            insert_slot.max(pinned).min(self.editors.len())
+        };
         self.editors.insert(pos, editor);
         self.active_editor_index = pos;
         self.update_outline();
@@ -688,6 +1099,7 @@ mod tests {
                     scroll_row: 1,
                     is_modified: false,
                     unsaved_content: None,
+                    pinned: false,
                 },
                 zee_core::session::SessionEditorState {
                     path: Some(file2.clone()),
@@ -695,6 +1107,7 @@ mod tests {
                     scroll_row: 0,
                     is_modified: true,
                     unsaved_content: Some("# Title\n\nModified draft\n".to_string()),
+                    pinned: false,
                 },
                 zee_core::session::SessionEditorState {
                     path: None,
@@ -702,6 +1115,7 @@ mod tests {
                     scroll_row: 0,
                     is_modified: true,
                     unsaved_content: Some("untitled scratch".to_string()),
+                    pinned: false,
                 },
             ],
             active_index: 1,
@@ -710,6 +1124,7 @@ mod tests {
             sidebar_visible: true,
             sidebar_tab: "outline".to_string(),
             window_state: None,
+            extra_windows: vec![],
         };
 
         // Simulate restore logic
@@ -2133,6 +2548,183 @@ mod tests {
         assert_eq!(dst.editors.len(), 3);
         assert_eq!(dst.active_editor_index, 2);
         assert_eq!(dst.editors[2].rope.to_string(), "beta");
+    }
+
+    #[test]
+    fn test_pin_unpin_tab_grouping_and_drag_boundary() {
+        let mut ws = Workspace::new(Config::default());
+        let mut e0 = Editor::new(); e0.insert(0, "a");
+        let mut e1 = Editor::new(); e1.insert(0, "b");
+        let mut e2 = Editor::new(); e2.insert(0, "c");
+        ws.editors = vec![e0, e1, e2];
+        ws.active_editor_index = 2; // "c" active
+
+        // Pin "c" (index 2) -> moves to index 0 (pinned group), stays active
+        assert_eq!(ws.toggle_pin_tab(2), Some(0));
+        assert_eq!(ws.pinned_count(), 1);
+        assert!(ws.editors[0].pinned);
+        assert_eq!(ws.active_editor_index, 0);
+        assert_eq!(ws.editors.iter().map(|e| e.rope.to_string()).collect::<Vec<_>>(), vec!["c", "a", "b"]);
+
+        // Pin "b" (index 2) -> moves to index 1 (end of pinned group)
+        assert_eq!(ws.toggle_pin_tab(2), Some(1));
+        assert_eq!(ws.pinned_count(), 2);
+        assert_eq!(ws.editors.iter().map(|e| e.rope.to_string()).collect::<Vec<_>>(), vec!["c", "b", "a"]);
+
+        // Dragging unpinned "a" (index 2) to slot 0 must stay clamped at unpinned zone (no-op)
+        assert!(!ws.move_tab_to_slot(2, 0));
+        // Dragging pinned "c" (index 0) to slot 3 must clamp within pinned zone -> index 1
+        assert!(ws.move_tab_to_slot(0, 3));
+        assert_eq!(ws.editors.iter().map(|e| e.rope.to_string()).collect::<Vec<_>>(), vec!["b", "c", "a"]);
+        assert!(ws.editors[0].pinned && ws.editors[1].pinned && !ws.editors[2].pinned);
+
+        // Unpin "b" (index 0) -> moves to start of unpinned group (index 1)
+        assert_eq!(ws.toggle_pin_tab(0), Some(1));
+        assert_eq!(ws.pinned_count(), 1);
+        assert_eq!(ws.editors.iter().map(|e| e.rope.to_string()).collect::<Vec<_>>(), vec!["c", "b", "a"]);
+    }
+
+    #[test]
+    fn test_close_others_and_close_right_respect_pinned_and_unsaved() {
+        let mut ws = Workspace::new(Config::default());
+        let mut pinned = Editor::new(); pinned.pinned = true;
+        let clean1 = Editor::new();
+        let mut dirty = Editor::new(); dirty.insert(0, "unsaved");
+        let clean2 = Editor::new();
+        ws.editors = vec![pinned, clean1, dirty, clean2];
+        ws.active_editor_index = 1;
+
+        // Closable others when keeping index 1 must exclude index 0 (pinned) and index 1 (keep)
+        assert_eq!(ws.closable_other_indices(1), vec![2, 3]);
+        // Closable right of index 0 excludes nothing on the right except pinned (none)
+        assert_eq!(ws.closable_right_indices(0), vec![1, 2, 3]);
+
+        // Closing [2, 3] closes clean2 (3) and reports remaining dirty tab (2)
+        let first_dirty = ws.close_clean_tabs(&[2, 3]);
+        assert_eq!(first_dirty, Some(2));
+        assert_eq!(ws.editors.len(), 3);
+        assert!(ws.editors[0].pinned);
+        assert!(ws.editors[2].is_modified());
+    }
+
+    #[test]
+    fn test_reopen_closed_tab_restores_file_scratch_cursor_and_pinned() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_reopen_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let file_path = temp_dir.join("notes.txt");
+        std::fs::write(&file_path, "hello\nworld\nline3\n").unwrap();
+
+        let mut ws = Workspace::new(Config::default());
+        let mut ed = Editor::from_file(&file_path).unwrap();
+        ed.cursor = 8;
+        ed.scroll_row = 1;
+        ed.pinned = true;
+        ws.add_editor(ed);
+
+        let mut scratch = Editor::new();
+        scratch.insert(0, "draft text");
+        scratch.cursor = 5;
+        ws.add_editor(scratch);
+        assert_eq!(ws.editors.len(), 2);
+
+        // Close scratch (index 1) and file (index 0)
+        ws.close_editor(1);
+        ws.close_editor(0);
+        assert!(ws.editors.is_empty());
+
+        // First reopen restores file_path with cursor, scroll_row, and pinned
+        assert!(ws.reopen_closed_tab());
+        assert_eq!(ws.editors.len(), 1);
+        assert_eq!(ws.editors[0].path.as_ref(), Some(&file_path));
+        assert_eq!(ws.editors[0].cursor, 8);
+        assert_eq!(ws.editors[0].scroll_row, 1);
+        assert!(ws.editors[0].pinned);
+
+        // Second reopen restores scratch buffer with content and cursor
+        assert!(ws.reopen_closed_tab());
+        assert_eq!(ws.editors.len(), 2);
+        assert_eq!(ws.editors[1].path, None);
+        assert_eq!(ws.editors[1].rope.to_string(), "draft text");
+        assert_eq!(ws.editors[1].cursor, 5);
+
+        // No more history
+        assert!(!ws.reopen_closed_tab());
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_duplicate_filename_disambiguation_and_dynamic_window_title() {
+        let mut e1 = Editor::new();
+        e1.path = Some(PathBuf::from("/repo/crates/zee-gui/src/mod.rs"));
+        let mut e2 = Editor::new();
+        e2.path = Some(PathBuf::from("/repo/crates/zee-tui/src/mod.rs"));
+        let mut e3 = Editor::new();
+        e3.path = Some(PathBuf::from("/repo/README.md"));
+        let e4 = Editor::new(); // untitled
+
+        let labels = Workspace::compute_tab_display_labels(&[e1, e2, e3, e4]);
+        assert_eq!(labels[0].name, "mod.rs");
+        assert_eq!(labels[0].disambiguator.as_deref(), Some("zee-gui/src"));
+        assert_eq!(labels[1].name, "mod.rs");
+        assert_eq!(labels[1].disambiguator.as_deref(), Some("zee-tui/src"));
+        assert_eq!(labels[2].name, "README.md");
+        assert_eq!(labels[2].disambiguator, None);
+        assert_eq!(labels[3].name, "[No Name]");
+        assert_eq!(labels[3].disambiguator, None);
+
+        // Dynamic OS window title
+        let mut ws = Workspace::new(Config::default());
+        assert_eq!(ws.compute_window_title(), "[No Name] — Zee");
+        ws.active_editor_mut().unwrap().insert(0, "x");
+        assert_eq!(ws.compute_window_title(), "● [No Name] — Zee");
+        ws.active_editor_mut().unwrap().path = Some(PathBuf::from("/tmp/demo/main.rs"));
+        ws.set_root_path(PathBuf::from("/tmp/demo"));
+        assert_eq!(ws.compute_window_title(), "● main.rs — demo — Zee");
+        ws.active_editor_mut().unwrap().modified_since_save = false;
+        ws.active_editor_mut().unwrap().saved_undo_len = ws.active_editor().unwrap().undo_stack.len();
+        assert_eq!(ws.compute_window_title(), "main.rs — demo — Zee");
+    }
+
+    #[test]
+    fn test_window_session_snapshot_and_restore_preserves_pinned_and_multi_window() {
+        let temp_dir = std::env::temp_dir().join(format!("zee_multiwin_session_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let f1 = temp_dir.join("one.rs");
+        let f2 = temp_dir.join("two.md");
+        std::fs::write(&f1, "fn a() {}\n").unwrap();
+        std::fs::write(&f2, "# Two\n").unwrap();
+
+        let mut w1 = Workspace::new_with_root(Config::default(), Some(temp_dir.clone()));
+        let mut ed1 = Editor::from_file(&f1).unwrap();
+        ed1.pinned = true;
+        ed1.cursor = 4;
+        w1.add_editor(ed1);
+
+        let mut w2 = Workspace::new(Config::default());
+        let mut ed2 = Editor::from_file(&f2).unwrap();
+        ed2.insert(6, "draft");
+        w2.add_editor(ed2);
+
+        let session = zee_core::session::UpdateSession::from_windows(vec![
+            w1.to_window_session(None),
+            w2.to_window_session(None),
+        ]);
+        let all = session.all_windows();
+        assert_eq!(all.len(), 2);
+
+        let mut restored_1 = Workspace::new_with_root(Config::default(), all[0].root_folder.clone());
+        restored_1.restore_from_window_session(&all[0]);
+        assert_eq!(restored_1.editors.len(), 1);
+        assert!(restored_1.editors[0].pinned);
+        assert_eq!(restored_1.editors[0].cursor, 4);
+
+        let mut restored_2 = Workspace::new_with_root(Config::default(), all[1].root_folder.clone());
+        restored_2.restore_from_window_session(&all[1]);
+        assert_eq!(restored_2.editors.len(), 1);
+        assert!(restored_2.editors[0].is_modified());
+        assert_eq!(restored_2.editors[0].rope.to_string(), "# Two\ndraft");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

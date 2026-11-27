@@ -219,6 +219,18 @@ impl I18n {
         m.insert("menu.tabs".to_string(), "Tabs".to_string());
         m.insert("menu.tabs.next".to_string(), "Next Tab".to_string());
         m.insert("menu.tabs.prev".to_string(), "Previous Tab".to_string());
+        m.insert("menu.tabs.reopen_closed".to_string(), "Reopen Closed Tab".to_string());
+        m.insert("menu.tabs.pin".to_string(), "Pin Tab".to_string());
+        m.insert("menu.tabs.unpin".to_string(), "Unpin Tab".to_string());
+        m.insert("menu.tabs.close".to_string(), "Close Tab".to_string());
+        m.insert("menu.tabs.close_others".to_string(), "Close Other Tabs".to_string());
+        m.insert("menu.tabs.close_right".to_string(), "Close Tabs to the Right".to_string());
+        m.insert("menu.tabs.move_to_new_window".to_string(), "Move Tab to New Window".to_string());
+        m.insert("menu.tabs.copy_path".to_string(), "Copy File Path".to_string());
+        m.insert("menu.tabs.reveal_in_finder".to_string(), "Reveal in Finder".to_string());
+        m.insert("menu.tabs.reveal_in_explorer".to_string(), "Show in Explorer".to_string());
+        m.insert("menu.tabs.reveal_in_file_manager".to_string(), "Open Containing Folder".to_string());
+        m.insert("menu.tabs.all_tabs".to_string(), "Open Tabs".to_string());
 
         m.insert("menu.file".to_string(), "File".to_string());
         m.insert("menu.file.new_tab".to_string(), "New Tab".to_string());
@@ -521,6 +533,18 @@ impl I18n {
         m.insert("menu.tabs".to_string(), "タブ".to_string());
         m.insert("menu.tabs.next".to_string(), "次のタブ".to_string());
         m.insert("menu.tabs.prev".to_string(), "前のタブ".to_string());
+        m.insert("menu.tabs.reopen_closed".to_string(), "閉じたタブを再度開く".to_string());
+        m.insert("menu.tabs.pin".to_string(), "タブをピン留め".to_string());
+        m.insert("menu.tabs.unpin".to_string(), "ピン留めを解除".to_string());
+        m.insert("menu.tabs.close".to_string(), "タブを閉じる".to_string());
+        m.insert("menu.tabs.close_others".to_string(), "他のタブをすべて閉じる".to_string());
+        m.insert("menu.tabs.close_right".to_string(), "右側のタブをすべて閉じる".to_string());
+        m.insert("menu.tabs.move_to_new_window".to_string(), "新しいウィンドウへ移動".to_string());
+        m.insert("menu.tabs.copy_path".to_string(), "ファイルパスをコピー".to_string());
+        m.insert("menu.tabs.reveal_in_finder".to_string(), "Finder で表示".to_string());
+        m.insert("menu.tabs.reveal_in_explorer".to_string(), "エクスプローラーで表示".to_string());
+        m.insert("menu.tabs.reveal_in_file_manager".to_string(), "保存先フォルダを開く".to_string());
+        m.insert("menu.tabs.all_tabs".to_string(), "開いているタブ".to_string());
 
         m.insert("menu.file".to_string(), "ファイル".to_string());
         m.insert("menu.file.new_tab".to_string(), "新規タブ".to_string());

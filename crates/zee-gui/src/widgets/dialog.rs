@@ -8,6 +8,7 @@ use crate::widgets::{led_color_to_gpui, ui_font_family, with_alpha};
 pub enum UnsavedChangesIntent {
     Quit,
     CloseTab,
+    CloseWindow,
     Reload,
 }
 
@@ -290,9 +291,10 @@ impl Dialog {
         self.update_status = Some(UpdateStatus::Downloading);
         cx.notify();
 
-        // Save window state and session state so that window bounds, tabs, cursor positions, root folder, and sidebar state are preserved after relaunch
-        let window_state = if let Some(active_win) = cx.active_window() {
-            cx.update_window(active_win, |_, window, _| {
+        // Save window state and multi-window session state so that all windows, bounds, tabs, pinned state, cursor positions, root folder, and sidebar state are preserved after relaunch
+        let active_win = cx.active_window();
+        let window_state = if let Some(aw) = active_win {
+            cx.update_window(aw, |_, window, _| {
                 crate::app::window_bounds_to_state(window.window_bounds())
             }).ok()
         } else {
@@ -302,38 +304,8 @@ impl Dialog {
             let _ = ws_state.save();
         }
 
-        let session = {
-            let ws = self.workspace.read(cx);
-            let mut files = Vec::new();
-            for editor in &ws.editors {
-                let unsaved_content = if editor.is_modified() || editor.path.is_none() {
-                    Some(editor.rope.to_string())
-                } else {
-                    None
-                };
-                files.push(zee_core::session::SessionEditorState {
-                    path: editor.path.clone(),
-                    cursor: editor.cursor,
-                    scroll_row: editor.scroll_row,
-                    is_modified: editor.is_modified(),
-                    unsaved_content,
-                });
-            }
-            let sidebar_tab = match ws.sidebar_tab {
-                crate::workspace::SidebarTab::Files => "files".to_string(),
-                crate::workspace::SidebarTab::Outline => "outline".to_string(),
-                crate::workspace::SidebarTab::History => "history".to_string(),
-            };
-            zee_core::session::UpdateSession {
-                files,
-                active_index: ws.active_editor_index,
-                root_folder: Some(ws.file_tree.root_path.clone()),
-                expanded_folders: ws.file_tree.expanded_paths(),
-                sidebar_visible: ws.sidebar_visible,
-                sidebar_tab,
-                window_state,
-            }
-        };
+        let current_ws_ref = active_win.map(|aw| (aw, &self.workspace, window_state.clone()));
+        let session = crate::app::capture_all_windows_session(current_ws_ref, cx);
         let _ = session.save();
 
         cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -448,8 +420,9 @@ impl Dialog {
     }
 
     pub fn restart_zee(&self, cx: &mut Context<Self>) {
-        let window_state = if let Some(active_win) = cx.active_window() {
-            cx.update_window(active_win, |_, window, _| {
+        let active_win = cx.active_window();
+        let window_state = if let Some(aw) = active_win {
+            cx.update_window(aw, |_, window, _| {
                 crate::app::window_bounds_to_state(window.window_bounds())
             }).ok()
         } else {
@@ -459,38 +432,8 @@ impl Dialog {
             let _ = ws_state.save();
         }
 
-        let session = {
-            let ws = self.workspace.read(cx);
-            let mut files = Vec::new();
-            for editor in &ws.editors {
-                let unsaved_content = if editor.is_modified() || editor.path.is_none() {
-                    Some(editor.rope.to_string())
-                } else {
-                    None
-                };
-                files.push(zee_core::session::SessionEditorState {
-                    path: editor.path.clone(),
-                    cursor: editor.cursor,
-                    scroll_row: editor.scroll_row,
-                    is_modified: editor.is_modified(),
-                    unsaved_content,
-                });
-            }
-            let sidebar_tab = match ws.sidebar_tab {
-                crate::workspace::SidebarTab::Files => "files".to_string(),
-                crate::workspace::SidebarTab::Outline => "outline".to_string(),
-                crate::workspace::SidebarTab::History => "history".to_string(),
-            };
-            zee_core::session::UpdateSession {
-                files,
-                active_index: ws.active_editor_index,
-                root_folder: Some(ws.file_tree.root_path.clone()),
-                expanded_folders: ws.file_tree.expanded_paths(),
-                sidebar_visible: ws.sidebar_visible,
-                sidebar_tab,
-                window_state,
-            }
-        };
+        let current_ws_ref = active_win.map(|aw| (aw, &self.workspace, window_state.clone()));
+        let session = crate::app::capture_all_windows_session(current_ws_ref, cx);
         let _ = session.save();
 
         let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("zee"));

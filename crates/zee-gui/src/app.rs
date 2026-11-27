@@ -18,6 +18,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-t", NewTab {}, None),
         #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-t", ReopenClosedTab {}, None),
+        #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-n", NewWindow {}, None),
         #[cfg(target_os = "macos")]
         KeyBinding::new("cmd-o", Open {}, None),
@@ -99,6 +101,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
 
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-t", NewTab {}, None),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-shift-t", ReopenClosedTab {}, None),
         #[cfg(not(target_os = "macos"))]
         KeyBinding::new("ctrl-n", NewWindow {}, None),
         #[cfg(not(target_os = "macos"))]
@@ -194,6 +198,7 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
             "toggle_comment" => Some(KeyBinding::new(key.as_str(), ToggleComment {}, None)),
             "next_tab" => Some(KeyBinding::new(key.as_str(), NextTab {}, None)),
             "prev_tab" => Some(KeyBinding::new(key.as_str(), PrevTab {}, None)),
+            "reopen_closed_tab" => Some(KeyBinding::new(key.as_str(), ReopenClosedTab {}, None)),
             "toggle_sidebar" => Some(KeyBinding::new(key.as_str(), ToggleSidebar {}, None)),
             "toggle_files" => Some(KeyBinding::new(key.as_str(), ToggleFiles {}, None)),
             "toggle_outline" => Some(KeyBinding::new(key.as_str(), ToggleOutline {}, None)),
@@ -375,6 +380,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
                 return;
             }
         }
+        let session = capture_all_windows_session(None, cx);
+        let _ = session.save_gui_session();
         save_first_window_state(cx);
         cx.quit();
     });
@@ -401,6 +408,8 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
                 return;
             }
         }
+        let session = capture_all_windows_session(None, cx);
+        let _ = session.save_gui_session();
         save_first_window_state(cx);
         cx.quit();
     });
@@ -423,7 +432,23 @@ pub fn setup_app(app: &mut App, rx: futures::channel::mpsc::UnboundedReceiver<Ve
         zee_core::session::UpdateSession::clear();
         open_file_targets(cli_targets, config.clone(), i18n.clone(), app);
     } else if let Some(session) = zee_core::session::UpdateSession::load_and_clear() {
-        restore_session_window(session, config.clone(), i18n.clone(), app);
+        restore_session_windows(session, config.clone(), i18n.clone(), app);
+    } else if let Some(session) = zee_core::session::UpdateSession::load_gui_session() {
+        let has_restorable = session.all_windows().iter().any(|w| {
+            w.root_folder.is_some()
+                || w.files.iter().any(|f| {
+                    f.path.is_some()
+                        || f.unsaved_content
+                            .as_deref()
+                            .map(|s| !s.is_empty())
+                            .unwrap_or(false)
+                })
+        });
+        if has_restorable {
+            restore_session_windows(session, config.clone(), i18n.clone(), app);
+        } else if app.windows().is_empty() {
+            new_window(config.clone(), i18n.clone(), app);
+        }
     } else if app.windows().is_empty() {
         new_window(config.clone(), i18n.clone(), app);
     }
@@ -674,85 +699,134 @@ pub fn open_paths(paths: Vec<std::path::PathBuf>, config: Config, i18n: I18n, cx
     open_file_targets(targets, config, i18n, cx);
 }
 
-pub fn restore_session_window(session: zee_core::session::UpdateSession, config: Config, i18n: I18n, cx: &mut App) {
+/// Open a new window containing a single moved `Editor` (used for tab tear-off
+/// and "Move Tab to New Window"), preserving full editor state.
+pub fn open_window_with_editor(
+    mut editor: zee_core::buffer::Editor,
+    origin_screen_pos: Option<Point<Pixels>>,
+    config: Config,
+    i18n: I18n,
+    cx: &mut App,
+) {
     cx.activate(true);
     let theme_to_use = resolve_theme(&config, cx.window_appearance());
 
-    let options = if let Some(ref state) = session.window_state {
-        let wb = window_state_to_bounds(state);
-        if is_bounds_on_any_display(wb.get_bounds(), cx) {
-            WindowOptions {
-                window_bounds: Some(wb),
-                ..Default::default()
-            }
-        } else {
-            default_window_options(cx)
+    let mut options = default_window_options(cx);
+    if let Some(pos) = origin_screen_pos {
+        let win_size = options
+            .window_bounds
+            .map(|wb| wb.get_bounds().size)
+            .unwrap_or_else(|| size(px(1012.0), px(800.0)));
+        let candidate_bounds = Bounds {
+            origin: point((pos.x - px(80.0)).max(px(0.0)), (pos.y - px(24.0)).max(px(0.0))),
+            size: win_size,
+        };
+        if is_bounds_on_any_display(candidate_bounds, cx) {
+            options.window_bounds = Some(WindowBounds::Windowed(candidate_bounds));
         }
-    } else {
-        default_window_options(cx)
-    };
+    }
+
     cx.open_window(options, move |window, cx| {
         window.activate_window();
         let workspace = cx.new(|_| {
-            let mut w = Workspace::new_with_root(config.clone(), session.root_folder.clone());
+            let mut w = Workspace::new(config.clone());
             w.theme = theme_to_use;
-            w.sidebar_visible = session.sidebar_visible;
-            w.sidebar_tab = match session.sidebar_tab.as_str() {
-                "outline" => crate::workspace::SidebarTab::Outline,
-                "history" => crate::workspace::SidebarTab::History,
-                _ => crate::workspace::SidebarTab::Files,
+            editor.vi_mode = if config.vi_mode {
+                zee_core::ViMode::Normal
+            } else {
+                zee_core::ViMode::Insert
             };
-            if !session.expanded_folders.is_empty() {
-                w.file_tree.restore_expanded_paths(&session.expanded_folders);
-            }
-
-            let mut opened_any = false;
-            for file_state in session.files {
-                let editor = if let Some(path) = &file_state.path {
-                    if let Ok(mut ed) = zee_core::buffer::Editor::from_file(path) {
-                        if let Some(unsaved) = &file_state.unsaved_content {
-                            ed.delete(0..ed.rope.len_chars());
-                            ed.insert(0, unsaved);
-                            ed.modified_since_save = file_state.is_modified;
-                        }
-                        Some(ed)
-                    } else if let Some(unsaved) = &file_state.unsaved_content {
-                        let mut ed = zee_core::buffer::Editor::new();
-                        ed.path = Some(path.clone());
-                        ed.insert(0, unsaved);
-                        ed.modified_since_save = file_state.is_modified;
-                        Some(ed)
-                    } else {
-                        None
-                    }
-                } else if let Some(unsaved) = &file_state.unsaved_content {
-                    let mut ed = zee_core::buffer::Editor::new();
-                    ed.insert(0, unsaved);
-                    ed.modified_since_save = file_state.is_modified;
-                    Some(ed)
-                } else {
-                    None
-                };
-
-                if let Some(mut ed) = editor {
-                    ed.cursor = file_state.cursor.min(ed.rope.len_chars());
-                    ed.scroll_row = file_state.scroll_row;
-                    w.add_editor(ed);
-                    opened_any = true;
-                }
-            }
-
-            if session.active_index < w.editors.len() {
-                w.active_editor_index = session.active_index;
-            }
-
-            if opened_any {
-                w.update_outline();
-            }
+            w.editors = vec![editor];
+            w.active_editor_index = 0;
+            w.update_outline();
             w
         });
         cx.new(|cx| WindowView::new(config, i18n, workspace, window, cx))
-    }).expect("Failed to open window");
+    })
+    .expect("Failed to open torn-off window");
+}
+
+/// Capture all open Zee windows into a single multi-window `UpdateSession`.
+/// Pass `current_window` when called from inside an active window update callback
+/// so that window is read directly without re-entering `update_window`.
+pub fn capture_all_windows_session(
+    current_window: Option<(
+        AnyWindowHandle,
+        &Entity<Workspace>,
+        Option<zee_core::window_state::WindowState>,
+    )>,
+    cx: &mut App,
+) -> zee_core::session::UpdateSession {
+    let handles = cx.window_stack().unwrap_or_else(|| cx.windows());
+    let mut windows = Vec::with_capacity(handles.len());
+
+    for hw in handles {
+        if let Some((cur_hw, cur_ws, ref cur_state)) = current_window {
+            if hw == cur_hw {
+                windows.push(cur_ws.read(cx).to_window_session(cur_state.clone()));
+                continue;
+            }
+        }
+        if let Ok(Some(ws_session)) = cx.update_window(hw, |any_view, win, cx| {
+            let Ok(view_handle) = any_view.downcast::<WindowView>() else {
+                return None;
+            };
+            let state = window_bounds_to_state(win.window_bounds());
+            Some(view_handle.read(cx).workspace.read(cx).to_window_session(Some(state)))
+        }) {
+            windows.push(ws_session);
+        }
+    }
+
+    // Fallback if window_stack missed current_window
+    if windows.is_empty() {
+        if let Some((_, cur_ws, cur_state)) = current_window {
+            windows.push(cur_ws.read(cx).to_window_session(cur_state));
+        }
+    }
+
+    zee_core::session::UpdateSession::from_windows(windows)
+}
+
+pub fn restore_session_window(session: zee_core::session::UpdateSession, config: Config, i18n: I18n, cx: &mut App) {
+    restore_session_windows(session, config, i18n, cx);
+}
+
+pub fn restore_session_windows(session: zee_core::session::UpdateSession, config: Config, i18n: I18n, cx: &mut App) {
+    cx.activate(true);
+    let theme_to_use = resolve_theme(&config, cx.window_appearance());
+    let all_windows = session.all_windows();
+
+    for win_session in all_windows {
+        let config_clone = config.clone();
+        let i18n_clone = i18n.clone();
+        let theme_clone = theme_to_use.clone();
+
+        let options = if let Some(ref state) = win_session.window_state {
+            let wb = window_state_to_bounds(state);
+            if is_bounds_on_any_display(wb.get_bounds(), cx) {
+                WindowOptions {
+                    window_bounds: Some(wb),
+                    ..Default::default()
+                }
+            } else {
+                default_window_options(cx)
+            }
+        } else {
+            default_window_options(cx)
+        };
+
+        cx.open_window(options, move |window, cx| {
+            window.activate_window();
+            let workspace = cx.new(|_| {
+                let mut w = Workspace::new_with_root(config_clone.clone(), win_session.root_folder.clone());
+                w.theme = theme_clone;
+                w.restore_from_window_session(&win_session);
+                w
+            });
+            cx.new(|cx| WindowView::new(config_clone, i18n_clone, workspace, window, cx))
+        }).expect("Failed to restore session window");
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -1231,6 +1305,8 @@ pub fn build_native_menus(
         items: vec![
             MenuItem::action(i18n.get("menu.tabs.next"), NextTab {}),
             MenuItem::action(i18n.get("menu.tabs.prev"), PrevTab {}),
+            MenuItem::separator(),
+            MenuItem::action(i18n.get("menu.tabs.reopen_closed"), ReopenClosedTab {}),
         ],
         disabled: false,
     });
@@ -1263,7 +1339,7 @@ actions!(zee, [
     ConvertTabsToSpaces, ConvertSpacesToTabs,
     FormatDocument, SortLines,
     // Tabs
-    NextTab, PrevTab,
+    NextTab, PrevTab, ReopenClosedTab,
     // View
     ToggleSidebar, ToggleOutline, ToggleFiles, RefreshFileTree,
     GoToLine, ZoomIn, ZoomOut, ResetZoom, ToggleLineNumbers, ToggleWordWrap, ToggleViMode,

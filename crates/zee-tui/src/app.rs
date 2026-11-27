@@ -3656,6 +3656,7 @@ impl App {
                 scroll_row: buffer.scroll_row,
                 is_modified: buffer.is_modified(),
                 unsaved_content,
+                pinned: buffer.pinned,
             });
         }
         let session = zee_core::session::UpdateSession {
@@ -3666,6 +3667,7 @@ impl App {
             sidebar_visible: self.sidebar.visible,
             sidebar_tab: "files".to_string(),
             window_state: None,
+            extra_windows: vec![],
         };
         session.save()
     }

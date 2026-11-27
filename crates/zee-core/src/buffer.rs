@@ -22,6 +22,7 @@ pub struct Editor {
     pub encoding: Encoding,
     pub line_ending: LineEnding,
     pub read_only: bool,
+    pub pinned: bool,
     pub vi_mode: crate::ViMode,
     
     pub undo_stack: Vec<EditDelta>,
@@ -62,6 +63,7 @@ impl Editor {
             encoding: Encoding::Utf8,
             line_ending: LineEnding::Lf,
             read_only: false,
+            pinned: false,
             vi_mode: crate::ViMode::Insert,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -112,6 +114,7 @@ impl Editor {
             encoding,
             line_ending,
             read_only: false,
+            pinned: false,
             vi_mode: crate::ViMode::Insert,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),

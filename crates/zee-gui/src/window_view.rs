@@ -11,7 +11,7 @@ use crate::widgets::tab_bar::{
     window_content_screen_origin, window_outer_screen_bounds,
 };
 use crate::widgets::status_bar::StatusBar;
-use crate::widgets::with_alpha;
+use crate::widgets::{ui_font_family, with_alpha};
 use crate::widgets::find_panel::{FindPanel, FindPanelEvent};
 use crate::widgets::sidebar_view::SidebarView;
 use crate::workspace::Workspace;
@@ -20,8 +20,6 @@ use zee_core::buffer::Editor;
 
 #[cfg(not(target_os = "macos"))]
 use crate::widgets::menu_bar::{MenuBar, SubmenuId};
-#[cfg(not(target_os = "macos"))]
-use crate::widgets::ui_font_family;
 
 use crate::widgets::dialog::{Dialog, DialogType, DialogEvent, UnsavedChangesIntent};
 
@@ -38,6 +36,9 @@ pub struct WindowView {
     #[cfg(not(target_os = "macos"))]
     menu_bar: Entity<MenuBar>,
     dialog: Option<Entity<Dialog>>,
+    tab_context_menu: Option<(usize, Point<Pixels>)>,
+    tab_list_dropdown: Option<Pixels>,
+    last_window_title: String,
     focus_handle: FocusHandle,
     plugins_version: usize,
     last_menu_state: (usize, usize, usize, bool),
@@ -173,9 +174,60 @@ impl WindowView {
             let _ = state.save();
         }).detach();
 
+        // Set initial dynamic OS window title
+        let initial_window_title = workspace.read(cx).compute_window_title();
+        window.set_window_title(&initial_window_title);
+
+        // Guard OS window close button (red X) when unsaved tabs exist
+        let view_weak_close = cx.weak_entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            let Some(view) = view_weak_close.upgrade() else {
+                return true;
+            };
+            let dirty_info = view.update(cx, |this, cx| {
+                let mut found: Option<(usize, String)> = None;
+                this.workspace.update(cx, |w, cx| {
+                    for (idx, ed) in w.editors.iter().enumerate() {
+                        if ed.is_modified() {
+                            let filename = ed
+                                .path
+                                .as_ref()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| this.i18n.get("status.no_name").to_string());
+                            w.active_editor_index = idx;
+                            cx.notify();
+                            found = Some((idx, filename));
+                            break;
+                        }
+                    }
+                });
+                if let Some((_, filename)) = found {
+                    this.show_dialog(
+                        DialogType::UnsavedChanges {
+                            filename,
+                            intent: UnsavedChangesIntent::CloseWindow,
+                        },
+                        Some(window),
+                        cx,
+                    );
+                    true
+                } else {
+                    false
+                }
+            });
+            if dirty_info {
+                window.activate_window();
+                false
+            } else {
+                true
+            }
+        });
+
         cx.subscribe(&tab_bar, |this, _tab_bar, event: &TabBarEvent, cx| {
             match event {
                 TabBarEvent::Select(idx) => {
+                    this.tab_context_menu = None;
+                    this.tab_list_dropdown = None;
                     this.workspace.update(cx, |w, cx| {
                         w.active_editor_index = *idx;
                         cx.notify();
@@ -183,12 +235,16 @@ impl WindowView {
                     this.update_native_menus(cx);
                 }
                 TabBarEvent::New => {
+                    this.tab_context_menu = None;
+                    this.tab_list_dropdown = None;
                     this.workspace.update(cx, |w, cx| {
                         w.new_tab();
                         cx.notify();
                     });
                 }
                 TabBarEvent::Close(idx) => {
+                    this.tab_context_menu = None;
+                    this.tab_list_dropdown = None;
                     let idx = *idx;
                     let is_modified = this.workspace.read(cx).editors.get(idx).map(|e| e.is_modified()).unwrap_or(false);
                     if is_modified {
@@ -207,6 +263,30 @@ impl WindowView {
                         });
                         Self::close_window_if_empty(this.window_handle, &this.workspace, None, cx);
                     }
+                }
+                TabBarEvent::TogglePin(idx) => {
+                    this.tab_context_menu = None;
+                    this.tab_list_dropdown = None;
+                    let idx = *idx;
+                    this.workspace.update(cx, |w, cx| {
+                        w.toggle_pin_tab(idx);
+                        cx.notify();
+                    });
+                    this.update_native_menus(cx);
+                }
+                TabBarEvent::ContextMenu { tab_index, position } => {
+                    this.tab_list_dropdown = None;
+                    this.tab_context_menu = Some((*tab_index, *position));
+                    cx.notify();
+                }
+                TabBarEvent::ToggleTabListDropdown { anchor_x } => {
+                    this.tab_context_menu = None;
+                    if this.tab_list_dropdown.is_some() {
+                        this.tab_list_dropdown = None;
+                    } else {
+                        this.tab_list_dropdown = Some(*anchor_x);
+                    }
+                    cx.notify();
                 }
             }
         }).detach();
@@ -284,6 +364,9 @@ impl WindowView {
             #[cfg(not(target_os = "macos"))]
             menu_bar,
             dialog: None,
+            tab_context_menu: None,
+            tab_list_dropdown: None,
+            last_window_title: initial_window_title,
             focus_handle,
             plugins_version,
             last_menu_state: (0, 0, 0, false),
@@ -335,6 +418,10 @@ impl WindowView {
                         cx.notify();
                     });
                     this.dismiss_dialog(cx);
+                    if intent == UnsavedChangesIntent::CloseWindow {
+                        this.continue_close_window(cx);
+                        return;
+                    }
                     
                     cx.spawn(move |_, cx: &mut AsyncApp| {
                         let cx = cx.clone();
@@ -357,6 +444,7 @@ impl WindowView {
                                 match intent {
                                     UnsavedChangesIntent::Quit => cx.dispatch_action(&Quit {}),
                                     UnsavedChangesIntent::CloseTab => cx.dispatch_action(&CloseTab {}),
+                                    UnsavedChangesIntent::CloseWindow => {},
                                     UnsavedChangesIntent::Reload => {},
                                 }
                             });
@@ -374,6 +462,10 @@ impl WindowView {
                         cx.notify();
                     });
                     this.dismiss_dialog(cx);
+                    if intent == UnsavedChangesIntent::CloseWindow {
+                        this.continue_close_window(cx);
+                        return;
+                    }
                     if intent == UnsavedChangesIntent::CloseTab
                         && Self::close_window_if_empty(this.window_handle, &this.workspace, None, cx)
                     {
@@ -401,6 +493,7 @@ impl WindowView {
                                 match intent {
                                     UnsavedChangesIntent::Quit => cx.dispatch_action(&Quit {}),
                                     UnsavedChangesIntent::CloseTab => {},
+                                    UnsavedChangesIntent::CloseWindow => {},
                                     UnsavedChangesIntent::Reload => {},
                                 }
                             });
@@ -823,6 +916,7 @@ impl WindowView {
             target_insert_index: new_insert_index,
             over_tab_bar: new_over_tab_bar,
             target_local_pos: new_target_local_pos,
+            last_global_pos: Some(global_pos),
         });
 
         window.refresh();
@@ -927,8 +1021,183 @@ impl WindowView {
                 window.refresh();
             }
             None => {
+                // Tear off tab into a new window when dragged outside all Zee windows
+                // and the source window has at least 2 tabs.
+                if self.workspace.read(cx).editors.len() > 1 {
+                    self.handle_move_tab_to_new_window(dragged.tab_index, state.last_global_pos, cx);
+                }
                 window.refresh();
             }
+        }
+    }
+
+    fn continue_close_window(&mut self, cx: &mut Context<Self>) {
+        let mut next_dirty: Option<String> = None;
+        self.workspace.update(cx, |w, cx| {
+            for (idx, ed) in w.editors.iter().enumerate() {
+                if ed.is_modified() {
+                    w.active_editor_index = idx;
+                    next_dirty = Some(
+                        ed.path
+                            .as_ref()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| self.i18n.get("status.no_name").to_string()),
+                    );
+                    cx.notify();
+                    break;
+                }
+            }
+        });
+        if let Some(filename) = next_dirty {
+            self.show_dialog(
+                DialogType::UnsavedChanges {
+                    filename,
+                    intent: UnsavedChangesIntent::CloseWindow,
+                },
+                None,
+                cx,
+            );
+        } else {
+            let handle = self.window_handle;
+            cx.defer(move |cx| {
+                let _ = cx.update_window(handle, |_, win, _| {
+                    win.remove_window();
+                });
+            });
+        }
+    }
+
+    fn handle_reopen_closed_tab(
+        &mut self,
+        _: &ReopenClosedTab,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let reopened = self.workspace.update(cx, |w, cx| {
+            let ok = w.reopen_closed_tab();
+            if ok {
+                cx.notify();
+            }
+            ok
+        });
+        if reopened {
+            self.update_native_menus(cx);
+        }
+    }
+
+    fn handle_close_other_tabs(&mut self, keep_index: usize, cx: &mut Context<Self>) {
+        let targets = self.workspace.read(cx).closable_other_indices(keep_index);
+        self.close_tab_batch(&targets, cx);
+    }
+
+    fn handle_close_tabs_to_right(&mut self, index: usize, cx: &mut Context<Self>) {
+        let targets = self.workspace.read(cx).closable_right_indices(index);
+        self.close_tab_batch(&targets, cx);
+    }
+
+    fn close_tab_batch(&mut self, indices: &[usize], cx: &mut Context<Self>) {
+        if indices.is_empty() {
+            return;
+        }
+        let first_dirty = self.workspace.update(cx, |w, cx| {
+            let dirty = w.close_clean_tabs(indices);
+            cx.notify();
+            dirty
+        });
+        if let Some(dirty_idx) = first_dirty {
+            let filename = self
+                .workspace
+                .read(cx)
+                .editors
+                .get(dirty_idx)
+                .and_then(|e| e.path.as_ref())
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| self.i18n.get("status.no_name").to_string());
+            self.workspace.update(cx, |w, cx| {
+                w.active_editor_index = dirty_idx;
+                cx.notify();
+            });
+            self.show_dialog(
+                DialogType::UnsavedChanges {
+                    filename,
+                    intent: UnsavedChangesIntent::CloseTab,
+                },
+                None,
+                cx,
+            );
+        } else {
+            Self::close_window_if_empty(self.window_handle, &self.workspace, None, cx);
+        }
+        self.update_native_menus(cx);
+    }
+
+    fn handle_move_tab_to_new_window(
+        &mut self,
+        tab_index: usize,
+        origin_screen_pos: Option<Point<Pixels>>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.read(cx).editors.len() <= 1 {
+            return;
+        }
+        let taken = self.workspace.update(cx, |w, cx| {
+            let ed = w.take_editor(tab_index);
+            cx.notify();
+            ed
+        });
+        if let Some(editor) = taken {
+            crate::app::open_window_with_editor(
+                editor,
+                origin_screen_pos,
+                self.config.clone(),
+                self.i18n.clone(),
+                cx,
+            );
+            self.update_native_menus(cx);
+            Self::close_window_if_empty(self.window_handle, &self.workspace, None, cx);
+        }
+    }
+
+    fn handle_copy_tab_path(&mut self, tab_index: usize, cx: &mut Context<Self>) {
+        if let Some(path_str) = self
+            .workspace
+            .read(cx)
+            .editors
+            .get(tab_index)
+            .and_then(|e| e.path.as_ref())
+            .map(|p| p.to_string_lossy().into_owned())
+        {
+            cx.write_to_clipboard(ClipboardItem::new_string(path_str));
+        }
+    }
+
+    fn handle_reveal_tab_in_file_manager(&mut self, tab_index: usize, cx: &mut Context<Self>) {
+        let Some(path) = self
+            .workspace
+            .read(cx)
+            .editors
+            .get(tab_index)
+            .and_then(|e| e.path.clone())
+        else {
+            return;
+        };
+        #[cfg(target_os = "macos")]
+        {
+            let _ = std::process::Command::new("open")
+                .arg("-R")
+                .arg(&path)
+                .spawn();
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("explorer")
+                .arg(format!("/select,{}", path.display()))
+                .spawn();
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            let target = path.parent().unwrap_or(path.as_path());
+            let _ = std::process::Command::new("xdg-open").arg(target).spawn();
         }
     }
 
@@ -2031,6 +2300,7 @@ impl Render for WindowView {
         let workspace = self.workspace.read(cx);
         let theme = &workspace.theme;
         let bg = self.led_color_to_gpui(theme.editor.background);
+        let desired_title = workspace.compute_window_title();
         let current_window = window.window_handle();
         let drag_state = cx
             .try_global::<GlobalTabDragState>()
@@ -2042,6 +2312,11 @@ impl Render for WindowView {
             .filter(|d| d.source_window != current_window)
             .filter(|_| drag_state.target_window == Some(current_window))
             .cloned();
+
+        if desired_title != self.last_window_title {
+            self.last_window_title = desired_title.clone();
+            window.set_window_title(&desired_title);
+        }
 
         let root = div()
             .w_full()
@@ -2063,6 +2338,7 @@ impl Render for WindowView {
             .on_action(cx.listener(Self::handle_close_tab))
             .on_action(cx.listener(Self::handle_next_tab))
             .on_action(cx.listener(Self::handle_prev_tab))
+            .on_action(cx.listener(Self::handle_reopen_closed_tab))
             .on_action(cx.listener(Self::handle_undo))
             .on_action(cx.listener(Self::handle_redo))
             .on_action(cx.listener(Self::handle_cut))
@@ -2181,6 +2457,10 @@ impl Render for WindowView {
                 }))
         }));
 
+        let root = root
+            .children(self.render_tab_context_menu(window, cx))
+            .children(self.render_tab_list_dropdown(window, cx));
+
         root.child(if let Some(ref dialog) = self.dialog {
             div()
                 .occlude()
@@ -2237,6 +2517,350 @@ impl WindowView {
             .child(self.find_panel.clone())
             .child(main_area)
             .child(self.status_bar.clone())
+    }
+
+    fn render_tab_context_menu(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let (tab_index, click_pos) = self.tab_context_menu?;
+        let ws = self.workspace.read(cx);
+        let editor = ws.editors.get(tab_index)?;
+        let is_pinned = editor.pinned;
+        let has_path = editor.path.is_some();
+        let tab_count = ws.editors.len();
+        let can_close_others = !ws.closable_other_indices(tab_index).is_empty();
+        let can_close_right = !ws.closable_right_indices(tab_index).is_empty();
+        let can_move_new_win = tab_count > 1;
+        let theme = &ws.theme;
+        let bg = self.led_color_to_gpui(theme.ui.dialog_bg);
+        let fg = self.led_color_to_gpui(theme.editor.foreground);
+        let muted = with_alpha(fg, 0.42);
+        let border = with_alpha(self.led_color_to_gpui(theme.editor.line_number), 0.4);
+        let hover_bg = with_alpha(self.led_color_to_gpui(theme.editor.cursor), 0.18);
+
+        let menu_w = px(220.0);
+        let vp = window.viewport_size();
+        let left = click_pos.x.min((vp.width - menu_w - px(8.0)).max(px(4.0)));
+        let top = (click_pos.y + px(4.0)).min((vp.height - px(240.0)).max(px(4.0)));
+
+        let pin_label = if is_pinned {
+            self.i18n.get("menu.tabs.unpin").to_string()
+        } else {
+            self.i18n.get("menu.tabs.pin").to_string()
+        };
+        let close_label = self.i18n.get("menu.tabs.close").to_string();
+        let close_others_label = self.i18n.get("menu.tabs.close_others").to_string();
+        let close_right_label = self.i18n.get("menu.tabs.close_right").to_string();
+        let move_new_win_label = self.i18n.get("menu.tabs.move_to_new_window").to_string();
+        let copy_path_label = self.i18n.get("menu.tabs.copy_path").to_string();
+        #[cfg(target_os = "macos")]
+        let reveal_label = self.i18n.get("menu.tabs.reveal_in_finder").to_string();
+        #[cfg(target_os = "windows")]
+        let reveal_label = self.i18n.get("menu.tabs.reveal_in_explorer").to_string();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let reveal_label = self.i18n.get("menu.tabs.reveal_in_file_manager").to_string();
+
+        let menu_row = |label: String, enabled: bool| {
+            div()
+                .w_full()
+                .px_3()
+                .py_1()
+                .rounded_sm()
+                .text_size(px(12.0))
+                .text_color(if enabled { fg } else { muted })
+                .when(enabled, |d| d.cursor_pointer().hover(move |s| s.bg(hover_bg)))
+                .child(label)
+        };
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.tab_context_menu = None;
+                        cx.notify();
+                    }),
+                )
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(|this, _, _, cx| {
+                        this.tab_context_menu = None;
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(left)
+                        .top(top)
+                        .w(menu_w)
+                        .py_1()
+                        .px_1()
+                        .rounded_md()
+                        .bg(bg)
+                        .border_1()
+                        .border_color(border)
+                        .shadow_lg()
+                        .font_family(ui_font_family())
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(menu_row(pin_label, true).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.tab_context_menu = None;
+                                this.workspace.update(cx, |w, cx| {
+                                    w.toggle_pin_tab(tab_index);
+                                    cx.notify();
+                                });
+                                this.update_native_menus(cx);
+                            }),
+                        ))
+                        .child(div().h(px(1.0)).my_1().mx_2().bg(border))
+                        .child(menu_row(close_label, !is_pinned).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if is_pinned {
+                                    return;
+                                }
+                                this.tab_context_menu = None;
+                                let is_modified = this
+                                    .workspace
+                                    .read(cx)
+                                    .editors
+                                    .get(tab_index)
+                                    .map(|e| e.is_modified())
+                                    .unwrap_or(false);
+                                if is_modified {
+                                    this.workspace.update(cx, |w, cx| {
+                                        w.active_editor_index = tab_index;
+                                        cx.notify();
+                                    });
+                                    let filename = this
+                                        .workspace
+                                        .read(cx)
+                                        .editors
+                                        .get(tab_index)
+                                        .and_then(|e| e.path.as_ref())
+                                        .map(|p| p.to_string_lossy().into_owned())
+                                        .unwrap_or_else(|| this.i18n.get("status.no_name").to_string());
+                                    this.show_dialog(
+                                        DialogType::UnsavedChanges {
+                                            filename,
+                                            intent: UnsavedChangesIntent::CloseTab,
+                                        },
+                                        None,
+                                        cx,
+                                    );
+                                } else {
+                                    this.workspace.update(cx, |w, cx| {
+                                        w.close_editor(tab_index);
+                                        cx.notify();
+                                    });
+                                    Self::close_window_if_empty(
+                                        this.window_handle,
+                                        &this.workspace,
+                                        None,
+                                        cx,
+                                    );
+                                }
+                            }),
+                        ))
+                        .child(menu_row(close_others_label, can_close_others).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if !can_close_others {
+                                    return;
+                                }
+                                this.tab_context_menu = None;
+                                this.handle_close_other_tabs(tab_index, cx);
+                            }),
+                        ))
+                        .child(menu_row(close_right_label, can_close_right).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if !can_close_right {
+                                    return;
+                                }
+                                this.tab_context_menu = None;
+                                this.handle_close_tabs_to_right(tab_index, cx);
+                            }),
+                        ))
+                        .child(div().h(px(1.0)).my_1().mx_2().bg(border))
+                        .child(menu_row(move_new_win_label, can_move_new_win).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if !can_move_new_win {
+                                    return;
+                                }
+                                this.tab_context_menu = None;
+                                this.handle_move_tab_to_new_window(tab_index, None, cx);
+                            }),
+                        ))
+                        .child(div().h(px(1.0)).my_1().mx_2().bg(border))
+                        .child(menu_row(copy_path_label, has_path).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if !has_path {
+                                    return;
+                                }
+                                this.tab_context_menu = None;
+                                this.handle_copy_tab_path(tab_index, cx);
+                                cx.notify();
+                            }),
+                        ))
+                        .child(menu_row(reveal_label, has_path).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if !has_path {
+                                    return;
+                                }
+                                this.tab_context_menu = None;
+                                this.handle_reveal_tab_in_file_manager(tab_index, cx);
+                                cx.notify();
+                            }),
+                        )),
+                ),
+        )
+    }
+
+    fn render_tab_list_dropdown(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        let anchor_x = self.tab_list_dropdown?;
+        let ws = self.workspace.read(cx);
+        let active_idx = ws.active_editor_index;
+        let labels = Workspace::compute_tab_display_labels(&ws.editors);
+        let theme = &ws.theme;
+        let bg = self.led_color_to_gpui(theme.ui.dialog_bg);
+        let fg = self.led_color_to_gpui(theme.editor.foreground);
+        let muted = with_alpha(fg, 0.55);
+        let accent = self.led_color_to_gpui(theme.editor.cursor);
+        let border = with_alpha(self.led_color_to_gpui(theme.editor.line_number), 0.4);
+        let hover_bg = with_alpha(accent, 0.16);
+        let active_bg = with_alpha(accent, 0.22);
+
+        let drop_w = px(280.0);
+        let vp = window.viewport_size();
+        let left = (anchor_x - drop_w + px(36.0))
+            .max(px(8.0))
+            .min((vp.width - drop_w - px(8.0)).max(px(8.0)));
+        #[cfg(target_os = "macos")]
+        let top = px(38.0);
+        #[cfg(not(target_os = "macos"))]
+        let top = px(66.0);
+
+        let header = format!(
+            "{} ({})",
+            self.i18n.get("menu.tabs.all_tabs"),
+            ws.editors.len()
+        );
+
+        let items: Vec<_> = ws
+            .editors
+            .iter()
+            .enumerate()
+            .map(|(idx, ed)| {
+                let is_active = idx == active_idx;
+                let is_modified = ed.is_modified();
+                let is_pinned = ed.pinned;
+                let lbl = &labels[idx];
+                let name = lbl.name.clone();
+                let disambig = lbl.disambiguator.clone();
+                div()
+                    .w_full()
+                    .px_2p5()
+                    .py_1()
+                    .rounded_sm()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .cursor_pointer()
+                    .bg(if is_active { active_bg } else { rgba(0x00000000) })
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.tab_list_dropdown = None;
+                            this.workspace.update(cx, |w, cx| {
+                                w.active_editor_index = idx;
+                                cx.notify();
+                            });
+                            this.update_native_menus(cx);
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .overflow_hidden()
+                            .children(if is_pinned {
+                                Some(div().text_size(px(10.0)).text_color(accent).child("📌"))
+                            } else {
+                                None
+                            })
+                            .child(div().text_size(px(12.0)).text_color(fg).child(name))
+                            .children(disambig.map(|d| {
+                                div().text_size(px(10.5)).text_color(muted).child(d)
+                            })),
+                    )
+                    .children(if is_modified {
+                        Some(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(accent))
+                    } else {
+                        None
+                    })
+            })
+            .collect();
+
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.tab_list_dropdown = None;
+                        cx.notify();
+                    }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(left)
+                        .top(top)
+                        .w(drop_w)
+                        .max_h(px(360.0))
+                        .overflow_hidden()
+                        .py_1()
+                        .px_1()
+                        .rounded_md()
+                        .bg(bg)
+                        .border_1()
+                        .border_color(border)
+                        .shadow_lg()
+                        .font_family(ui_font_family())
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(
+                            div()
+                                .px_2p5()
+                                .py_1()
+                                .text_size(px(11.0))
+                                .text_color(muted)
+                                .border_b_1()
+                                .border_color(border)
+                                .mb_1()
+                                .child(header),
+                        )
+                        .children(items),
+                ),
+        )
     }
 }
 

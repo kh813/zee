@@ -5,8 +5,13 @@ use gpui::prelude::FluentBuilder;
 use zee_core::config::Config;
 use zee_core::i18n::I18n;
 use crate::widgets::editor_view::EditorView;
-use crate::widgets::tab_bar::{TabBar, TabBarEvent};
+use crate::widgets::tab_bar::{
+    DraggedTab, DraggedTabGhost, GlobalTabDragState, TabBar, TabBarEvent,
+    compute_tab_insert_slot, hit_test_window_stack, screen_display_origin,
+    window_content_screen_origin, window_outer_screen_bounds,
+};
 use crate::widgets::status_bar::StatusBar;
+use crate::widgets::with_alpha;
 use crate::widgets::find_panel::{FindPanel, FindPanelEvent};
 use crate::widgets::sidebar_view::SidebarView;
 use crate::workspace::Workspace;
@@ -21,6 +26,7 @@ use crate::widgets::ui_font_family;
 use crate::widgets::dialog::{Dialog, DialogType, DialogEvent, UnsavedChangesIntent};
 
 pub struct WindowView {
+    window_handle: AnyWindowHandle,
     config: Config,
     i18n: I18n,
     pub(crate) workspace: Entity<Workspace>,
@@ -199,6 +205,7 @@ impl WindowView {
                             w.close_editor(idx);
                             cx.notify();
                         });
+                        Self::close_window_if_empty(this.window_handle, &this.workspace, None, cx);
                     }
                 }
             }
@@ -265,6 +272,7 @@ impl WindowView {
         }).detach();
 
         Self {
+            window_handle: window.window_handle(),
             config,
             i18n,
             workspace,
@@ -366,6 +374,11 @@ impl WindowView {
                         cx.notify();
                     });
                     this.dismiss_dialog(cx);
+                    if intent == UnsavedChangesIntent::CloseTab
+                        && Self::close_window_if_empty(this.window_handle, &this.workspace, None, cx)
+                    {
+                        return;
+                    }
                     
                     cx.spawn(move |_, cx: &mut AsyncApp| {
                         let cx = cx.clone();
@@ -673,6 +686,249 @@ impl WindowView {
                 w.close_active_editor();
                 cx.notify();
             });
+            Self::close_window_if_empty(self.window_handle, &self.workspace, Some(window), cx);
+        }
+    }
+
+    fn close_window_if_empty(
+        window_handle: AnyWindowHandle,
+        workspace: &Entity<Workspace>,
+        window: Option<&mut Window>,
+        cx: &mut App,
+    ) -> bool {
+        if workspace.read(cx).editors.is_empty() {
+            if let Some(window) = window {
+                window.remove_window();
+            } else {
+                cx.defer(move |cx| {
+                    let _ = cx.update_window(window_handle, |_, win, _| {
+                        win.remove_window();
+                    });
+                });
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn handle_tab_drag_move(
+        &mut self,
+        event: &DragMoveEvent<DraggedTab>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_window = window.window_handle();
+        let prev_state = cx
+            .try_global::<GlobalTabDragState>()
+            .cloned()
+            .unwrap_or_default();
+        if prev_state.active.as_ref().map(|d| d.source_window) != Some(current_window) {
+            return;
+        }
+
+        let src_disp_origin = screen_display_origin(window, cx);
+        let src_content_origin =
+            window_content_screen_origin(window.bounds(), window.viewport_size(), src_disp_origin);
+        let global_pos = src_content_origin + event.event.position;
+
+        struct CandidateGeometry {
+            handle: AnyWindowHandle,
+            outer_bounds: Bounds<Pixels>,
+            content_origin: Point<Pixels>,
+            bar_bounds: Option<Bounds<Pixels>>,
+            tab_bounds: Vec<Bounds<Pixels>>,
+            tab_count: usize,
+        }
+
+        let ordered_handles = cx.window_stack().unwrap_or_else(|| cx.windows());
+        let mut geometries: Vec<CandidateGeometry> = Vec::with_capacity(ordered_handles.len());
+
+        for handle in ordered_handles {
+            if handle == current_window {
+                let (bar_bounds, tab_bounds) = self.tab_bar.read(cx).snapshot_geometry();
+                let tab_count = self.workspace.read(cx).editors.len();
+                geometries.push(CandidateGeometry {
+                    handle,
+                    outer_bounds: window_outer_screen_bounds(window.bounds(), src_disp_origin),
+                    content_origin: src_content_origin,
+                    bar_bounds,
+                    tab_bounds,
+                    tab_count,
+                });
+            } else if let Ok(Some(geom)) = cx.update_window(handle, |any_view, other_win, cx| {
+                let Ok(view_handle) = any_view.downcast::<WindowView>() else {
+                    return None;
+                };
+                let view = view_handle.read(cx);
+                let (bar_bounds, tab_bounds) = view.tab_bar.read(cx).snapshot_geometry();
+                let tab_count = view.workspace.read(cx).editors.len();
+                let disp_origin = screen_display_origin(other_win, cx);
+                let win_bounds = other_win.bounds();
+                Some(CandidateGeometry {
+                    handle,
+                    outer_bounds: window_outer_screen_bounds(win_bounds, disp_origin),
+                    content_origin: window_content_screen_origin(
+                        win_bounds,
+                        other_win.viewport_size(),
+                        disp_origin,
+                    ),
+                    bar_bounds,
+                    tab_bounds,
+                    tab_count,
+                })
+            }) {
+                geometries.push(geom);
+            }
+        }
+
+        let hit_candidates: Vec<(AnyWindowHandle, Bounds<Pixels>, Point<Pixels>)> = geometries
+            .iter()
+            .map(|g| (g.handle, g.outer_bounds, g.content_origin))
+            .collect();
+
+        let (new_target_window, new_insert_index, new_over_tab_bar, new_target_local_pos) =
+            if let Some((hit_handle, local_pos)) = hit_test_window_stack(global_pos, &hit_candidates)
+            {
+                if let Some(geom) = geometries.iter().find(|g| g.handle == hit_handle) {
+                    let bar_bottom = geom.bar_bounds.map(|b| b.bottom()).unwrap_or(px(36.0));
+                    if hit_handle == current_window {
+                        if local_pos.y <= bar_bottom + px(64.0) {
+                            let slot = compute_tab_insert_slot(&geom.tab_bounds, local_pos.x);
+                            (Some(hit_handle), Some(slot), true, Some(local_pos))
+                        } else {
+                            (Some(hit_handle), None, false, Some(local_pos))
+                        }
+                    } else {
+                        let is_over_bar = local_pos.y <= bar_bottom + px(36.0);
+                        let slot = if is_over_bar {
+                            compute_tab_insert_slot(&geom.tab_bounds, local_pos.x)
+                        } else {
+                            geom.tab_count
+                        };
+                        (Some(hit_handle), Some(slot), is_over_bar, Some(local_pos))
+                    }
+                } else {
+                    (None, None, false, None)
+                }
+            } else {
+                (None, None, false, None)
+            };
+
+        let prev_target = prev_state.target_window;
+        cx.set_global(GlobalTabDragState {
+            active: prev_state.active,
+            grab_offset: prev_state.grab_offset,
+            target_window: new_target_window,
+            target_insert_index: new_insert_index,
+            over_tab_bar: new_over_tab_bar,
+            target_local_pos: new_target_local_pos,
+        });
+
+        window.refresh();
+        if let Some(prev) = prev_target {
+            if prev != current_window && Some(prev) != new_target_window {
+                let _ = cx.update_window(prev, |_, other_win, _| other_win.refresh());
+            }
+        }
+        if let Some(target) = new_target_window {
+            if target != current_window {
+                let _ = cx.update_window(target, |_, other_win, _| other_win.refresh());
+            }
+        }
+    }
+
+    fn handle_tab_drag_end(
+        &mut self,
+        _event: &MouseUpEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_window = window.window_handle();
+        let state = cx
+            .try_global::<GlobalTabDragState>()
+            .cloned()
+            .unwrap_or_default();
+        let Some(dragged) = state.active else {
+            return;
+        };
+        if dragged.source_window != current_window {
+            return;
+        }
+
+        // Clear drag state immediately so drop executes at most once.
+        cx.set_global(GlobalTabDragState::default());
+
+        match state.target_window {
+            Some(target_win) if target_win == current_window => {
+                if let Some(slot) = state.target_insert_index {
+                    let moved = self.workspace.update(cx, |w, cx| {
+                        let moved = w.move_tab_to_slot(dragged.tab_index, slot);
+                        if moved {
+                            cx.notify();
+                        }
+                        moved
+                    });
+                    if moved {
+                        self.update_native_menus(cx);
+                    }
+                }
+                window.refresh();
+            }
+            Some(dest_window) => {
+                let (taken_editor, source_became_empty) = self.workspace.update(cx, |w, cx| {
+                    let ed = w.take_editor(dragged.tab_index);
+                    let empty = w.editors.is_empty();
+                    cx.notify();
+                    (ed, empty)
+                });
+
+                if let Some(editor) = taken_editor {
+                    let insert_slot = state.target_insert_index.unwrap_or(usize::MAX);
+                    let mut editor_slot = Some(editor);
+                    let transferred = cx
+                        .update_window(dest_window, |any_view, dest_win, cx| {
+                            if let Ok(dest_view) = any_view.downcast::<WindowView>() {
+                                if let Some(ed) = editor_slot.take() {
+                                    dest_view.update(cx, |view, cx| {
+                                        view.workspace.update(cx, |w, cx| {
+                                            w.insert_editor_at(ed, insert_slot);
+                                            cx.notify();
+                                        });
+                                        view.update_native_menus(cx);
+                                        view.editor.update(cx, |ed_view, cx| {
+                                            ed_view.focus_handle.focus(dest_win, cx);
+                                        });
+                                        cx.notify();
+                                    });
+                                    dest_win.activate_window();
+                                    dest_win.refresh();
+                                    return true;
+                                }
+                            }
+                            false
+                        })
+                        .unwrap_or(false);
+
+                    if transferred {
+                        if source_became_empty {
+                            window.remove_window();
+                            return;
+                        }
+                        self.update_native_menus(cx);
+                    } else if let Some(ed) = editor_slot.take() {
+                        // Destination window disappeared mid-drag; restore safely
+                        self.workspace.update(cx, |w, cx| {
+                            w.insert_editor_at(ed, dragged.tab_index);
+                            cx.notify();
+                        });
+                    }
+                }
+                window.refresh();
+            }
+            None => {
+                window.refresh();
+            }
         }
     }
 
@@ -1775,7 +2031,17 @@ impl Render for WindowView {
         let workspace = self.workspace.read(cx);
         let theme = &workspace.theme;
         let bg = self.led_color_to_gpui(theme.editor.background);
-        let _ = window;
+        let current_window = window.window_handle();
+        let drag_state = cx
+            .try_global::<GlobalTabDragState>()
+            .cloned()
+            .unwrap_or_default();
+        let incoming_tab_drag = drag_state
+            .active
+            .as_ref()
+            .filter(|d| d.source_window != current_window)
+            .filter(|_| drag_state.target_window == Some(current_window))
+            .cloned();
 
         let root = div()
             .w_full()
@@ -1783,6 +2049,9 @@ impl Render for WindowView {
             .relative() // So dialog can be absolute
             .bg(bg)
             .track_focus(&self.focus_handle)
+            .on_drag_move::<DraggedTab>(cx.listener(Self::handle_tab_drag_move))
+            .capture_any_mouse_up(cx.listener(Self::handle_tab_drag_end))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::handle_tab_drag_end))
             .on_action(cx.listener(Self::handle_new))
             .on_action(cx.listener(Self::handle_new_tab))
             .on_action(cx.listener(Self::handle_new_window))
@@ -1887,6 +2156,30 @@ impl Render for WindowView {
 
         #[cfg(not(target_os = "macos"))]
         let root = root.child(self.render_menu_dropdown(window, cx));
+
+        let root = root.children(incoming_tab_drag.map(|dragged| {
+            let accent = dragged.accent_color;
+            let show_body_outline = !drag_state.over_tab_bar;
+            let ghost_pos = drag_state
+                .target_local_pos
+                .map(|p| p - drag_state.grab_offset);
+
+            div()
+                .absolute()
+                .inset_0()
+                .when(show_body_outline, |d| {
+                    d.border_2()
+                        .border_color(with_alpha(accent, 0.75))
+                        .bg(with_alpha(accent, 0.05))
+                })
+                .children(ghost_pos.map(|pos| {
+                    div()
+                        .absolute()
+                        .left(pos.x)
+                        .top(pos.y)
+                        .child(DraggedTabGhost::from_dragged(&dragged).render_pill())
+                }))
+        }));
 
         root.child(if let Some(ref dialog) = self.dialog {
             div()

@@ -339,6 +339,104 @@ impl Workspace {
         }
     }
 
+    /// Resolve a visual insertion slot (`0..=tab_count`) into a final tab index
+    /// when reordering a tab within the same window. Returns `None` if dropping
+    /// at `insert_slot` would keep the tab in its current position.
+    pub fn resolve_same_window_drop_index(
+        from_index: usize,
+        insert_slot: usize,
+        tab_count: usize,
+    ) -> Option<usize> {
+        if from_index >= tab_count || tab_count <= 1 {
+            return None;
+        }
+        let slot = insert_slot.min(tab_count);
+        if slot == from_index || slot == from_index + 1 {
+            return None;
+        }
+        Some(if slot > from_index { slot - 1 } else { slot })
+    }
+
+    /// Reorder a tab from `from_index` to final index `target_index` within this workspace,
+    /// preserving which tab is active and updating the outline.
+    pub fn move_tab(&mut self, from_index: usize, target_index: usize) -> bool {
+        let len = self.editors.len();
+        if from_index >= len || target_index >= len || from_index == target_index {
+            return false;
+        }
+        let editor = self.editors.remove(from_index);
+        self.editors.insert(target_index, editor);
+
+        if self.active_editor_index == from_index {
+            self.active_editor_index = target_index;
+        } else if from_index < self.active_editor_index && self.active_editor_index <= target_index {
+            self.active_editor_index -= 1;
+        } else if target_index <= self.active_editor_index && self.active_editor_index < from_index {
+            self.active_editor_index += 1;
+        }
+
+        self.update_outline();
+        true
+    }
+
+    /// Reorder a tab using a visual insertion slot (`0..=editors.len()`).
+    pub fn move_tab_to_slot(&mut self, from_index: usize, insert_slot: usize) -> bool {
+        if let Some(target_index) =
+            Self::resolve_same_window_drop_index(from_index, insert_slot, self.editors.len())
+        {
+            self.move_tab(from_index, target_index)
+        } else {
+            false
+        }
+    }
+
+    /// Remove and return the editor at `index`, updating `active_editor_index` and outline.
+    pub fn take_editor(&mut self, index: usize) -> Option<Editor> {
+        if index >= self.editors.len() {
+            return None;
+        }
+        let editor = self.editors.remove(index);
+        if self.editors.is_empty() {
+            self.active_editor_index = 0;
+        } else if self.active_editor_index >= self.editors.len() {
+            self.active_editor_index = self.editors.len() - 1;
+        } else if self.active_editor_index > index {
+            self.active_editor_index -= 1;
+        }
+        self.update_outline();
+        Some(editor)
+    }
+
+    /// Insert an existing editor at `insert_slot` (clamped to `0..=editors.len()`)
+    /// without losing unsaved state, undo history, cursor, or scroll position,
+    /// and make it the active tab.
+    pub fn insert_editor_at(&mut self, mut editor: Editor, insert_slot: usize) -> usize {
+        editor.vi_mode = if self.config.vi_mode {
+            zee_core::ViMode::Normal
+        } else {
+            zee_core::ViMode::Insert
+        };
+        let pos = insert_slot.min(self.editors.len());
+        self.editors.insert(pos, editor);
+        self.active_editor_index = pos;
+        self.update_outline();
+        pos
+    }
+
+    /// Transfer a tab from `source` to `dest` at `insert_slot`.
+    /// Returns `Some((inserted_index, source_became_empty))`.
+    pub fn transfer_editor_to(
+        source: &mut Workspace,
+        from_index: usize,
+        dest: &mut Workspace,
+        insert_slot: usize,
+    ) -> Option<(usize, bool)> {
+        let editor = source.take_editor(from_index)?;
+        let source_empty = source.editors.is_empty();
+        let inserted_at = dest.insert_editor_at(editor, insert_slot);
+        Some((inserted_at, source_empty))
+    }
+
     pub fn next_tab(&mut self) {
         if !self.editors.is_empty() {
             self.active_editor_index = (self.active_editor_index + 1) % self.editors.len();
@@ -1949,6 +2047,92 @@ mod tests {
         let (eol_x, eol_w) = EditorView::cursor_metrics_from_layout(v_text, &layout, v_text.chars().count());
         assert!((eol_x - total_width).abs() < 0.01);
         assert_eq!(eol_w, None);
+    }
+
+    #[test]
+    fn test_move_tab_reorder_and_active_index_tracking() {
+        let mut ws = Workspace::new(Config::default());
+        let mut e0 = Editor::new();
+        e0.insert(0, "tab-0");
+        let mut e1 = Editor::new();
+        e1.insert(0, "tab-1");
+        let mut e2 = Editor::new();
+        e2.insert(0, "tab-2");
+        ws.editors = vec![e0, e1, e2];
+        ws.active_editor_index = 1; // "tab-1" is active
+
+        // No-op slots for index 0 are slot 0 and slot 1
+        assert!(!ws.move_tab_to_slot(0, 0));
+        assert!(!ws.move_tab_to_slot(0, 1));
+        assert_eq!(ws.active_editor().unwrap().rope.to_string(), "tab-1");
+
+        // Drag tab-0 to slot 2 (between tab-1 and tab-2) -> [tab-1, tab-0, tab-2]
+        assert!(ws.move_tab_to_slot(0, 2));
+        let texts: Vec<String> = ws.editors.iter().map(|e| e.rope.to_string()).collect();
+        assert_eq!(texts, vec!["tab-1", "tab-0", "tab-2"]);
+        // Active tab was tab-1, now at index 0
+        assert_eq!(ws.active_editor_index, 0);
+        assert_eq!(ws.active_editor().unwrap().rope.to_string(), "tab-1");
+
+        // Drag tab-2 (index 2) to slot 0 (before tab-1) -> [tab-2, tab-1, tab-0]
+        assert!(ws.move_tab_to_slot(2, 0));
+        let texts: Vec<String> = ws.editors.iter().map(|e| e.rope.to_string()).collect();
+        assert_eq!(texts, vec!["tab-2", "tab-1", "tab-0"]);
+        // Active tab-1 shifted right to index 1
+        assert_eq!(ws.active_editor_index, 1);
+
+        // Drag active tab-1 (index 1) to the end (slot 3) -> [tab-2, tab-0, tab-1]
+        assert!(ws.move_tab_to_slot(1, 3));
+        let texts: Vec<String> = ws.editors.iter().map(|e| e.rope.to_string()).collect();
+        assert_eq!(texts, vec!["tab-2", "tab-0", "tab-1"]);
+        // Active tab follows moved tab to index 2
+        assert_eq!(ws.active_editor_index, 2);
+        assert_eq!(ws.active_editor().unwrap().rope.to_string(), "tab-1");
+    }
+
+    #[test]
+    fn test_transfer_editor_between_workspaces_preserves_state_and_reports_empty() {
+        let mut src = Workspace::new(Config::default());
+        let mut dst = Workspace::new(Config::default());
+
+        // Set up source with 2 tabs, first tab has unsaved edits, cursor, scroll_row, read_only
+        let mut e_a = Editor::new();
+        e_a.insert(0, "unsaved-alpha\nsecond-line");
+        e_a.cursor = 7;
+        e_a.scroll_row = 3;
+        e_a.read_only = true;
+        let mut e_b = Editor::new();
+        e_b.insert(0, "beta");
+        src.editors = vec![e_a, e_b];
+        src.active_editor_index = 0;
+
+        // Destination has 1 tab
+        let mut e_d = Editor::new();
+        e_d.insert(0, "dest-0");
+        dst.editors = vec![e_d];
+        dst.active_editor_index = 0;
+
+        // 1. Move tab 0 ("unsaved-alpha") from src to dst slot 0
+        let res = Workspace::transfer_editor_to(&mut src, 0, &mut dst, 0);
+        assert_eq!(res, Some((0, false)), "src still has 1 tab left so source_became_empty must be false");
+        assert_eq!(src.editors.len(), 1);
+        assert_eq!(src.editors[0].rope.to_string(), "beta");
+        assert_eq!(dst.editors.len(), 2);
+        assert_eq!(dst.active_editor_index, 0);
+        assert_eq!(dst.editors[0].rope.to_string(), "unsaved-alpha\nsecond-line");
+        assert_eq!(dst.editors[0].cursor, 7);
+        assert_eq!(dst.editors[0].scroll_row, 3);
+        assert!(dst.editors[0].read_only);
+        assert!(dst.editors[0].is_modified());
+        assert_eq!(dst.editors[1].rope.to_string(), "dest-0");
+
+        // 2. Move last remaining tab ("beta") from src to dst end (slot 99 -> clamped to 2)
+        let res2 = Workspace::transfer_editor_to(&mut src, 0, &mut dst, 99);
+        assert_eq!(res2, Some((2, true)), "src has 0 tabs left so source_became_empty must be true");
+        assert!(src.editors.is_empty());
+        assert_eq!(dst.editors.len(), 3);
+        assert_eq!(dst.active_editor_index, 2);
+        assert_eq!(dst.editors[2].rope.to_string(), "beta");
     }
 }
 

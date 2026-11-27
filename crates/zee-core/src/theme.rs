@@ -549,13 +549,17 @@ mod tests {
     }
 
     #[test]
-    fn test_light_theme_markdown_heading1_and_heading2_colors() {
+    fn test_light_theme_markdown_heading_colors() {
         let light = Theme::builtins()
             .into_iter()
             .find(|t| t.meta.name == "Light")
             .expect("Light theme should exist");
-        assert_eq!(light.syntax.heading1, Some(Color::Rgb(0x14, 0x53, 0x2d))); // #14532d
+        assert_eq!(light.syntax.heading1, Some(Color::Rgb(0x15, 0x80, 0x3d))); // #15803d
         assert_eq!(light.syntax.heading2, Some(Color::Rgb(0x1d, 0x4e, 0xd8))); // #1d4ed8
+        assert_eq!(light.syntax.heading3, Some(Color::Rgb(0xb9, 0x1c, 0x1c))); // #b91c1c
+        assert_eq!(light.syntax.heading4, Some(Color::Rgb(0x7c, 0x3a, 0xed))); // #7c3aed
+        assert_eq!(light.syntax.heading5, Some(Color::Rgb(0x4d, 0x7c, 0x0f))); // #4d7c0f
+        assert_eq!(light.syntax.heading6, Some(Color::Rgb(0x73, 0x82, 0x96))); // #738296
     }
 
     #[test]

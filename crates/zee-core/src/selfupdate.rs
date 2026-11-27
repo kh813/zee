@@ -1487,18 +1487,34 @@ mod tests {
     fn test_release_and_warm_cache_workflows_share_cache_keys() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let ci_yml = fs::read_to_string(workspace_root.join(".github/workflows/ci.yml"))
+            .expect("ci.yml should exist");
         let release_yml = fs::read_to_string(workspace_root.join(".github/workflows/release.yml"))
             .expect("release.yml should exist");
         let warm_yml = fs::read_to_string(workspace_root.join(".github/workflows/warm-release-cache.yml"))
             .expect("warm-release-cache.yml should exist");
+        let toolchain_toml = fs::read_to_string(workspace_root.join("rust-toolchain.toml"))
+            .expect("rust-toolchain.toml should exist");
+
+        // Rust toolchain must be pinned to a concrete version to avoid unexpected cache invalidations
+        assert!(
+            toolchain_toml.contains("channel = \"1."),
+            "rust-toolchain.toml must pin an explicit Rust release version"
+        );
 
         let shared_key = "shared-key: \"release-${{ matrix.name }}\"";
         assert!(release_yml.contains(shared_key), "release.yml must use shared release cache key");
         assert!(warm_yml.contains(shared_key), "warm-release-cache.yml must match release.yml shared cache key");
-        assert!(release_yml.contains("mozilla-actions/sccache-action@v0.0.11"));
-        assert!(warm_yml.contains("mozilla-actions/sccache-action@v0.0.11"));
-        assert!(release_yml.contains("SCCACHE_GHA_ENABLED: \"true\""));
-        assert!(warm_yml.contains("SCCACHE_GHA_ENABLED: \"true\""));
+        assert!(warm_yml.contains("\"rust-toolchain.toml\""), "warm-release-cache.yml must trigger on rust-toolchain.toml changes");
+
+        for (name, content) in [("ci.yml", &ci_yml), ("release.yml", &release_yml), ("warm-release-cache.yml", &warm_yml)] {
+            assert!(content.contains("mozilla-actions/sccache-action@v0.0.11"), "{name} must configure sccache");
+            assert!(content.contains("SCCACHE_GHA_ENABLED: \"true\""), "{name} must enable sccache GHA backend");
+            assert!(content.contains("dtolnay/rust-toolchain@master"), "{name} must use rust-toolchain@master to respect rust-toolchain.toml");
+            assert!(content.contains("hashFiles('Cargo.toml')"), "{name} must hash root Cargo.toml in rust-cache key");
+            assert!(content.contains("Add-MpPreference -ExclusionPath"), "{name} must exclude build paths from Windows Defender");
+            assert!(content.contains("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER"), "{name} must configure fast lld-link on Windows");
+        }
     }
 
     #[test]

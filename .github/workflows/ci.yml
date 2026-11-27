@@ -59,8 +59,28 @@ jobs:
             libfontconfig1-dev \
             pkg-config
 
+      - name: Optimize Windows build environment (Defender exclusion & lld-link)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          try {
+            Add-MpPreference -ExclusionPath "${{ github.workspace }}", "$env:USERPROFILE\.cargo", "$env:RUNNER_TEMP"
+          } catch {
+            Write-Host "Skipping Defender exclusion: $_"
+          }
+          $lld = Get-Command lld-link.exe -ErrorAction SilentlyContinue
+          if (-not $lld -and (Test-Path "C:\Program Files\LLVM\bin\lld-link.exe")) {
+            $lld = Get-Item "C:\Program Files\LLVM\bin\lld-link.exe"
+          }
+          if ($lld) {
+            Write-Host "Using fast linker: $($lld.FullName)"
+            "CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER=$($lld.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            Write-Host "lld-link.exe not found; falling back to default MSVC link.exe"
+          }
+
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.11
@@ -68,18 +88,19 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
         with:
+          key: ${{ hashFiles('Cargo.toml') }}
           shared-key: "ci-${{ matrix.target }}"
           cache-on-failure: true
 
       - name: Run workspace tests (Linux with mold linker)
         if: runner.os == 'Linux'
-        run: cargo test --workspace
+        run: cargo test --workspace --lib --bins --tests
         env:
           RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=mold"
 
       - name: Run workspace tests (macOS / Windows)
         if: runner.os != 'Linux'
-        run: cargo test --workspace
+        run: cargo test --workspace --lib --bins --tests
 
       - name: Show sccache stats
         if: always()

@@ -66,7 +66,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         -w /workspace \
         -e CARGO_TARGET_DIR=/workspace/target_docker \
         rust:slim \
-        sh -c "cargo test -p zee-core --lib --quiet && cargo test -p zee-tui --lib --quiet"
+        sh -c 'RUSTUP_TOOLCHAIN=$(rustup default | cut -d" " -f1) cargo test -p zee-core --lib --quiet && RUSTUP_TOOLCHAIN=$(rustup default | cut -d" " -f1) cargo test -p zee-tui --lib --quiet'
     echo -e "${GREEN}✓ Linux container tests passed!${NC}\n"
 else
     echo -e "${YELLOW}⚠ Docker is not running. Skipped Linux x64 container tests.${NC}"

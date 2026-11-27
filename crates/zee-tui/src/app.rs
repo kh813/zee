@@ -7314,6 +7314,7 @@ mod tests {
 
     #[test]
     fn test_markdown_bold_and_heading1_rendering() {
+        let _env_guard = SSH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let temp_dir = std::env::temp_dir();
         let md_path = temp_dir.join("test_md_rendering.md");
         std::fs::write(&md_path, "# Header 1\n**bold text**\n[link text](#url)\n* bullet item\n").unwrap();
@@ -8892,6 +8893,17 @@ mod tests {
 
     #[test]
     fn test_menu_dropdown_rendering_contrast_all_themes() {
+        let _env_guard = SSH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        struct TermProgramReset(Option<String>);
+        impl Drop for TermProgramReset {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(v) => unsafe { std::env::set_var("TERM_PROGRAM", v); },
+                    None => unsafe { std::env::remove_var("TERM_PROGRAM"); },
+                }
+            }
+        }
+        let _term_reset = TermProgramReset(std::env::var("TERM_PROGRAM").ok());
         let mut app = App::new(vec![]).expect("Failed to init App");
         let themes = zee_core::theme::Theme::builtins();
         assert!(!themes.is_empty());
@@ -9234,7 +9246,7 @@ mod tests {
 
     #[test]
     fn test_adaptive_ime_and_manual_toggle_ssh_session() {
-        let _guard = SSH_ENV_LOCK.lock().unwrap();
+        let _guard = SSH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { std::env::set_var("SSH_CONNECTION", "127.0.0.1 50000 127.0.0.1 22"); }
         let mut app = App::new(vec![]).expect("Failed to init App");
         app.config.vi_mode = true;
@@ -9277,7 +9289,7 @@ mod tests {
 
     #[test]
     fn test_vi_mode_status_bar_and_cmdline_rendering() {
-        let _guard = SSH_ENV_LOCK.lock().unwrap();
+        let _guard = SSH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut app = App::new(vec![]).unwrap();
         app.width = 100;
         app.height = 30;

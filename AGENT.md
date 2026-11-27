@@ -4,22 +4,32 @@ This document outlines mandatory development rules and standards for AI coding a
 
 ---
 
-## 1. Mandatory Bugfix Regression Testing (バグ修正時のデグレ防止テスト必須化)
+## 1. Mandatory Bugfix Regression Testing & Auto-Improvement (バグ修正時の再発防止テスト自動調査・追加・既存コード改善)
 
-Whenever an issue or bug is investigated and fixed:
-1. **Evaluate Testability**: Assess whether automated test code can reproduce the issue or detect future regressions.
-2. **Mandatory Test Implementation**: If the issue can be validated through tests, **writing and running corresponding regression tests is mandatory**.
-3. **Workspace-Wide Verification**: Always run `cargo test --workspace` and verify that 100% of the tests pass before finishing a task or initiating a release.
-4. **No Unverified Fixes**: A bugfix is not complete without passing regression tests, unless technically untestable (e.g., visual icon assets or external CI triggers).
+Whenever an issue or bug is reported, discovered, and fixed, **proactively perform the following workflow without waiting for the user to ask for tests**:
+
+1. **Investigate Whether Regression Tests Should Be Written (テスト要否の自動調査)**:
+   - Analyze the root cause of the bug and determine whether automated tests can reproduce the failure and guard against future regressions.
+   - Check existing test coverage across **all relevant layers (`zee-core`, `zee-gui`, `zee-tui`)** — including whether the same class of bug could also happen in the sibling frontend (e.g., if a bug is fixed in GUI, check whether CLI/TUI needs an equivalent regression test, and vice versa).
+2. **Automatically Add Tests & Improve Existing Code (テストの自動追加と既存コードの改善)**:
+   - Whenever the investigation concludes that tests should be written, **automatically add the regression test(s) as part of the bugfix task** instead of leaving it to a follow-up request.
+   - **Proactively improve existing code for testability and robustness**:
+     - If the buggy logic is embedded inside a monolithic or tightly-coupled function (such as GPUI/TUI rendering), extract pure/testable helper functions (preserving existing behavior) so the exact logic can be unit-tested directly.
+     - If existing tests are fragile, incomplete, or lack cross-platform/concurrency safety (e.g., CRLF line endings on Windows, parallel environment-variable races), improve and harden those existing tests as well.
+   - Where applicable, mirror or port regression tests across both GUI (`zee-gui`) and CLI/TUI (`zee-tui`) so neither frontend silently regresses.
+3. **Workspace-Wide Verification (全体検証)**:
+   - Always run `cargo test --workspace` (and `./scripts/verify-all-targets.sh` before pushing) and verify that 100% of the tests pass before finishing a task or initiating a release.
+4. **No Unverified Fixes (例外の明示)**:
+   - A bugfix is not complete without passing regression tests, unless the investigation confirms it is genuinely untestable in automated runs (e.g., static icon assets, OS window-manager quirks, or external CI runner behavior), in which case state why briefly.
 
 ---
 
 ## 2. Test Concurrency & Thread-Safety Isolation (テストの並列実行安全性)
 
 Because `cargo test --workspace` executes tests across multiple threads concurrently within each crate test runner:
-- **Global Mutex Locks**: Any test that modifies process-wide global state (e.g., `Config::set_custom_config_dir`, `SSH_CONNECTION` environment variables) **must** acquire the dedicated mutex guard:
+- **Global Mutex Locks**: Any test that reads or modifies process-wide global state (e.g., `Config::set_custom_config_dir`, `SSH_CONNECTION`, `TERM_PROGRAM`) **must** acquire the dedicated mutex guard (using `.unwrap_or_else(|e| e.into_inner())` and restoring env vars via a `Drop` guard):
   - `CONFIG_DIR_LOCK` for config directory overrides
-  - `SSH_ENV_LOCK` for SSH environment variables
+  - `SSH_ENV_LOCK` for terminal / SSH environment variables (`SSH_CONNECTION`, `TERM_PROGRAM`)
 - **Unique Temp Directories**: Always use process-isolated temp directories (e.g., `std::env::temp_dir().join(format!("zee_test_..._{}", std::process::id()))`) and ensure cleanup after test completion.
 - **Session Decoupling**: Do not allow `App::new(vec![])` or `App::with_targets(vec![])` to unexpectedly consume global files like `update_session.json` across concurrent test executions.
 

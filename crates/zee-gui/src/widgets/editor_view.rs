@@ -4627,7 +4627,7 @@ mod tests {
 
     #[::core::prelude::v1::test]
     fn test_gui_cursor_alignment_uses_line_layout_on_all_platforms() {
-        let src = include_str!("editor_view.rs");
+        let src = include_str!("editor_view.rs").replace("\r\n", "\n");
 
         // Regression guard: cursor overlay, hit-testing, and IME bounds MUST NOT be
         // restricted to Windows-only #[cfg(target_os = "windows")] branches.

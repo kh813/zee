@@ -669,5 +669,38 @@ mod tests {
             assert_eq!(hl.highlight_line(&lines[4], states[4])[0].token, TokenType::Keyword);
         }
     }
+
+    #[test]
+    fn test_c_cpp_swift_escaped_strings_and_multiline_literals() {
+        let builtins = SyntaxDefinition::builtins();
+
+        for lang in ["C", "C++"] {
+            let def = builtins.iter().find(|b| b.meta.name == lang).unwrap().clone();
+            let hl = SyntaxHighlighter::new(def).unwrap();
+            let lines = vec![
+                "const char *s = \"escaped \\\"/*\\\" quote\";\n".to_string(),
+                "int main() { return 0; }\n".to_string(),
+            ];
+            let states = hl.compute_line_states(&lines, LineState::Normal);
+            assert_eq!(states[1], LineState::Normal, "{lang}: escaped quote before /* must not leak block comment");
+            assert_eq!(hl.highlight_line(&lines[1], states[1])[0].token, TokenType::Keyword);
+        }
+
+        let swift_def = builtins.iter().find(|b| b.meta.name == "Swift").unwrap().clone();
+        let swift_hl = SyntaxHighlighter::new(swift_def).unwrap();
+        let swift_lines = vec![
+            "let text = \"\"\"\n".to_string(),
+            "/* not a comment */\n".to_string(),
+            "\"\"\"\n".to_string(),
+            "let msg = \"escaped \\\"/*\\\" quote\"\n".to_string(),
+            "func run() {}\n".to_string(),
+        ];
+        let swift_states = swift_hl.compute_line_states(&swift_lines, LineState::Normal);
+        assert_ne!(swift_states[1], LineState::Normal, "Swift multiline \"\"\" must stay InsideRegion");
+        assert_eq!(swift_hl.highlight_line(&swift_lines[1], swift_states[1])[0].token, TokenType::String);
+        assert_eq!(swift_states[3], LineState::Normal);
+        assert_eq!(swift_states[4], LineState::Normal);
+        assert_eq!(swift_hl.highlight_line(&swift_lines[4], swift_states[4])[0].token, TokenType::Keyword);
+    }
 }
 

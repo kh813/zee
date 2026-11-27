@@ -11,6 +11,14 @@
 
 set -euo pipefail
 
+# Prefer rustup toolchain over Homebrew rustc so cross-targets and caches stay consistent
+if [ -d "$HOME/.cargo/bin" ]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+fi
+if [ -z "${RUSTC_WRAPPER:-}" ] && command -v sccache >/dev/null 2>&1; then
+    export RUSTC_WRAPPER="$(command -v sccache)"
+fi
+
 # ANSI color codes
 GREEN="\033[0;32m"
 BLUE="\033[0;34m"

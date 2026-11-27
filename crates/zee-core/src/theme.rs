@@ -565,6 +565,28 @@ mod tests {
         assert_eq!(light.syntax.heading5, Some(Color::Rgb(0x4d, 0x7c, 0x0f))); // #4d7c0f
         assert_eq!(light.syntax.heading6, Some(Color::Rgb(0x73, 0x82, 0x96))); // #738296
         assert_eq!(light.syntax.bold, Some(Color::Rgb(0xea, 0x58, 0x0c)));     // #ea580c
+
+        // All Markdown heading levels + bold + inline_code + link must be pairwise distinct
+        let md_colors = [
+            ("heading1", light.syntax.heading1.unwrap()),
+            ("heading2", light.syntax.heading2.unwrap()),
+            ("heading3", light.syntax.heading3.unwrap()),
+            ("heading4", light.syntax.heading4.unwrap()),
+            ("heading5", light.syntax.heading5.unwrap()),
+            ("heading6", light.syntax.heading6.unwrap()),
+            ("bold", light.syntax.bold.unwrap()),
+            ("inline_code", light.syntax.inline_code.unwrap()),
+            ("link", light.syntax.link.unwrap()),
+        ];
+        for i in 0..md_colors.len() {
+            for j in (i + 1)..md_colors.len() {
+                assert_ne!(
+                    md_colors[i].1, md_colors[j].1,
+                    "Light theme Markdown tokens '{}' and '{}' must have distinct colors",
+                    md_colors[i].0, md_colors[j].0
+                );
+            }
+        }
     }
 
     #[test]

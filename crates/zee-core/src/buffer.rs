@@ -4582,6 +4582,68 @@ mod tests {
             "## 見出し2 must retain Heading2 token after multiline replace above"
         );
     }
+
+    #[test]
+    fn test_markdown_multiline_fence_editing_quad_backticks_and_syntax_switch() {
+        let builtins = crate::syntax::SyntaxDefinition::builtins();
+        let md_def = builtins.iter().find(|b| b.meta.name == "Markdown").unwrap().clone();
+        let rs_def = builtins.iter().find(|b| b.meta.name == "Rust").unwrap().clone();
+
+        let mut editor = Editor::new();
+        editor.update_syntax(Some(crate::syntax::SyntaxHighlighter::new(md_def.clone()).unwrap()));
+        editor.insert(0, "intro\n```rust\nlet x = 1;\n```\n# 見出し1\n");
+
+        // 1. Insert lines ABOVE the fenced code block -> inside stays Keyword, heading below stays Heading1
+        editor.insert(0, "new0\nnew1\n");
+        assert_eq!(
+            editor.line_tokens[4].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Keyword),
+            "Code line inside fence must stay Keyword after inserting lines above"
+        );
+        assert_eq!(
+            editor.line_tokens[6].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "# 見出し1 below fence must stay Heading1 after inserting lines above"
+        );
+
+        // 2. Typing inline ```` ```` directly above # 見出し1 must NOT break Heading1
+        let h1_start = editor.rope.line_to_char(6);
+        editor.insert(h1_start, "```` ```` テスト文字列\n");
+        assert_eq!(
+            editor.line_tokens[7].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "Inline ```` ```` must never break # 見出し1 on the following line"
+        );
+
+        // 3. Removing closing ``` fence turns # 見出し1 into Keyword; undo restores Heading1
+        let close_fence_start = editor.rope.line_to_char(5);
+        let close_fence_end = editor.rope.line_to_char(6);
+        editor.delete(close_fence_start..close_fence_end);
+        assert_eq!(
+            editor.line_tokens[6].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Keyword),
+            "Unclosed fence above must propagate Keyword state to # 見出し1"
+        );
+        editor.undo();
+        assert_eq!(
+            editor.line_tokens[7].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "Undo restoring closing fence must immediately restore Heading1"
+        );
+
+        // 4. Switching syntax from an unclosed Rust block comment to Markdown must reset stale InsideRegion
+        let mut switch_ed = Editor::new();
+        switch_ed.update_syntax(Some(crate::syntax::SyntaxHighlighter::new(rs_def).unwrap()));
+        switch_ed.insert(0, "/* unclosed rust comment\n# 見出し1\n");
+        assert_ne!(switch_ed.line_states[1], crate::syntax::LineState::Normal);
+        switch_ed.update_syntax(Some(crate::syntax::SyntaxHighlighter::new(md_def).unwrap()));
+        assert_eq!(switch_ed.line_states[1], crate::syntax::LineState::Normal);
+        assert_eq!(
+            switch_ed.line_tokens[1].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "Switching syntax must clear stale InsideRegion states from previous language"
+        );
+    }
 }
 
 

@@ -1,7 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_PATH="${1:-/Users/hiroshi/Applications/Zee.app}"
+# Prefer rustup toolchain over Homebrew rustc so target/ and sccache stay consistent
+if [ -d "$HOME/.cargo/bin" ]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
+PROFILE="release-fast"
+APP_PATH="/Users/hiroshi/Applications/Zee.app"
+
+for arg in "$@"; do
+    case "$arg" in
+        --full|--release)
+            PROFILE="release"
+            ;;
+        *)
+            APP_PATH="$arg"
+            ;;
+    esac
+done
 
 if [ ! -d "$APP_PATH" ]; then
     echo "Error: Application bundle $APP_PATH not found."
@@ -12,11 +29,12 @@ if [ -z "${RUSTC_WRAPPER:-}" ] && command -v sccache >/dev/null 2>&1; then
     export RUSTC_WRAPPER="$(command -v sccache)"
 fi
 
-echo "Building release binary for zee-gui (zeeg)..."
-cargo build --release -p zee-gui --bin zeeg
+echo "Building zee-gui (zeeg) with profile '${PROFILE}'..."
+cargo build --profile "$PROFILE" -p zee-gui --bin zeeg
 
-echo "Updating $APP_PATH binary..."
-cp target/release/zeeg "$APP_PATH/Contents/MacOS/zeeg"
+BIN_PATH="target/${PROFILE}/zeeg"
+echo "Updating $APP_PATH binary from $BIN_PATH..."
+cp "$BIN_PATH" "$APP_PATH/Contents/MacOS/zeeg"
 chmod +x "$APP_PATH/Contents/MacOS/zeeg"
 
 echo "Stripping quarantine and extended attributes..."

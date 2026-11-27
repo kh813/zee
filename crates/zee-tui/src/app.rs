@@ -9156,6 +9156,7 @@ mod tests {
 
     #[test]
     fn test_vi_mode_cursor_rendering_modes() {
+        let _ssh_guard = SSH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut app = App::new(vec![]).expect("Failed to init App");
         app.width = 100;
         app.height = 30;
@@ -9975,6 +9976,186 @@ mod tests {
         assert_eq!(app3.buffers.len(), 2);
         assert_eq!(app3.buffers[0].rope.to_string(), "unsaved user edits");
         assert_eq!(app3.buffers[1].path.as_deref(), Some(file1.as_path()));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_tui_cursor_screen_pos_ascii_cjk_tab_wrap_and_line_numbers() {
+        let mut app = App::new(vec![]).expect("Failed to init App");
+        app.config.word_wrap = false;
+        app.config.line_numbers = true;
+        app.config.tab_size = 4;
+        app.recompute_layout();
+
+        let (ex, ey, _ew, _eh) = app.layout.editor_bounds();
+        // "a日本語b" -> visual cols: 'a'=0(w1), '日'=1(w2), '本'=3(w2), '語'=5(w2), 'b'=7(w1), EOL=8
+        app.buffers[0].insert(0, "a日本語b\n\tab");
+
+        let expected_vcols: [(usize, u16); 6] = [(0, 0), (1, 1), (2, 3), (3, 5), (4, 7), (5, 8)];
+        for (char_pos, expected_vcol) in expected_vcols {
+            app.buffers[0].cursor = char_pos;
+            app.render_editor();
+            assert_eq!(
+                app.cursor_screen_pos,
+                Some((ex + expected_vcol, ey)),
+                "TUI cursor_screen_pos mismatch at char {char_pos} (line_numbers=true, wrap=false)"
+            );
+        }
+
+        // Tab on line 1: '\t' expands to 4 cells, so 'a' is at visual col 4
+        let line1_start = app.buffers[0].rope.line_to_char(1);
+        app.buffers[0].cursor = line1_start + 1;
+        app.render_editor();
+        assert_eq!(
+            app.cursor_screen_pos,
+            Some((ex + 4, ey + 1)),
+            "TUI cursor after leading tab must align to tab_size column"
+        );
+
+        // Toggle line_numbers off -> cursor X must align to new editor_bounds left edge (no stale gutter offset)
+        app.config.line_numbers = false;
+        app.recompute_layout();
+        let (ex_no_ln, ey_no_ln, _ew2, _eh2) = app.layout.editor_bounds();
+        assert!(ex_no_ln < ex, "Disabling line_numbers should shrink gutter");
+        app.buffers[0].cursor = 3; // '語' at visual col 5
+        app.render_editor();
+        assert_eq!(
+            app.cursor_screen_pos,
+            Some((ex_no_ln + 5, ey_no_ln)),
+            "TUI cursor must align cleanly when line_numbers=false"
+        );
+
+        // Word wrap ON: cursor on wrapped continuation moves to next screen row
+        app.config.word_wrap = true;
+        app.recompute_layout();
+        let (ex_w, ey_w, ew_w, _eh_w) = app.layout.editor_bounds();
+        let long_cjk = "あ".repeat((ew_w as usize / 2) + 3);
+        let cur_len = app.buffers[0].rope.len_chars();
+        app.buffers[0].replace(0..cur_len, &long_cjk);
+        app.buffers[0].cursor = app.buffers[0].rope.len_chars();
+        app.render_editor();
+        let (cx, cy) = app.cursor_screen_pos.expect("wrapped cursor_screen_pos should be Some");
+        assert!(cy > ey_w, "Wrapped CJK line cursor must advance to next visual row");
+        assert!(cx >= ex_w && cx < ex_w + ew_w, "Wrapped cursor X must remain within editor bounds");
+    }
+
+    #[test]
+    fn test_tui_markdown_highlighting_survives_edits_quad_backticks_and_all_headings() {
+        let _ssh_guard = SSH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp_dir = std::env::temp_dir().join(format!("zee_tui_md_reg_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let md_path = temp_dir.join("regression.md");
+        std::fs::write(
+            &md_path,
+            "intro\n# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6\n**強調** `code`\n",
+        )
+        .unwrap();
+
+        let mut app = App::new(vec![md_path.clone()]).expect("Failed to init App");
+        app.perform_action(Action::SetTheme("light".to_string()));
+        app.config.word_wrap = false;
+        app.recompute_layout();
+        app.render_editor();
+
+        let (ex, ey, _ew, _eh) = app.layout.editor_bounds();
+        let h1_fg = app.to_ct_color(app.theme.syntax.heading1.unwrap());
+        let h2_fg = app.to_ct_color(app.theme.syntax.heading2.unwrap());
+        let h3_fg = app.to_ct_color(app.theme.syntax.heading3.unwrap());
+        let h4_fg = app.to_ct_color(app.theme.syntax.heading4.unwrap());
+        let h5_fg = app.to_ct_color(app.theme.syntax.heading5.unwrap());
+        let h6_fg = app.to_ct_color(app.theme.syntax.heading6.unwrap());
+        let bold_fg = app.to_ct_color(app.theme.syntax.bold.unwrap());
+        let code_fg = app.to_ct_color(app.theme.syntax.inline_code.unwrap());
+
+        // 1. All 6 heading colors + bold + inline_code render distinctly on initial load
+        assert_eq!(app.renderer.get_cell(ex, ey + 1).fg, h1_fg);
+        assert_eq!(app.renderer.get_cell(ex, ey + 2).fg, h2_fg);
+        assert_eq!(app.renderer.get_cell(ex, ey + 3).fg, h3_fg);
+        assert_eq!(app.renderer.get_cell(ex, ey + 4).fg, h4_fg);
+        assert_eq!(app.renderer.get_cell(ex, ey + 5).fg, h5_fg);
+        assert_eq!(app.renderer.get_cell(ex, ey + 6).fg, h6_fg);
+        let bold_cell = app.renderer.get_cell(ex + 2, ey + 7);
+        assert!(bold_cell.bold);
+        assert_eq!(bold_cell.fg, bold_fg);
+        // `code` starts after "**強調** " -> visual cols: **(2) + 強(2) + 調(2) + **(2) + ' '(1) = 9
+        assert_eq!(app.renderer.get_cell(ex + 9, ey + 7).fg, code_fg);
+        assert_ne!(h3_fg, code_fg, "H3 must be distinct from inline_code");
+        assert_ne!(h3_fg, bold_fg, "H3 must be distinct from bold");
+        assert_ne!(h5_fg, h6_fg, "H5 must be distinct from H6");
+
+        // 2. Inserting inline ```` ```` and blank lines above # H1 must keep H1 colored (never black)
+        app.buffers[0].insert(0, "```` ```` インライン\n\n");
+        app.render_editor();
+        assert_eq!(
+            app.renderer.get_cell(ex, ey + 3).fg,
+            h1_fg,
+            "TUI: # H1 must stay Heading1 color after inserting lines & ```` ```` above"
+        );
+
+        // 3. Deleting lines above # H1 must keep H1 colored (never inherit stale plain tokens)
+        let line2_start = app.buffers[0].rope.line_to_char(2);
+        app.buffers[0].delete(0..line2_start);
+        app.render_editor();
+        assert_eq!(
+            app.renderer.get_cell(ex, ey + 1).fg,
+            h1_fg,
+            "TUI: # H1 must stay Heading1 color after deleting lines above"
+        );
+
+        // 4. Nested 4-backtick fence wrapping a 3-backtick fence above # H1
+        app.buffers[0].insert(0, "````md\n```rs\nfn x(){}\n```\n````\n");
+        app.render_editor();
+        assert_eq!(
+            app.renderer.get_cell(ex, ey + 6).fg,
+            h1_fg,
+            "TUI: # H1 after closed nested 4-backtick fence must remain Heading1"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_tui_multilang_highlighting_python_go_rust_no_color_leak() {
+        let _ssh_guard = SSH_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let temp_dir = std::env::temp_dir().join(format!("zee_tui_lang_reg_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let cases = [
+            (
+                "sample.py",
+                "\"\"\"\ndoc\n\"\"\"\ns = \"a \\\"#\\\" b\"\ndef ok():\n    pass\n",
+                4usize,
+            ),
+            (
+                "sample.go",
+                "s := `\n/* raw */\n`\nm := \"a \\\"/*\\\" b\"\nfunc main() {}\n",
+                4usize,
+            ),
+            (
+                "sample.rs",
+                "let r = r#\"\n/* raw */\n\"#;\nlet s = \"a \\\"/*\\\" b\";\nfn main() {}\n",
+                4usize,
+            ),
+        ];
+
+        for (filename, content, kw_line) in cases {
+            let path = temp_dir.join(filename);
+            std::fs::write(&path, content).unwrap();
+            let mut app = App::new(vec![path.clone()]).expect("Failed to init App");
+            app.perform_action(Action::SetTheme("light".to_string()));
+            app.config.word_wrap = false;
+            app.recompute_layout();
+            app.render_editor();
+
+            let (ex, ey, _ew, _eh) = app.layout.editor_bounds();
+            let expected_kw_fg = app.to_ct_color(app.theme.syntax.keyword.unwrap());
+            assert_eq!(
+                app.renderer.get_cell(ex, ey + kw_line as u16).fg,
+                expected_kw_fg,
+                "TUI ({filename}): keyword on line {kw_line} must not be broken by preceding multiline/escaped strings"
+            );
+        }
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

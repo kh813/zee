@@ -1484,6 +1484,24 @@ mod tests {
     }
 
     #[test]
+    fn test_release_and_warm_cache_workflows_share_cache_keys() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+        let release_yml = fs::read_to_string(workspace_root.join(".github/workflows/release.yml"))
+            .expect("release.yml should exist");
+        let warm_yml = fs::read_to_string(workspace_root.join(".github/workflows/warm-release-cache.yml"))
+            .expect("warm-release-cache.yml should exist");
+
+        let shared_key = "shared-key: \"release-${{ matrix.name }}\"";
+        assert!(release_yml.contains(shared_key), "release.yml must use shared release cache key");
+        assert!(warm_yml.contains(shared_key), "warm-release-cache.yml must match release.yml shared cache key");
+        assert!(release_yml.contains("mozilla-actions/sccache-action@v0.0.11"));
+        assert!(warm_yml.contains("mozilla-actions/sccache-action@v0.0.11"));
+        assert!(release_yml.contains("SCCACHE_GHA_ENABLED: \"true\""));
+        assert!(warm_yml.contains("SCCACHE_GHA_ENABLED: \"true\""));
+    }
+
+    #[test]
     fn test_resolve_current_executable_resolution() {
         let res = resolve_current_executable();
         assert!(res.is_ok(), "resolve_current_executable should succeed in test environment");

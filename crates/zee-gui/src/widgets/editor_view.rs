@@ -174,7 +174,7 @@ impl EditorView {
         (font_family, ascii_width, cjk_width)
     }
 
-    fn token_color(&self, token_type: TokenType, theme: &Theme) -> Rgba {
+    pub(crate) fn token_color_for_theme(token_type: TokenType, theme: &Theme) -> Rgba {
         let color = match token_type {
             TokenType::Keyword => theme.syntax.keyword,
             TokenType::TypeName => theme.syntax.type_name,
@@ -4037,11 +4037,30 @@ impl EditorView {
         workspace: &Workspace,
         editor: &zee_core::buffer::Editor,
     ) -> Vec<TextRun> {
+        Self::build_visual_line_runs_for_font(
+            &self.font_family,
+            line_idx,
+            range,
+            byte_start,
+            v_text,
+            &workspace.theme,
+            editor,
+        )
+    }
+
+    pub(crate) fn build_visual_line_runs_for_font(
+        font_family: &SharedString,
+        line_idx: usize,
+        range: &std::ops::Range<usize>,
+        byte_start: usize,
+        v_text: &str,
+        theme: &Theme,
+        editor: &zee_core::buffer::Editor,
+    ) -> Vec<TextRun> {
         if v_text.is_empty() {
             return Vec::new();
         }
 
-        let theme = &workspace.theme;
         let default_fg = led_color_to_gpui(theme.editor.foreground);
         let sel_bg = with_alpha(led_color_to_gpui(theme.editor.selection), 0.75);
 
@@ -4075,7 +4094,7 @@ impl EditorView {
         };
 
         let tokens = editor.line_tokens.get(line_idx).and_then(|t| t.as_ref());
-        let font = gpui::font(self.font_family.clone());
+        let font = gpui::font(font_family.clone());
         let mut runs: Vec<TextRun> = Vec::new();
         let mut tok_idx = 0;
 
@@ -4091,12 +4110,12 @@ impl EditorView {
                         let t_end = toks[tok_idx].byte_range.end;
                         let is_marker = (t_end >= t_start + 4) && (abs_byte < t_start + 2 || abs_byte >= t_end - 2);
                         if is_marker {
-                            (false, self.token_color(TokenType::Comment, theme))
+                            (false, Self::token_color_for_theme(TokenType::Comment, theme))
                         } else {
-                            (true, self.token_color(TokenType::Bold, theme))
+                            (true, Self::token_color_for_theme(TokenType::Bold, theme))
                         }
                     } else {
-                        (false, self.token_color(toks[tok_idx].token, theme))
+                        (false, Self::token_color_for_theme(toks[tok_idx].token, theme))
                     }
                 } else {
                     (false, default_fg)
@@ -4596,5 +4615,167 @@ pub fn resolve_cjk_width(measured_cjk: Option<f32>, ascii_width: f32) -> f32 {
     match measured_cjk {
         Some(w) if w >= ascii_width * 1.2 && w <= ascii_width * 2.5 => w,
         _ => ascii_width * 2.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EditorView;
+    use gpui::{FontId, GlyphId, Hsla, LineLayout, Point, ShapedGlyph, ShapedRun, SharedString, px};
+    use zee_core::syntax::TokenType;
+    use zee_core::theme::Theme;
+
+    #[::core::prelude::v1::test]
+    fn test_gui_cursor_alignment_uses_line_layout_on_all_platforms() {
+        let src = include_str!("editor_view.rs");
+
+        // Regression guard: cursor overlay, hit-testing, and IME bounds MUST NOT be
+        // restricted to Windows-only #[cfg(target_os = "windows")] branches.
+        assert!(
+            !src.contains("#[cfg(target_os = \"windows\")]\n    fn layout_visual_line"),
+            "layout_visual_line must be enabled on all platforms (including macOS)"
+        );
+        assert!(
+            !src.contains("#[cfg(target_os = \"windows\")]\n    fn measure_cursor_in_visual_line"),
+            "measure_cursor_in_visual_line must be enabled on all platforms (including macOS)"
+        );
+        assert!(
+            !src.contains("#[cfg(target_os = \"windows\")]\n    #[allow(clippy::too_many_arguments)]\n    fn render_cursor_overlay"),
+            "render_cursor_overlay must use LineLayout on all platforms (including macOS)"
+        );
+        assert!(
+            !src.contains("#[cfg(not(target_os = \"windows\"))]\n    #[allow(clippy::too_many_arguments)]\n    fn render_cursor_overlay"),
+            "Legacy non-Windows get_visual_px render_cursor_overlay must not be reintroduced"
+        );
+        // StyledText must never wrap differently from layout_line(..., None)
+        assert!(
+            src.contains(".whitespace_nowrap()\n                .font_family(self.font_family.clone())\n                .child(StyledText::new"),
+            "render_visual_line_content must set .whitespace_nowrap() for StyledText alignment"
+        );
+        // Line numbers gutter must be conditionally rendered so w(0) doesn't expand via padding/border
+        assert!(
+            src.contains(".when(workspace.config.line_numbers, |d| {"),
+            "Gutter div must be omitted when line_numbers is false to prevent horizontal offset"
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn test_cursor_metrics_wrapped_empty_emoji_and_hit_testing() {
+        // 1. Empty line
+        let empty_layout = LineLayout {
+            font_size: px(13.0),
+            width: px(0.0),
+            ascent: px(11.0),
+            descent: px(3.0),
+            runs: vec![],
+            len: 0,
+        };
+        assert_eq!(EditorView::cursor_metrics_from_layout("", &empty_layout, 0), (0.0, None));
+        assert_eq!(EditorView::closest_char_index_for_x("", &empty_layout, px(10.0)), 0);
+
+        // 2. Wrapped visual line continuation with 4-byte emoji, CJK, and trailing space
+        let full_line = "prefix:🦀日本語 ";
+        let range = 7..full_line.chars().count(); // "🦀日本語 "
+        let (_bs, _be, v_text) = EditorView::slice_visual_line(full_line, &range);
+        assert_eq!(v_text, "🦀日本語 ");
+
+        let advances: [f32; 5] = [16.5, 13.0, 13.0, 13.0, 7.83];
+        let mut glyphs = Vec::new();
+        let mut x = 0.0f32;
+        let mut expected = Vec::new();
+        for ((byte_offset, _ch), &adv) in v_text.char_indices().zip(advances.iter()) {
+            expected.push((x, adv));
+            glyphs.push(ShapedGlyph {
+                id: GlyphId(0),
+                position: Point { x: px(x), y: px(0.0) },
+                index: byte_offset,
+                is_emoji: false,
+            });
+            x += adv;
+        }
+        let layout = LineLayout {
+            font_size: px(13.0),
+            width: px(x),
+            ascent: px(11.0),
+            descent: px(3.0),
+            runs: vec![ShapedRun { font_id: FontId(0), glyphs }],
+            len: v_text.len(),
+        };
+
+        for (v_idx, &(exp_x, exp_w)) in expected.iter().enumerate() {
+            let (cx, cw) = EditorView::cursor_metrics_from_layout(v_text, &layout, v_idx);
+            assert!((cx - exp_x).abs() < 0.01);
+            assert!((cw.unwrap() - exp_w).abs() < 0.01);
+            assert_eq!(
+                EditorView::closest_char_index_for_x(v_text, &layout, px(exp_x + exp_w * 0.2)),
+                v_idx
+            );
+            assert_eq!(
+                EditorView::closest_char_index_for_x(v_text, &layout, px(exp_x + exp_w * 0.8)),
+                v_idx + 1
+            );
+        }
+        // End of line (after trailing space)
+        let (eol_x, eol_w) = EditorView::cursor_metrics_from_layout(v_text, &layout, 5);
+        assert!((eol_x - x).abs() < 0.01);
+        assert_eq!(eol_w, None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn test_build_visual_line_runs_markdown_bold_h3_inline_code_and_utf8_invariants() {
+        let builtins = zee_core::syntax::SyntaxDefinition::builtins();
+        let md_def = builtins.into_iter().find(|b| b.meta.name == "Markdown").unwrap();
+        let hl = zee_core::syntax::SyntaxHighlighter::new(md_def).unwrap();
+        let light = Theme::builtins()
+            .into_iter()
+            .find(|t| t.meta.name == "Light")
+            .expect("Light theme");
+
+        let mut editor = zee_core::buffer::Editor::new();
+        editor.update_syntax(Some(hl));
+        editor.insert(0, "### 見出し3\n本文 **強調テスト** と `code`\n");
+
+        let font_family = SharedString::from("Menlo");
+
+        // Line 0: H3 (#cf6f34)
+        let line0 = EditorView::strip_line_endings(editor.rope.line(0).to_string());
+        let range0 = 0..line0.chars().count();
+        let (bs0, _, v0) = EditorView::slice_visual_line(&line0, &range0);
+        let runs0 = EditorView::build_visual_line_runs_for_font(&font_family, 0, &range0, bs0, v0, &light, &editor);
+        assert_eq!(runs0.iter().map(|r| r.len).sum::<usize>(), v0.len());
+        assert_eq!(runs0.len(), 1);
+        assert_eq!(runs0[0].color, Hsla::from(EditorView::token_color_for_theme(TokenType::Heading3, &light)));
+
+        // Line 1: plain + ** (comment gray, normal) + 強調テスト (bold #ea580c) + ** (comment gray) + plain + `code` (#be185d)
+        let line1 = EditorView::strip_line_endings(editor.rope.line(1).to_string());
+        let range1 = 0..line1.chars().count();
+        let (bs1, _, v1) = EditorView::slice_visual_line(&line1, &range1);
+        let runs1 = EditorView::build_visual_line_runs_for_font(&font_family, 1, &range1, bs1, v1, &light, &editor);
+        assert_eq!(runs1.iter().map(|r| r.len).sum::<usize>(), v1.len());
+
+        let expected_bold_color = Hsla::from(EditorView::token_color_for_theme(TokenType::Bold, &light));
+        let expected_comment_color = Hsla::from(EditorView::token_color_for_theme(TokenType::Comment, &light));
+        let expected_code_color = Hsla::from(EditorView::token_color_for_theme(TokenType::InlineCode, &light));
+
+        assert!(
+            runs1.iter().any(|r| r.font.weight == gpui::FontWeight::BOLD && r.color == expected_bold_color),
+            "Inner bold text must render with FontWeight::BOLD and theme syntax.bold color (#ea580c)"
+        );
+        assert!(
+            runs1.iter().any(|r| r.font.weight == gpui::FontWeight::NORMAL && r.color == expected_comment_color && r.len == 2),
+            "Bold '**' markers must render with normal weight and muted comment color"
+        );
+        assert!(
+            runs1.iter().any(|r| r.color == expected_code_color),
+            "Inline code must render with theme syntax.inline_code color (#be185d)"
+        );
+
+        // Wrapped slice starting mid-bold ("調テスト** と `code`") must preserve byte invariant & bold style
+        let wrap_range = 6..line1.chars().count();
+        let (wbs, _, wv) = EditorView::slice_visual_line(&line1, &wrap_range);
+        let wruns = EditorView::build_visual_line_runs_for_font(&font_family, 1, &wrap_range, wbs, wv, &light, &editor);
+        assert_eq!(wruns.iter().map(|r| r.len).sum::<usize>(), wv.len());
+        assert_eq!(wruns[0].font.weight, gpui::FontWeight::BOLD);
+        assert_eq!(wruns[0].color, expected_bold_color);
     }
 }

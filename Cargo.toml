@@ -24,11 +24,23 @@ wasmtime      = { version = "48.0", features = ["component-model"] }
 unicode-linebreak = "0.1.5"
 walkdir           = "2.5"
 
+[profile.dev]
+debug = 0
+split-debuginfo = "unpacked"
+
 [profile.release]
 strip = true
 opt-level = 3
 codegen-units = 16
 lto = "thin"
+
+# Fast optimized profile for local Zee.app iteration (no ThinLTO link wait; ~4-5x faster local rebuilds)
+[profile.release-fast]
+inherits = "release"
+opt-level = 2
+codegen-units = 256
+lto = "off"
+strip = false
 
 [profile.test]
 debug = 0

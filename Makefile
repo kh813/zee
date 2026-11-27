@@ -99,9 +99,9 @@ macos-gui:
 	@echo '    <key>CFBundlePackageType</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <string>APPL</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>CFBundleShortVersionString</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
-	@echo '    <string>0.3.12</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    <string>0.3.13</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>CFBundleVersion</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
-	@echo '    <string>0.3.12</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
+	@echo '    <string>0.3.13</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>CFBundleIconFile</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <string>zee.icns</string>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist
 	@echo '    <key>NSHighResolutionCapable</key>' >> $(DIST_DIR)/Zee.app/Contents/Info.plist

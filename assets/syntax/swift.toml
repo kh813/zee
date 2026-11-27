@@ -16,7 +16,13 @@ word_boundary = true
 
 [[rule]]
 token = "string"
-pattern = "\".*?\""
+start = "\"\"\""
+end = "\"\"\""
+escape = "\\"
+
+[[rule]]
+token = "string"
+pattern = "\"[^\"\\\\\\r\\n]*(?:\\\\.[^\"\\\\\\r\\n]*)*\""
 
 [[rule]]
 token = "comment"

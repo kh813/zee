@@ -21,15 +21,16 @@ word_boundary = true
 
 [[rule]]
 token = "string"
-pattern = "\".*?\""
+pattern = "\"[^\"\\\\\\r\\n]*(?:\\\\.[^\"\\\\\\r\\n]*)*\""
 
 [[rule]]
 token = "string"
-pattern = "'.*?'"
+pattern = "'[^'\\\\\\r\\n]*(?:\\\\.[^'\\\\\\r\\n]*)*'"
 
 [[rule]]
 token = "string"
-pattern = "`.*?`"
+start = "`"
+end = "`"
 
 [[rule]]
 token = "comment"

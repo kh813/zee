@@ -21,7 +21,27 @@ word_boundary = true
 
 [[rule]]
 token = "string"
-pattern = "\".*?\""
+start = "\\bb?r###\""
+end = "\"###"
+
+[[rule]]
+token = "string"
+start = "\\bb?r##\""
+end = "\"##"
+
+[[rule]]
+token = "string"
+start = "\\bb?r#\""
+end = "\"#"
+
+[[rule]]
+token = "string"
+start = "\\bb?r\""
+end = "\""
+
+[[rule]]
+token = "string"
+pattern = "\"[^\"\\\\\\r\\n]*(?:\\\\.[^\"\\\\\\r\\n]*)*\""
 
 [[rule]]
 token = "comment"

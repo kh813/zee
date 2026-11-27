@@ -247,6 +247,7 @@ impl Editor {
 
     pub fn update_syntax(&mut self, highlighter: Option<crate::syntax::SyntaxHighlighter>) {
         self.syntax_highlighter = highlighter;
+        self.line_states.fill(crate::syntax::LineState::Normal);
         self.line_tokens.fill(None);
         self.update_line_states(0, self.rope.len_lines());
     }
@@ -272,6 +273,39 @@ impl Editor {
         }
     }
 
+    /// Shifts cached `line_states` and `line_tokens` entries after an edit changes the rope's line count,
+    /// keeping unaffected lines below the edit aligned with their new rope indices.
+    fn adjust_line_cache_for_edit(&mut self, old_line_start: usize, old_line_count: usize) {
+        let new_line_count = self.rope.len_lines();
+        if self.line_states.len() != old_line_count {
+            self.line_states.resize(old_line_count, crate::syntax::LineState::Normal);
+        }
+        if self.line_tokens.len() != old_line_count {
+            self.line_tokens.resize(old_line_count, None);
+        }
+
+        if new_line_count > old_line_count {
+            let added = new_line_count - old_line_count;
+            let insert_idx = (old_line_start + 1).min(self.line_states.len());
+            self.line_states.splice(
+                insert_idx..insert_idx,
+                std::iter::repeat(crate::syntax::LineState::Normal).take(added),
+            );
+            self.line_tokens.splice(
+                insert_idx..insert_idx,
+                std::iter::repeat(None).take(added),
+            );
+        } else if new_line_count < old_line_count {
+            let removed = old_line_count - new_line_count;
+            let remove_start = (old_line_start + 1).min(self.line_states.len());
+            let remove_end = (remove_start + removed).min(self.line_states.len());
+            self.line_states.drain(remove_start..remove_end);
+            self.line_tokens.drain(remove_start..remove_end);
+            self.line_states.truncate(new_line_count);
+            self.line_tokens.truncate(new_line_count);
+        }
+    }
+
     fn update_line_states(&mut self, from_line: usize, dirty_to_line: usize) {
         let line_count = self.rope.len_lines();
         if self.line_states.len() != line_count {
@@ -280,15 +314,18 @@ impl Editor {
         if self.line_tokens.len() != line_count {
             self.line_tokens.resize(line_count, None);
         }
+        if line_count == 0 || from_line >= line_count {
+            return;
+        }
 
+        let dirty_to_line = dirty_to_line.min(line_count);
         let mut affected_range = from_line..dirty_to_line;
 
         if let Some(ref highlighter) = self.syntax_highlighter {
             let mut current_state = if from_line == 0 {
                 crate::syntax::LineState::Normal
             } else {
-                // If we're starting from a middle line, we use the state that was at the START of that line.
-                // But wait, if the line before it changed its NEXT state, we should have started from there.
+                // State at the START of `from_line` depends only on lines before `from_line`.
                 self.line_states[from_line]
             };
 
@@ -298,9 +335,15 @@ impl Editor {
 
                 let text = self.rope.line(i).to_string();
                 let next_state = highlighter.next_line_state(&text, current_state);
-                
-                if i >= dirty_to_line && i + 1 < line_count && next_state == self.line_states[i+1] && current_state == old_state {
-                    // State stabilized
+
+                if i >= dirty_to_line
+                    && i + 1 < line_count
+                    && next_state == self.line_states[i + 1]
+                    && current_state == old_state
+                    && self.line_tokens[i].is_some()
+                    && self.line_tokens[i + 1].is_some()
+                {
+                    // State stabilized and subsequent lines already have valid cached tokens
                     affected_range.end = i + 1;
                     break;
                 }
@@ -1419,6 +1462,7 @@ impl Editor {
     }
 
     pub fn replace(&mut self, range: Range<usize>, text: &str) -> EditDelta {
+        let old_line_count = self.rope.len_lines();
         let old_line_start = self.rope.char_to_line(range.start);
         let old_text = self.rope.slice(range.clone()).to_string();
         
@@ -1428,6 +1472,7 @@ impl Editor {
 
         let new_char_count = text.chars().count();
         let new_line_end = self.rope.char_to_line(range.start + new_char_count);
+        self.adjust_line_cache_for_edit(old_line_start, old_line_count);
         self.update_line_states(old_line_start, new_line_end + 1);
 
         let delta = EditDelta {
@@ -1841,6 +1886,7 @@ impl Editor {
     }
 
     pub fn insert(&mut self, pos: usize, text: &str) -> EditDelta {
+        let old_line_count = self.rope.len_lines();
         let old_line_start = self.rope.char_to_line(pos);
         let old_text = "".to_string();
         
@@ -1850,6 +1896,7 @@ impl Editor {
         let new_char_count = text.chars().count();
         let new_line_end = self.rope.char_to_line(pos + new_char_count);
         
+        self.adjust_line_cache_for_edit(old_line_start, old_line_count);
         self.update_line_states(old_line_start, new_line_end + 1);
 
         let delta = EditDelta {
@@ -1879,6 +1926,7 @@ impl Editor {
     }
 
     pub fn delete(&mut self, range: Range<usize>) -> EditDelta {
+        let old_line_count = self.rope.len_lines();
         let old_line_start = self.rope.char_to_line(range.start);
         let old_text = self.rope.slice(range.clone()).to_string();
         
@@ -1888,6 +1936,7 @@ impl Editor {
         let new_line_count = self.rope.len_lines();
         let new_line_end = old_line_start.min(new_line_count.saturating_sub(1));
         
+        self.adjust_line_cache_for_edit(old_line_start, old_line_count);
         self.update_line_states(old_line_start, new_line_end + 1);
 
         let delta = EditDelta {
@@ -1940,6 +1989,7 @@ impl Editor {
         if let Some(delta) = self.undo_stack.pop() {
             let inverse = self.invert_delta(&delta);
             
+            let old_line_count = self.rope.len_lines();
             let pos = delta.char_range.start;
             let old_line_start = self.rope.char_to_line(pos);
 
@@ -1947,6 +1997,7 @@ impl Editor {
             self.rope.insert(delta.char_range.start, &delta.old_text);
             
             let new_line_end = self.rope.char_to_line(pos + delta.old_text.chars().count());
+            self.adjust_line_cache_for_edit(old_line_start, old_line_count);
             self.update_line_states(old_line_start, new_line_end + 1);
 
             self.redo_stack.push(inverse);
@@ -1963,6 +2014,7 @@ impl Editor {
         if let Some(delta) = self.redo_stack.pop() {
             let inverse = self.invert_delta(&delta);
             
+            let old_line_count = self.rope.len_lines();
             let pos = delta.char_range.start;
             let old_line_start = self.rope.char_to_line(pos);
 
@@ -1970,6 +2022,7 @@ impl Editor {
             self.rope.insert(delta.char_range.start, &delta.old_text);
             
             let new_line_end = self.rope.char_to_line(pos + delta.old_text.chars().count());
+            self.adjust_line_cache_for_edit(old_line_start, old_line_count);
             self.update_line_states(old_line_start, new_line_end + 1);
 
             self.undo_stack.push(inverse);
@@ -4444,6 +4497,90 @@ mod tests {
         assert_eq!(&editor.rope.slice(r_in_w).to_string(), "msg");
         let r_out_w = editor.get_text_object_range('w', false).unwrap();
         assert_eq!(&editor.rope.slice(r_out_w).to_string(), "msg ");
+    }
+
+    #[test]
+    fn test_markdown_heading_highlighting_survives_line_insert_delete_replace_undo_redo() {
+        let builtins = crate::syntax::SyntaxDefinition::builtins();
+        let md_def = builtins.into_iter().find(|b| b.meta.name == "Markdown").unwrap();
+        let hl = crate::syntax::SyntaxHighlighter::new(md_def).unwrap();
+
+        let mut editor = Editor::new();
+        editor.update_syntax(Some(hl));
+        editor.insert(0, "line0\nline1\nline2\n# 見出し1\n## 見出し2\nplain\n");
+
+        // Initial check: line 3 is Heading1, line 4 is Heading2, lines 0..3 & 5 are plain
+        assert_eq!(editor.line_tokens[3].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading1);
+        assert_eq!(editor.line_tokens[4].as_ref().unwrap()[0].token, crate::syntax::TokenType::Heading2);
+        assert!(editor.line_tokens[2].as_ref().unwrap().is_empty());
+        assert!(editor.line_tokens[5].as_ref().unwrap().is_empty());
+
+        // 1. Insert 2 newlines at the top -> headings shift down to lines 5 and 6
+        editor.insert(0, "\n\n");
+        assert!(
+            editor.line_tokens[3].as_ref().unwrap().is_empty(),
+            "Plain line shifted into old heading index must not keep stale Heading1 token"
+        );
+        assert_eq!(
+            editor.line_tokens[5].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "# 見出し1 must retain Heading1 token after inserting lines above"
+        );
+        assert_eq!(
+            editor.line_tokens[6].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading2),
+            "## 見出し2 must retain Heading2 token after inserting lines above"
+        );
+
+        // 2. Delete 3 lines from the top -> headings shift up to lines 2 and 3
+        let line3_start = editor.rope.line_to_char(3);
+        editor.delete(0..line3_start);
+        assert_eq!(
+            editor.line_tokens[2].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "# 見出し1 must retain Heading1 token after deleting lines above (must not turn black)"
+        );
+        assert_eq!(
+            editor.line_tokens[3].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading2),
+            "## 見出し2 must retain Heading2 token after deleting lines above"
+        );
+        assert!(editor.line_tokens[4].as_ref().unwrap().is_empty());
+
+        // 3. Undo the deletion -> headings shift back down to lines 5 and 6
+        editor.undo();
+        assert_eq!(
+            editor.line_tokens[5].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "# 見出し1 must retain Heading1 token after undo"
+        );
+        assert_eq!(
+            editor.line_tokens[6].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading2),
+            "## 見出し2 must retain Heading2 token after undo"
+        );
+
+        // 4. Redo the deletion -> headings shift back up to lines 2 and 3
+        editor.redo();
+        assert_eq!(
+            editor.line_tokens[2].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "# 見出し1 must retain Heading1 token after redo"
+        );
+
+        // 5. Replace line 0..1 with 3 lines -> headings shift down to lines 4 and 5
+        let line1_start = editor.rope.line_to_char(1);
+        editor.replace(0..line1_start, "a\nb\nc\n");
+        assert_eq!(
+            editor.line_tokens[4].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading1),
+            "# 見出し1 must retain Heading1 token after multiline replace above"
+        );
+        assert_eq!(
+            editor.line_tokens[5].as_ref().and_then(|t| t.first()).map(|s| s.token),
+            Some(crate::syntax::TokenType::Heading2),
+            "## 見出し2 must retain Heading2 token after multiline replace above"
+        );
     }
 }
 

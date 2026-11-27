@@ -30,11 +30,11 @@ word_boundary = true
 
 [[rule]]
 token = "string"
-pattern = "\".*?\""
+pattern = "\"[^\"\\\\\\r\\n]*(?:\\\\.[^\"\\\\\\r\\n]*)*\""
 
 [[rule]]
 token = "string"
-pattern = "'.*?'"
+pattern = "'[^'\\\\\\r\\n]*(?:\\\\.[^'\\\\\\r\\n]*)*'"
 
 [[rule]]
 token = "comment"

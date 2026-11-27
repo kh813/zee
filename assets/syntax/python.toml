@@ -14,21 +14,28 @@ pattern = "True|False|None"
 word_boundary = true
 
 [[rule]]
-token = "string"
-pattern = "\".*?\""
+token = "comment"
+start = "\"\"\""
+end = "\"\"\""
+escape = "\\"
+
+[[rule]]
+token = "comment"
+start = "'''"
+end = "'''"
+escape = "\\"
 
 [[rule]]
 token = "string"
-pattern = "'.*?'"
+pattern = "\"[^\"\\\\\\r\\n]*(?:\\\\.[^\"\\\\\\r\\n]*)*\""
+
+[[rule]]
+token = "string"
+pattern = "'[^'\\\\\\r\\n]*(?:\\\\.[^'\\\\\\r\\n]*)*'"
 
 [[rule]]
 token = "comment"
 pattern = "#.*"
-
-[[rule]]
-token = "comment"
-start = "\"\"\""
-end = "\"\"\""
 
 [[rule]]
 token = "function"

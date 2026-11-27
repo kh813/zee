@@ -3,11 +3,26 @@ name: CI
 on:
   push:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE*"
   pull_request:
     branches: [ "main", "master" ]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 jobs:
   test:
@@ -32,7 +47,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             mold \
             clang \
             libwayland-dev \
@@ -47,8 +62,14 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "ci-${{ matrix.target }}"
+          cache-on-failure: true
 
       - name: Run workspace tests (Linux with mold linker)
         if: runner.os == 'Linux'
@@ -59,3 +80,7 @@ jobs:
       - name: Run workspace tests (macOS / Windows)
         if: runner.os != 'Linux'
         run: cargo test --workspace
+
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats

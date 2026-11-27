@@ -8,6 +8,10 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 
+if [ -z "${RUSTC_WRAPPER:-}" ] && command -v sccache >/dev/null 2>&1; then
+    export RUSTC_WRAPPER="$(command -v sccache)"
+fi
+
 echo "Building release binary for zee-gui (zeeg)..."
 cargo build --release -p zee-gui --bin zeeg
 

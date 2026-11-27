@@ -250,9 +250,9 @@ impl SyntaxHighlighter {
         while offset < line.len() {
             match state {
                 LineState::Normal => {
-                    let mut best_match: Option<(usize, usize, usize)> = None; // (rule_index, start, end)
+                    let mut best_match: Option<(usize, usize, usize)> = None; // (rule_index, abs_start, abs_end)
                     for (i, rule) in self.rules.iter().enumerate() {
-                        if let Some(caps) = rule.start_re.captures(&line[offset..]) {
+                        if let Some(caps) = rule.start_re.captures_at(line, offset) {
                             let m = caps.get(0).unwrap();
                             if best_match.is_none() || m.start() < best_match.unwrap().1 {
                                 best_match = Some((i, m.start(), m.end()));
@@ -264,9 +264,13 @@ impl SyntaxHighlighter {
                         let rule = &self.rules[i];
                         if rule.end_re.is_some() {
                             state = LineState::InsideRegion { rule_index: i };
-                            offset += end;
+                        }
+                        if end > offset {
+                            offset = end;
+                        } else if let Some(ch) = line[offset..].chars().next() {
+                            offset += ch.len_utf8();
                         } else {
-                            offset += end;
+                            break;
                         }
                     } else {
                         break;
@@ -278,8 +282,8 @@ impl SyntaxHighlighter {
                     
                     let mut search_offset = offset;
                     let mut found_end = false;
-                    while let Some(m) = end_re.find(&line[search_offset..]) {
-                        let end_pos = search_offset + m.start();
+                    while let Some(m) = end_re.find_at(line, search_offset) {
+                        let end_pos = m.start();
                         if let Some(esc) = rule.escape {
                             if end_pos > 0 && line.as_bytes()[end_pos - 1] as char == esc {
                                 // Check if the escape is escaped
@@ -289,12 +293,24 @@ impl SyntaxHighlighter {
                                 }
                                 if esc_count % 2 != 0 {
                                     // Escaped
-                                    search_offset += m.end();
+                                    search_offset = if m.end() > search_offset {
+                                        m.end()
+                                    } else if let Some(ch) = line[search_offset..].chars().next() {
+                                        search_offset + ch.len_utf8()
+                                    } else {
+                                        break;
+                                    };
                                     continue;
                                 }
                             }
                         }
-                        offset = search_offset + m.end();
+                        offset = if m.end() > offset {
+                            m.end()
+                        } else if let Some(ch) = line[offset..].chars().next() {
+                            offset + ch.len_utf8()
+                        } else {
+                            line.len()
+                        };
                         state = LineState::Normal;
                         found_end = true;
                         break;
@@ -315,9 +331,9 @@ impl SyntaxHighlighter {
         while offset < line.len() {
             match state {
                 LineState::Normal => {
-                    let mut best_match: Option<(usize, usize, usize, usize, usize)> = None; // (rule_index, match_start, match_end, span_start, span_end)
+                    let mut best_match: Option<(usize, usize, usize, usize, usize)> = None; // (rule_index, abs_m_start, abs_m_end, abs_s_start, abs_s_end)
                     for (i, rule) in self.rules.iter().enumerate() {
-                        if let Some(caps) = rule.start_re.captures(&line[offset..]) {
+                        if let Some(caps) = rule.start_re.captures_at(line, offset) {
                             let m = caps.get(0).unwrap();
                             if best_match.is_none() || m.start() < best_match.unwrap().1 {
                                 let (s_start, s_end) = if let Some(g1) = caps.get(1) {
@@ -332,24 +348,20 @@ impl SyntaxHighlighter {
 
                     if let Some((i, _m_start, m_end, s_start, s_end)) = best_match {
                         let rule = &self.rules[i];
-                        let abs_span_start = offset + s_start;
-                        let abs_span_end = offset + s_end;
-                        let advance_end = offset + m_end;
-                        
                         if rule.end_re.is_some() {
                             state = LineState::InsideRegion { rule_index: i };
-                            spans.push(TokenSpan {
-                                byte_range: abs_span_start..abs_span_end,
-                                token: rule.token,
-                            });
-                            offset = advance_end;
-                        } else {
-                            spans.push(TokenSpan {
-                                byte_range: abs_span_start..abs_span_end,
-                                token: rule.token,
-                            });
-                            offset = advance_end;
                         }
+                        spans.push(TokenSpan {
+                            byte_range: s_start..s_end,
+                            token: rule.token,
+                        });
+                        offset = if m_end > offset {
+                            m_end
+                        } else if let Some(ch) = line[offset..].chars().next() {
+                            offset + ch.len_utf8()
+                        } else {
+                            break;
+                        };
                     } else {
                         break;
                     }
@@ -360,8 +372,8 @@ impl SyntaxHighlighter {
                     
                     let mut search_offset = offset;
                     let mut found_end = false;
-                    while let Some(m) = end_re.find(&line[search_offset..]) {
-                        let end_pos = search_offset + m.start();
+                    while let Some(m) = end_re.find_at(line, search_offset) {
+                        let end_pos = m.start();
                         if let Some(esc) = rule.escape {
                             if end_pos > 0 && line.as_bytes()[end_pos - 1] as char == esc {
                                 let mut esc_count = 0;
@@ -369,17 +381,29 @@ impl SyntaxHighlighter {
                                     if c == esc { esc_count += 1; } else { break; }
                                 }
                                 if esc_count % 2 != 0 {
-                                    search_offset += m.end();
+                                    search_offset = if m.end() > search_offset {
+                                        m.end()
+                                    } else if let Some(ch) = line[search_offset..].chars().next() {
+                                        search_offset + ch.len_utf8()
+                                    } else {
+                                        break;
+                                    };
                                     continue;
                                 }
                             }
                         }
-                        let abs_end = search_offset + m.end();
+                        let abs_end = m.end();
                         spans.push(TokenSpan {
                             byte_range: offset..abs_end,
                             token: rule.token,
                         });
-                        offset = abs_end;
+                        offset = if abs_end > offset {
+                            abs_end
+                        } else if let Some(ch) = line[offset..].chars().next() {
+                            offset + ch.len_utf8()
+                        } else {
+                            line.len()
+                        };
                         state = LineState::Normal;
                         found_end = true;
                         break;
@@ -455,6 +479,195 @@ mod tests {
         assert!(spans.iter().any(|s| s.token == TokenType::Attribute)); // $ENV
         assert!(spans.iter().any(|s| s.token == TokenType::String)); // "production"
         assert!(spans.iter().any(|s| s.token == TokenType::Comment)); // # check env
+    }
+
+    #[test]
+    fn test_markdown_heading_and_fenced_code_block_edge_cases() {
+        let builtins = SyntaxDefinition::builtins();
+        let md_def = builtins.into_iter().find(|b| b.meta.name == "Markdown").unwrap();
+        let highlighter = SyntaxHighlighter::new(md_def).unwrap();
+
+        // 1. Inline triple backticks in prose must NOT hijack subsequent # Heading1 lines
+        let lines = vec![
+            "コードブロックは ``` で囲みます。\n".to_string(),
+            "# 見出し1\n".to_string(),
+            "```rust\n".to_string(),
+            "# not a heading inside code fence\n".to_string(),
+            "```\n".to_string(),
+            "# 見出し1 復帰\n".to_string(),
+        ];
+        let states = highlighter.compute_line_states(&lines, LineState::Normal);
+        assert_eq!(states[1], LineState::Normal);
+        let h1_spans = highlighter.highlight_line(&lines[1], states[1]);
+        assert_eq!(h1_spans.first().map(|s| s.token), Some(TokenType::Heading1));
+
+        // Inside fenced code block -> Keyword, after closing fence -> back to Normal / Heading1
+        let inside_spans = highlighter.highlight_line(&lines[3], states[3]);
+        assert_eq!(inside_spans.first().map(|s| s.token), Some(TokenType::Keyword));
+        assert_eq!(states[5], LineState::Normal);
+        let h1_after_spans = highlighter.highlight_line(&lines[5], states[5]);
+        assert_eq!(h1_after_spans.first().map(|s| s.token), Some(TokenType::Heading1));
+
+        // 2. Start-of-line anchor (^) must NOT match mid-line after another token
+        let inline_hash = "`code`#not-a-heading\n";
+        let spans = highlighter.highlight_line(inline_hash, LineState::Normal);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].token, TokenType::InlineCode);
+        assert_eq!(spans[0].byte_range, 0..6);
+
+        // 3. Inline quadruple backticks (```` ````) on a single line must NOT enter a multi-line fence
+        let quad_inline_lines = vec![
+            "```` ```` この文字列があると壊れる\n".to_string(),
+            "# 見出し1\n".to_string(),
+            "```` ``` ```` inline triple backticks\n".to_string(),
+            "## 見出し2\n".to_string(),
+            "```inline``` single line triple backticks\n".to_string(),
+            "# 見出し1 まだ正常\n".to_string(),
+        ];
+        let quad_states = highlighter.compute_line_states(&quad_inline_lines, LineState::Normal);
+        assert_eq!(quad_states[1], LineState::Normal);
+        assert_eq!(quad_states[3], LineState::Normal);
+        assert_eq!(quad_states[5], LineState::Normal);
+        assert_eq!(
+            highlighter.highlight_line(&quad_inline_lines[1], quad_states[1]).first().map(|s| s.token),
+            Some(TokenType::Heading1)
+        );
+        assert_eq!(
+            highlighter.highlight_line(&quad_inline_lines[3], quad_states[3]).first().map(|s| s.token),
+            Some(TokenType::Heading2)
+        );
+        assert_eq!(
+            highlighter.highlight_line(&quad_inline_lines[5], quad_states[5]).first().map(|s| s.token),
+            Some(TokenType::Heading1)
+        );
+
+        // 4. Nested 4-backtick fenced code block containing a 3-backtick code block
+        let nested_fence_lines = vec![
+            "````markdown\n".to_string(),
+            "```rust\n".to_string(),
+            "fn main() {}\n".to_string(),
+            "```\n".to_string(),
+            "````\n".to_string(),
+            "# 見出し1 ネスト後\n".to_string(),
+        ];
+        let nested_states = highlighter.compute_line_states(&nested_fence_lines, LineState::Normal);
+        // Lines 1..=4 must stay inside the 4-backtick fence (inner ``` must NOT close it prematurely)
+        assert_ne!(nested_states[1], LineState::Normal);
+        assert_ne!(nested_states[2], LineState::Normal);
+        assert_ne!(nested_states[3], LineState::Normal);
+        assert_ne!(nested_states[4], LineState::Normal);
+        // Line 5 (after closing ````) must return to Normal and highlight as Heading1
+        assert_eq!(nested_states[5], LineState::Normal);
+        assert_eq!(
+            highlighter.highlight_line(&nested_fence_lines[5], nested_states[5]).first().map(|s| s.token),
+            Some(TokenType::Heading1)
+        );
+    }
+
+    #[test]
+    fn test_python_multiline_docstrings_and_escaped_strings() {
+        let builtins = SyntaxDefinition::builtins();
+        let py_def = builtins.into_iter().find(|b| b.meta.name == "Python").unwrap();
+        let hl = SyntaxHighlighter::new(py_def).unwrap();
+
+        let lines = vec![
+            "\"\"\"\n".to_string(),
+            "docstring line 1\n".to_string(),
+            "\"\"\"\n".to_string(),
+            "'''\n".to_string(),
+            "single-quote docstring\n".to_string(),
+            "'''\n".to_string(),
+            "x = \"hello \\\"world\\\" # not a comment\"\n".to_string(),
+            "def ok():\n".to_string(),
+        ];
+        let states = hl.compute_line_states(&lines, LineState::Normal);
+        assert_ne!(states[1], LineState::Normal, "Inside \"\"\" docstring must be InsideRegion");
+        assert_eq!(states[3], LineState::Normal, "After closing \"\"\" must return to Normal");
+        assert_ne!(states[4], LineState::Normal, "Inside ''' docstring must be InsideRegion");
+        assert_eq!(states[6], LineState::Normal, "After closing ''' must return to Normal");
+
+        // Escaped quotes inside string must keep entire literal as String (no bogus Comment on '#')
+        let str_spans = hl.highlight_line(&lines[6], states[6]);
+        assert!(str_spans.iter().any(|s| s.token == TokenType::String && s.byte_range == (4..37)));
+        assert!(!str_spans.iter().any(|s| s.token == TokenType::Comment));
+
+        // Following function definition must highlight cleanly
+        let fn_spans = hl.highlight_line(&lines[7], states[7]);
+        assert_eq!(fn_spans[0].token, TokenType::Keyword);
+        assert_eq!(fn_spans[1].token, TokenType::Function);
+    }
+
+    #[test]
+    fn test_go_multiline_raw_strings_and_escapes() {
+        let builtins = SyntaxDefinition::builtins();
+        let go_def = builtins.into_iter().find(|b| b.meta.name == "Go").unwrap();
+        let hl = SyntaxHighlighter::new(go_def).unwrap();
+
+        let lines = vec![
+            "s := `\n".to_string(),
+            "/* not a block comment */\n".to_string(),
+            "`\n".to_string(),
+            "msg := \"hello \\\"/*\\\" world\"\n".to_string(),
+            "func main() {}\n".to_string(),
+        ];
+        let states = hl.compute_line_states(&lines, LineState::Normal);
+        assert_ne!(states[1], LineState::Normal);
+        let inside = hl.highlight_line(&lines[1], states[1]);
+        assert_eq!(inside.first().map(|s| s.token), Some(TokenType::String));
+        assert_eq!(states[3], LineState::Normal);
+
+        // Escaped quote before /* must NOT start a block comment
+        assert_eq!(states[4], LineState::Normal);
+        let main_spans = hl.highlight_line(&lines[4], states[4]);
+        assert_eq!(main_spans[0].token, TokenType::Keyword);
+    }
+
+    #[test]
+    fn test_rust_raw_strings_and_escaped_quotes() {
+        let builtins = SyntaxDefinition::builtins();
+        let rs_def = builtins.into_iter().find(|b| b.meta.name == "Rust").unwrap();
+        let hl = SyntaxHighlighter::new(rs_def).unwrap();
+
+        let lines = vec![
+            "let a = r##\"contains \"# and /* not comment */\"##;\n".to_string(),
+            "let b = r#\"\n".to_string(),
+            "multiline \"raw\" /* still string */\n".to_string(),
+            "\"#;\n".to_string(),
+            "let c = \"escaped \\\"/*\\\" quote\";\n".to_string(),
+            "fn main() {}\n".to_string(),
+        ];
+        let states = hl.compute_line_states(&lines, LineState::Normal);
+        assert_eq!(states[1], LineState::Normal, "Single-line r##\"...\"## must close on same line");
+        assert_ne!(states[2], LineState::Normal, "Multiline r#\"...\"# must stay InsideRegion");
+        let inside = hl.highlight_line(&lines[2], states[2]);
+        assert_eq!(inside.first().map(|s| s.token), Some(TokenType::String));
+        assert_eq!(states[4], LineState::Normal, "After closing \"# must return to Normal");
+        assert_eq!(states[5], LineState::Normal, "Escaped quote before /* must not open comment");
+        let fn_spans = hl.highlight_line(&lines[5], states[5]);
+        assert_eq!(fn_spans[0].token, TokenType::Keyword);
+    }
+
+    #[test]
+    fn test_js_ts_multiline_template_literals_with_escape() {
+        let builtins = SyntaxDefinition::builtins();
+        for lang in ["JavaScript", "TypeScript"] {
+            let def = builtins.iter().find(|b| b.meta.name == lang).unwrap().clone();
+            let hl = SyntaxHighlighter::new(def).unwrap();
+
+            let lines = vec![
+                "const s = `line 1 \\`still template\\`\n".to_string(),
+                "/* not a comment */\n".to_string(),
+                "`;\n".to_string(),
+                "const x = \"a \\\"/*\\\" b\";\n".to_string(),
+                "function ok() {}\n".to_string(),
+            ];
+            let states = hl.compute_line_states(&lines, LineState::Normal);
+            assert_ne!(states[1], LineState::Normal, "{lang}: escaped backtick must not close template literal");
+            assert_eq!(hl.highlight_line(&lines[1], states[1]).first().map(|s| s.token), Some(TokenType::String));
+            assert_eq!(states[3], LineState::Normal, "{lang}: closing backtick must restore Normal");
+            assert_eq!(states[4], LineState::Normal, "{lang}: escaped quote before /* must not open comment");
+            assert_eq!(hl.highlight_line(&lines[4], states[4])[0].token, TokenType::Keyword);
+        }
     }
 }
 

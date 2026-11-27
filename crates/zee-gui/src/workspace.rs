@@ -1895,6 +1895,61 @@ mod tests {
         assert_eq!(be, line.len());
         assert_eq!(text, "");
     }
+
+    #[test]
+    fn test_cursor_metrics_and_hit_testing_from_line_layout() {
+        use crate::widgets::editor_view::EditorView;
+
+        // Mixed ASCII, tab, East Asian Ambiguous ('→'), and CJK ('あ', '漢') with realistic shaped advances
+        // that differ from naive ascii_width * col estimation on macOS CoreText.
+        let v_text = "a\t→あ漢x";
+        let advances: [f32; 6] = [7.83, 28.0, 13.0, 13.0, 13.0, 7.83];
+        let mut glyphs = Vec::new();
+        let mut x = 0.0f32;
+        let mut expected_starts = Vec::new();
+        for ((byte_offset, _ch), &adv) in v_text.char_indices().zip(advances.iter()) {
+            expected_starts.push((x, adv));
+            glyphs.push(gpui::ShapedGlyph {
+                id: gpui::GlyphId(0),
+                position: gpui::Point { x: gpui::px(x), y: gpui::px(0.0) },
+                index: byte_offset,
+                is_emoji: false,
+            });
+            x += adv;
+        }
+        let total_width = x;
+        let layout = gpui::LineLayout {
+            font_size: gpui::px(13.0),
+            width: gpui::px(total_width),
+            ascent: gpui::px(11.0),
+            descent: gpui::px(3.0),
+            runs: vec![gpui::ShapedRun {
+                font_id: gpui::FontId(0),
+                glyphs,
+            }],
+            len: v_text.len(),
+        };
+
+        // 1. Every character index reports exact shaped x0 and char width
+        for (char_idx, &(exp_x, exp_w)) in expected_starts.iter().enumerate() {
+            let (cx, cw) = EditorView::cursor_metrics_from_layout(v_text, &layout, char_idx);
+            assert!((cx - exp_x).abs() < 0.01, "char {char_idx}: expected x={exp_x}, got {cx}");
+            assert!((cw.unwrap() - exp_w).abs() < 0.01, "char {char_idx}: expected w={exp_w}, got {cw:?}");
+
+            // Clicking just past the left edge of char_idx must hit char_idx
+            let hit_left = EditorView::closest_char_index_for_x(v_text, &layout, gpui::px(exp_x + exp_w * 0.25));
+            assert_eq!(hit_left, char_idx, "left-half hit test for char {char_idx}");
+
+            // Clicking past the midpoint of char_idx must advance to char_idx + 1
+            let hit_right = EditorView::closest_char_index_for_x(v_text, &layout, gpui::px(exp_x + exp_w * 0.75));
+            assert_eq!(hit_right, char_idx + 1, "right-half hit test for char {char_idx}");
+        }
+
+        // 2. End-of-line cursor position equals total shaped layout width
+        let (eol_x, eol_w) = EditorView::cursor_metrics_from_layout(v_text, &layout, v_text.chars().count());
+        assert!((eol_x - total_width).abs() < 0.01);
+        assert_eq!(eol_w, None);
+    }
 }
 
 

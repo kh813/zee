@@ -26,6 +26,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
 
 permissions:
   contents: write
@@ -63,16 +66,24 @@ jobs:
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
+            mold clang \
             libwayland-dev wayland-protocols libxkbcommon-dev libx11-xcb-dev \
             libvulkan-dev libasound2-dev libfontconfig1-dev pkg-config
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "extended-linux-x64-gui"
+          cache-on-failure: true
       - name: Build & Package Linux GUI (zeeg)
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=mold"
         run: |
           TAG="${{ needs.determine-tag.outputs.tag }}"
           GUI_ARCHIVE="zee-${TAG}-linux-x64"
@@ -84,6 +95,9 @@ jobs:
           zip -r "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
           # Backwards-compatibility alias for v0.1.13 and earlier versions expecting zeeg-*
           cp "${GUI_ARCHIVE}.zip" "zeeg-${TAG}-linux-x64.zip"
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
@@ -102,8 +116,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "release-macos-arm64"
+          cache-on-failure: true
       - name: Build & Package macOS CLI (zee)
         run: |
           TAG="${{ needs.determine-tag.outputs.tag }}"
@@ -115,6 +134,9 @@ jobs:
           cp README.md MANUAL.md LICENSE* "dist/${CLI_ARCHIVE}/" 2>/dev/null || true
           cd dist
           zip -r "${CLI_ARCHIVE}.zip" "${CLI_ARCHIVE}"
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
@@ -133,8 +155,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-pc-windows-msvc
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "extended-windows-arm64"
+          cache-on-failure: true
       - name: Build & Package Windows ARM64 GUI
         shell: bash
         run: |
@@ -148,6 +175,9 @@ jobs:
           7z a "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
           # Backwards-compatibility alias for v0.1.13 and earlier versions expecting zeeg-*
           cp "${GUI_ARCHIVE}.zip" "zeeg-${TAG}-windows-arm64.zip"
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
@@ -165,22 +195,29 @@ jobs:
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
+            mold clang \
             libwayland-dev wayland-protocols libxkbcommon-dev libx11-xcb-dev \
             libvulkan-dev libasound2-dev libfontconfig1-dev pkg-config
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-unknown-linux-gnu
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "extended-linux-arm64"
+          cache-on-failure: true
       - name: Build & Package Linux ARM64
+        env:
+          RUSTFLAGS: "-C linker=clang -C link-arg=-fuse-ld=mold"
         run: |
           TAG="${{ needs.determine-tag.outputs.tag }}"
           CLI_ARCHIVE="zee-cli-${TAG}-linux-arm64"
           GUI_ARCHIVE="zee-${TAG}-linux-arm64"
-          cargo build --release -p zee-tui --target aarch64-unknown-linux-gnu
-          cargo build --release -p zee-gui --target aarch64-unknown-linux-gnu
+          cargo build --release -p zee-tui -p zee-gui --target aarch64-unknown-linux-gnu
           mkdir -p "dist/${CLI_ARCHIVE}"
           cp "target/aarch64-unknown-linux-gnu/release/zee" "dist/${CLI_ARCHIVE}/"
           mkdir -p "dist/${GUI_ARCHIVE}"
@@ -190,6 +227,9 @@ jobs:
           zip -r "${GUI_ARCHIVE}.zip" "${GUI_ARCHIVE}"
           # Backwards-compatibility alias for v0.1.13 and earlier versions expecting zeeg-*
           cp "${GUI_ARCHIVE}.zip" "zeeg-${TAG}-linux-arm64.zip"
+      - name: Show sccache stats
+        if: always()
+        run: sccache --show-stats
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:

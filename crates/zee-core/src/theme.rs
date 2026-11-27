@@ -549,6 +549,16 @@ mod tests {
     }
 
     #[test]
+    fn test_light_theme_markdown_heading1_and_heading2_colors() {
+        let light = Theme::builtins()
+            .into_iter()
+            .find(|t| t.meta.name == "Light")
+            .expect("Light theme should exist");
+        assert_eq!(light.syntax.heading1, Some(Color::Rgb(0x14, 0x53, 0x2d))); // #14532d
+        assert_eq!(light.syntax.heading2, Some(Color::Rgb(0x1d, 0x4e, 0xd8))); // #1d4ed8
+    }
+
+    #[test]
     fn test_theme_from_toml() {
         let toml_str = r##"
         [meta]

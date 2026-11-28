@@ -1497,10 +1497,19 @@ mod tests {
             .expect("rust-toolchain.toml should exist");
 
         // Rust toolchain must be pinned to a concrete version to avoid unexpected cache invalidations
+        let pinned_channel = toolchain_toml
+            .lines()
+            .find_map(|line| {
+                let t = line.trim();
+                t.strip_prefix("channel = \"")
+                    .and_then(|rest| rest.strip_suffix('"'))
+            })
+            .expect("rust-toolchain.toml must define channel = \"1.x.y\"");
         assert!(
-            toolchain_toml.contains("channel = \"1."),
-            "rust-toolchain.toml must pin an explicit Rust release version"
+            pinned_channel.starts_with("1."),
+            "rust-toolchain.toml must pin an explicit Rust release version, got: {pinned_channel}"
         );
+        let expected_toolchain_input = format!("toolchain: \"{pinned_channel}\"");
 
         let shared_key = "shared-key: \"release-${{ matrix.name }}\"";
         assert!(release_yml.contains(shared_key), "release.yml must use shared release cache key");
@@ -1510,10 +1519,12 @@ mod tests {
         for (name, content) in [("ci.yml", &ci_yml), ("release.yml", &release_yml), ("warm-release-cache.yml", &warm_yml)] {
             assert!(content.contains("mozilla-actions/sccache-action@v0.0.11"), "{name} must configure sccache");
             assert!(content.contains("SCCACHE_GHA_ENABLED: \"true\""), "{name} must enable sccache GHA backend");
-            assert!(content.contains("dtolnay/rust-toolchain@master"), "{name} must use rust-toolchain@master to respect rust-toolchain.toml");
+            assert!(content.contains("dtolnay/rust-toolchain@master"), "{name} must use rust-toolchain@master");
+            assert!(content.contains(&expected_toolchain_input), "{name} must pass explicit {expected_toolchain_input} matching rust-toolchain.toml");
             assert!(content.contains("hashFiles('Cargo.toml')"), "{name} must hash root Cargo.toml in rust-cache key");
             assert!(content.contains("Add-MpPreference -ExclusionPath"), "{name} must exclude build paths from Windows Defender");
             assert!(content.contains("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER"), "{name} must configure fast lld-link on Windows");
+            assert!(content.contains("$lld.Source"), "{name} must extract ApplicationInfo.Source for Get-Command lld-link.exe");
         }
     }
 

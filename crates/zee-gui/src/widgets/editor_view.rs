@@ -4779,7 +4779,7 @@ mod tests {
         assert_eq!(wruns[0].font.weight, gpui::FontWeight::BOLD);
         assert_eq!(wruns[0].color, expected_bold_color);
 
-        // Line 3 inside fenced code block renders with deep navy code_block (#1e3a5f), distinct from H6 (#738296) and H2 (#1d4ed8)
+        // Line 3 inside fenced code block renders with deep navy code_block (#1e40af), distinct from H6 (#738296) and H2 (#1d4ed8)
         let line3 = EditorView::strip_line_endings(editor.rope.line(3).to_string());
         let range3 = 0..line3.chars().count();
         let (bs3, _, v3) = EditorView::slice_visual_line(&line3, &range3);

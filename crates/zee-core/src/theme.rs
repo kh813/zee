@@ -522,7 +522,7 @@ impl Default for Theme {
                 heading5: Some(Color::Rgb(86, 95, 137)),
                 heading6: Some(Color::Rgb(157, 124, 216)),
                 inline_code: Some(Color::Rgb(245, 194, 231)),
-                code_block: Some(Color::Rgb(125, 207, 255)),
+                code_block: Some(Color::Rgb(0x93, 0xc5, 0xfd)),
                 bold: None,
                 link: None,
                 list_marker: Some(Color::Rgb(86, 95, 137)),
@@ -568,7 +568,7 @@ mod tests {
         assert_eq!(light.syntax.heading4, Some(Color::Rgb(0x7c, 0x3a, 0xed))); // #7c3aed
         assert_eq!(light.syntax.heading5, Some(Color::Rgb(0x4d, 0x7c, 0x0f))); // #4d7c0f
         assert_eq!(light.syntax.heading6, Some(Color::Rgb(0x73, 0x82, 0x96))); // #738296
-        assert_eq!(light.syntax.code_block, Some(Color::Rgb(0x1e, 0x3a, 0x5f))); // #1e3a5f
+        assert_eq!(light.syntax.code_block, Some(Color::Rgb(0x1e, 0x40, 0xaf))); // #1e40af
         assert_eq!(light.syntax.bold, Some(Color::Rgb(0xea, 0x58, 0x0c)));     // #ea580c
 
         // All Markdown heading levels + bold + inline_code + code_block + link must be pairwise distinct
@@ -592,6 +592,17 @@ mod tests {
                     md_colors[i].0, md_colors[j].0
                 );
             }
+        }
+
+        // Dark and Tokyo Night themes must use soft sky blue (#93c5fd) for code_block, distinct from H6 and H2
+        for dark_name in ["Dark", "Tokyo Night"] {
+            let dark = Theme::builtins()
+                .into_iter()
+                .find(|t| t.meta.name == dark_name)
+                .unwrap_or_else(|| panic!("{dark_name} theme should exist"));
+            assert_eq!(dark.syntax.code_block, Some(Color::Rgb(0x93, 0xc5, 0xfd))); // #93c5fd
+            assert_ne!(dark.syntax.code_block, dark.syntax.heading6);
+            assert_ne!(dark.syntax.code_block, dark.syntax.heading2);
         }
     }
 

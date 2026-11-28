@@ -10125,7 +10125,7 @@ mod tests {
         assert_eq!(
             app.renderer.get_cell(ex, ey + 2).fg,
             code_block_fg,
-            "TUI: fenced code block line must render with theme syntax.code_block color (#1e3a5f)"
+            "TUI: fenced code block line must render with theme syntax.code_block color (#1e40af)"
         );
         assert_ne!(code_block_fg, h6_fg, "TUI: code_block must be distinct from H6");
         assert_ne!(code_block_fg, h2_fg, "TUI: code_block must be distinct from H2");

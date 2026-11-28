@@ -24,6 +24,7 @@ pub enum TokenType {
     Heading5,
     Heading6,
     InlineCode,
+    CodeBlock,
     Bold,
     Link,
     ListMarker,
@@ -501,9 +502,9 @@ mod tests {
         let h1_spans = highlighter.highlight_line(&lines[1], states[1]);
         assert_eq!(h1_spans.first().map(|s| s.token), Some(TokenType::Heading1));
 
-        // Inside fenced code block -> Keyword, after closing fence -> back to Normal / Heading1
+        // Inside fenced code block -> CodeBlock, after closing fence -> back to Normal / Heading1
         let inside_spans = highlighter.highlight_line(&lines[3], states[3]);
-        assert_eq!(inside_spans.first().map(|s| s.token), Some(TokenType::Keyword));
+        assert_eq!(inside_spans.first().map(|s| s.token), Some(TokenType::CodeBlock));
         assert_eq!(states[5], LineState::Normal);
         let h1_after_spans = highlighter.highlight_line(&lines[5], states[5]);
         assert_eq!(h1_after_spans.first().map(|s| s.token), Some(TokenType::Heading1));

@@ -440,6 +440,7 @@ impl App {
             zee_core::syntax::TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
             zee_core::syntax::TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
             zee_core::syntax::TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
+            zee_core::syntax::TokenType::CodeBlock => theme.syntax.code_block.or(theme.syntax.keyword),
             zee_core::syntax::TokenType::Bold => theme.syntax.bold,
             zee_core::syntax::TokenType::Link => theme.syntax.link.or(theme.syntax.function),
             zee_core::syntax::TokenType::ListMarker => theme.syntax.list_marker.or(theme.syntax.comment),
@@ -6539,7 +6540,7 @@ impl App {
 
         let mut token_colors = std::collections::HashMap::new();
         use zee_core::syntax::TokenType::*;
-        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode, Bold, Link, ListMarker] {
+        for &t in &[Keyword, TypeName, Function, String, Number, Comment, Operator, Punctuation, Constant, Attribute, Error, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, InlineCode, CodeBlock, Bold, Link, ListMarker] {
             token_colors.insert(t, self.get_token_color(t));
         }
 
@@ -10120,6 +10121,14 @@ mod tests {
         // 4. Nested 4-backtick fence wrapping a 3-backtick fence above # H1
         app.buffers[0].insert(0, "````md\n```rs\nfn x(){}\n```\n````\n");
         app.render_editor();
+        let code_block_fg = app.to_ct_color(app.theme.syntax.code_block.unwrap());
+        assert_eq!(
+            app.renderer.get_cell(ex, ey + 2).fg,
+            code_block_fg,
+            "TUI: fenced code block line must render with theme syntax.code_block color (#1e3a5f)"
+        );
+        assert_ne!(code_block_fg, h6_fg, "TUI: code_block must be distinct from H6");
+        assert_ne!(code_block_fg, h2_fg, "TUI: code_block must be distinct from H2");
         assert_eq!(
             app.renderer.get_cell(ex, ey + 6).fg,
             h1_fg,

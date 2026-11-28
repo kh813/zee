@@ -3201,8 +3201,8 @@ mod tests {
         assert_eq!(editor.line_tokens[6].as_ref().unwrap()[0].token, crate::syntax::TokenType::InlineCode);
         // Verify bold token (bold)
         assert_eq!(editor.line_tokens[7].as_ref().unwrap()[0].token, crate::syntax::TokenType::Bold);
-        // Verify code block tokens (keyword)
-        assert_eq!(editor.line_tokens[8].as_ref().unwrap()[0].token, crate::syntax::TokenType::Keyword);
+        // Verify code block tokens (code_block)
+        assert_eq!(editor.line_tokens[8].as_ref().unwrap()[0].token, crate::syntax::TokenType::CodeBlock);
         // Verify list marker tokens (list_marker)
         assert_eq!(editor.line_tokens[11].as_ref().unwrap()[0].token, crate::syntax::TokenType::ListMarker);
         assert_eq!(editor.line_tokens[11].as_ref().unwrap()[0].byte_range, 0..1);
@@ -4596,12 +4596,12 @@ mod tests {
         editor.update_syntax(Some(crate::syntax::SyntaxHighlighter::new(md_def.clone()).unwrap()));
         editor.insert(0, "intro\n```rust\nlet x = 1;\n```\n# 見出し1\n");
 
-        // 1. Insert lines ABOVE the fenced code block -> inside stays Keyword, heading below stays Heading1
+        // 1. Insert lines ABOVE the fenced code block -> inside stays CodeBlock, heading below stays Heading1
         editor.insert(0, "new0\nnew1\n");
         assert_eq!(
             editor.line_tokens[4].as_ref().and_then(|t| t.first()).map(|s| s.token),
-            Some(crate::syntax::TokenType::Keyword),
-            "Code line inside fence must stay Keyword after inserting lines above"
+            Some(crate::syntax::TokenType::CodeBlock),
+            "Code line inside fence must stay CodeBlock after inserting lines above"
         );
         assert_eq!(
             editor.line_tokens[6].as_ref().and_then(|t| t.first()).map(|s| s.token),
@@ -4618,14 +4618,14 @@ mod tests {
             "Inline ```` ```` must never break # 見出し1 on the following line"
         );
 
-        // 3. Removing closing ``` fence turns # 見出し1 into Keyword; undo restores Heading1
+        // 3. Removing closing ``` fence turns # 見出し1 into CodeBlock; undo restores Heading1
         let close_fence_start = editor.rope.line_to_char(5);
         let close_fence_end = editor.rope.line_to_char(6);
         editor.delete(close_fence_start..close_fence_end);
         assert_eq!(
             editor.line_tokens[6].as_ref().and_then(|t| t.first()).map(|s| s.token),
-            Some(crate::syntax::TokenType::Keyword),
-            "Unclosed fence above must propagate Keyword state to # 見出し1"
+            Some(crate::syntax::TokenType::CodeBlock),
+            "Unclosed fence above must propagate CodeBlock state to # 見出し1"
         );
         editor.undo();
         assert_eq!(

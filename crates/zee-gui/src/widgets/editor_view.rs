@@ -194,6 +194,7 @@ impl EditorView {
             TokenType::Heading5 => theme.syntax.heading5.or(theme.syntax.string),
             TokenType::Heading6 => theme.syntax.heading6.or(theme.syntax.comment),
             TokenType::InlineCode => theme.syntax.inline_code.or(theme.syntax.string),
+            TokenType::CodeBlock => theme.syntax.code_block.or(theme.syntax.keyword),
             TokenType::Bold => theme.syntax.bold,
             TokenType::Link => theme.syntax.link.or(theme.syntax.function),
             TokenType::ListMarker => theme.syntax.list_marker.or(theme.syntax.comment),
@@ -4733,7 +4734,7 @@ mod tests {
 
         let mut editor = zee_core::buffer::Editor::new();
         editor.update_syntax(Some(hl));
-        editor.insert(0, "### 見出し3\n本文 **強調テスト** と `code`\n");
+        editor.insert(0, "### 見出し3\n本文 **強調テスト** と `code`\n```rs\nlet x = 1;\n```\n###### 見出し6\n");
 
         let font_family = SharedString::from("Menlo");
 
@@ -4777,5 +4778,17 @@ mod tests {
         assert_eq!(wruns.iter().map(|r| r.len).sum::<usize>(), wv.len());
         assert_eq!(wruns[0].font.weight, gpui::FontWeight::BOLD);
         assert_eq!(wruns[0].color, expected_bold_color);
+
+        // Line 3 inside fenced code block renders with deep navy code_block (#1e3a5f), distinct from H6 (#738296) and H2 (#1d4ed8)
+        let line3 = EditorView::strip_line_endings(editor.rope.line(3).to_string());
+        let range3 = 0..line3.chars().count();
+        let (bs3, _, v3) = EditorView::slice_visual_line(&line3, &range3);
+        let runs3 = EditorView::build_visual_line_runs_for_font(&font_family, 3, &range3, bs3, v3, &light, &editor);
+        let expected_code_block_color = Hsla::from(EditorView::token_color_for_theme(TokenType::CodeBlock, &light));
+        let expected_h6_color = Hsla::from(EditorView::token_color_for_theme(TokenType::Heading6, &light));
+        let expected_h2_color = Hsla::from(EditorView::token_color_for_theme(TokenType::Heading2, &light));
+        assert_eq!(runs3[0].color, expected_code_block_color);
+        assert_ne!(expected_code_block_color, expected_h6_color, "CodeBlock must be distinct from Heading6");
+        assert_ne!(expected_code_block_color, expected_h2_color, "CodeBlock must be distinct from Heading2");
     }
 }

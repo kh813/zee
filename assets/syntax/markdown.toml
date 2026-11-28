@@ -44,22 +44,22 @@ token = "inline_code"
 pattern = "`+[^`\\r\\n]+`+"
 
 [[rule]]
-token = "keyword"
+token = "code_block"
 start = "^[ \\t]*`{6,}[^`\\r\\n]*\\r?\\n?$"
 end = "^[ \\t]*`{6,}[ \\t]*\\r?\\n?$"
 
 [[rule]]
-token = "keyword"
+token = "code_block"
 start = "^[ \\t]*`{5}[^`\\r\\n]*\\r?\\n?$"
 end = "^[ \\t]*`{5,}[ \\t]*\\r?\\n?$"
 
 [[rule]]
-token = "keyword"
+token = "code_block"
 start = "^[ \\t]*`{4}[^`\\r\\n]*\\r?\\n?$"
 end = "^[ \\t]*`{4,}[ \\t]*\\r?\\n?$"
 
 [[rule]]
-token = "keyword"
+token = "code_block"
 start = "^[ \\t]*`{3}[^`\\r\\n]*\\r?\\n?$"
 end = "^[ \\t]*`{3,}[ \\t]*\\r?\\n?$"
 

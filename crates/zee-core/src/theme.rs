@@ -349,6 +349,7 @@ impl Theme {
                 heading5: Some(Color::Ansi(246)),  // Medium-Light Gray
                 heading6: Some(Color::Ansi(13)),   // Bright Magenta / Violet
                 inline_code: Some(Color::Ansi(13)), // Bright Magenta / Pink
+                code_block: Some(Color::Ansi(14)),  // Cyan / Deep Navy contrast
                 bold: None,
                 link: None,
                 list_marker: Some(Color::Ansi(246)), // Medium-Light Gray
@@ -455,6 +456,8 @@ pub struct SyntaxColors {
     #[serde(default)]
     pub inline_code: Option<Color>,
     #[serde(default)]
+    pub code_block: Option<Color>,
+    #[serde(default)]
     pub bold: Option<Color>,
     #[serde(default)]
     pub link: Option<Color>,
@@ -519,6 +522,7 @@ impl Default for Theme {
                 heading5: Some(Color::Rgb(86, 95, 137)),
                 heading6: Some(Color::Rgb(157, 124, 216)),
                 inline_code: Some(Color::Rgb(245, 194, 231)),
+                code_block: Some(Color::Rgb(125, 207, 255)),
                 bold: None,
                 link: None,
                 list_marker: Some(Color::Rgb(86, 95, 137)),
@@ -564,9 +568,10 @@ mod tests {
         assert_eq!(light.syntax.heading4, Some(Color::Rgb(0x7c, 0x3a, 0xed))); // #7c3aed
         assert_eq!(light.syntax.heading5, Some(Color::Rgb(0x4d, 0x7c, 0x0f))); // #4d7c0f
         assert_eq!(light.syntax.heading6, Some(Color::Rgb(0x73, 0x82, 0x96))); // #738296
+        assert_eq!(light.syntax.code_block, Some(Color::Rgb(0x1e, 0x3a, 0x5f))); // #1e3a5f
         assert_eq!(light.syntax.bold, Some(Color::Rgb(0xea, 0x58, 0x0c)));     // #ea580c
 
-        // All Markdown heading levels + bold + inline_code + link must be pairwise distinct
+        // All Markdown heading levels + bold + inline_code + code_block + link must be pairwise distinct
         let md_colors = [
             ("heading1", light.syntax.heading1.unwrap()),
             ("heading2", light.syntax.heading2.unwrap()),
@@ -576,6 +581,7 @@ mod tests {
             ("heading6", light.syntax.heading6.unwrap()),
             ("bold", light.syntax.bold.unwrap()),
             ("inline_code", light.syntax.inline_code.unwrap()),
+            ("code_block", light.syntax.code_block.unwrap()),
             ("link", light.syntax.link.unwrap()),
         ];
         for i in 0..md_colors.len() {
@@ -740,7 +746,7 @@ mod tests {
                 check("ui.button_active_fg vs button_active_bg", color_to_rgb(theme.ui.button_active_fg, use_256), color_to_rgb(theme.ui.button_active_bg, use_256), 3.0);
 
                 // Syntax tokens
-                let syn_tokens: [(&str, Option<Color>); 20] = [
+                let syn_tokens: [(&str, Option<Color>); 21] = [
                     ("syntax.keyword", theme.syntax.keyword),
                     ("syntax.type_name", theme.syntax.type_name),
                     ("syntax.function", theme.syntax.function),
@@ -759,6 +765,7 @@ mod tests {
                     ("syntax.heading5", theme.syntax.heading5),
                     ("syntax.heading6", theme.syntax.heading6),
                     ("syntax.inline_code", theme.syntax.inline_code),
+                    ("syntax.code_block", theme.syntax.code_block),
                     ("syntax.bold", theme.syntax.bold),
                     ("syntax.list_marker", theme.syntax.list_marker),
                 ];
